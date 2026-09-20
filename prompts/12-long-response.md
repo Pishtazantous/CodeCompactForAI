@@ -1,3 +1,12 @@
+---
+id: 12-long-response
+title: "Manage Long Response"
+lang: fa
+depends_on: []
+category: helper
+version: 1
+---
+
 # مدیریت پاسخ طولانی
 
 پاسخ شما خیلی طولانی است. لطفاً در صورت امکان:

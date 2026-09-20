@@ -1,3 +1,12 @@
+---
+id: 06-code-review
+title: "Task: Code Review"
+lang: fa
+depends_on: []
+category: task
+version: 1
+---
+
 # تسک: بررسی کد
 
 ## محدودهٔ بررسی

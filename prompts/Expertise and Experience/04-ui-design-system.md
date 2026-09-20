@@ -1,3 +1,12 @@
+---
+id: 04-ui-design-system
+title: "UI & Design System Expert"
+lang: en
+depends_on: []
+category: expertise
+version: 1
+---
+
 # Role: UI & Design System Expert
 
 ## Expertise

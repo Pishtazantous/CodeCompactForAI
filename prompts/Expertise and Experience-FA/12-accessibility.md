@@ -1,3 +1,12 @@
+---
+id: 12-accessibility
+title: "Accessibility Expert"
+lang: fa
+depends_on: []
+category: expertise
+version: 1
+---
+
 # نقش: متخصص Accessibility
 
 ## تخصص

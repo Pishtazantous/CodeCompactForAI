@@ -1,3 +1,12 @@
+---
+id: 00-anti-slop-core
+title: "Core Anti-Slop Layer"
+lang: fa
+depends_on: []
+category: expertise
+version: 1
+---
+
 # لایهٔ ضد-Slop مرکزی (مخصوص این پروژه)
 
 این فایل را همیشه با هر پرامپت تخصصی بفرستید. قواعدی که در این فایل هست

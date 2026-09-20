@@ -1,3 +1,12 @@
+---
+id: 08-performance
+title: "Performance Expert"
+lang: en
+depends_on: []
+category: expertise
+version: 1
+---
+
 # Role: Frontend Performance Expert
 
 ## Expertise

@@ -1,3 +1,12 @@
+---
+id: 11-limit-files
+title: "Limit File Requests"
+lang: fa
+depends_on: []
+category: helper
+version: 1
+---
+
 # محدودسازی درخواست فایل
 
 شما [N] فایل درخواست کرده‌اید که مجموعاً ممکن است حجم زیادی داشته باشد. لطفاً:

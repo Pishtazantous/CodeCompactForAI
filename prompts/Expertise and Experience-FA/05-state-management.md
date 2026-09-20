@@ -1,3 +1,12 @@
+---
+id: 05-state-management
+title: "State Management Expert"
+lang: fa
+depends_on: []
+category: expertise
+version: 1
+---
+
 # نقش: متخصص مدیریت State
 
 ## تخصص

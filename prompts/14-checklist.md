@@ -1,3 +1,12 @@
+---
+id: 14-checklist
+title: "Pre-Response Checklist"
+lang: fa
+depends_on: []
+category: helper
+version: 1
+---
+
 # چک‌لیست قبل از هر پیام
 
 قبل از اینکه پاسخ بدهید، این موارد را چک کنید:

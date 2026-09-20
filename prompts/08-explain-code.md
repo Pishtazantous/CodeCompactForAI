@@ -1,3 +1,12 @@
+---
+id: 08-explain-code
+title: "Task: Explain Code"
+lang: fa
+depends_on: []
+category: task
+version: 1
+---
+
 # تسک: توضیح کد
 
 ## هدف

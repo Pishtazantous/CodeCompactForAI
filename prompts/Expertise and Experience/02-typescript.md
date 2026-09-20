@@ -1,3 +1,12 @@
+---
+id: 02-typescript
+title: "TypeScript Expert"
+lang: en
+depends_on: []
+category: expertise
+version: 1
+---
+
 # Role: TypeScript Expert
 
 ## Expertise

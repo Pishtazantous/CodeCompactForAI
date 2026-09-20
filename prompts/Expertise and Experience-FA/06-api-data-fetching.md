@@ -1,3 +1,12 @@
+---
+id: 06-api-data-fetching
+title: "API & Data Fetching Expert"
+lang: fa
+depends_on: []
+category: expertise
+version: 1
+---
+
 # نقش: متخصص API و Data Fetching
 
 ## تخصص

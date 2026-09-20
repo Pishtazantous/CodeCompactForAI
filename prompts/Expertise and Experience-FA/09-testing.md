@@ -1,3 +1,12 @@
+---
+id: 09-testing
+title: "Testing Expert"
+lang: fa
+depends_on: []
+category: expertise
+version: 1
+---
+
 # نقش: متخصص تست
 
 ## تخصص

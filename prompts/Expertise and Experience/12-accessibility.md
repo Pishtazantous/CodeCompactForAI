@@ -1,3 +1,12 @@
+---
+id: 12-accessibility
+title: "Accessibility Expert"
+lang: en
+depends_on: []
+category: expertise
+version: 1
+---
+
 # Role: Accessibility (a11y) Expert
 
 ## Expertise

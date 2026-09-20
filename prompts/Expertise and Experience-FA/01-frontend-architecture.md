@@ -1,3 +1,12 @@
+---
+id: 01-frontend-architecture
+title: "Frontend Architect"
+lang: fa
+depends_on: []
+category: expertise
+version: 1
+---
+
 # نقش: معمار فرانت‌اند (Next.js App Router)
 
 ## تخصص

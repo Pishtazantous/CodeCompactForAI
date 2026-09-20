@@ -1,3 +1,12 @@
+---
+id: 07-security-auth
+title: "Security & Auth Expert"
+lang: fa
+depends_on: []
+category: expertise
+version: 1
+---
+
 # نقش: متخصص امنیت و احراز هویت
 
 ## تخصص

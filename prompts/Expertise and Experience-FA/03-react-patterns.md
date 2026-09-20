@@ -1,3 +1,12 @@
+---
+id: 03-react-patterns
+title: "React Patterns Expert"
+lang: fa
+depends_on: []
+category: expertise
+version: 1
+---
+
 # نقش: متخصص الگوهای React
 
 ## تخصص

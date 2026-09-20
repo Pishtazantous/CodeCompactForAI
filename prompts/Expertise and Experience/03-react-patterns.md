@@ -1,3 +1,12 @@
+---
+id: 03-react-patterns
+title: "React Patterns Expert"
+lang: en
+depends_on: []
+category: expertise
+version: 1
+---
+
 # Role: React Patterns Expert
 
 ## Expertise

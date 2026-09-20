@@ -1,3 +1,31 @@
+---
+id: 01-system-append-2
+title: "Editing Rules (append)"
+lang: fa
+depends_on: [01-system]
+category: base
+version: 1
+---
+
+## Rule — Output Format for Edits
+
+When editing or creating files, ALWAYS use this exact format:
+
+```file:path/to/file.ts
+<complete file content>
+```
+
+Rules:
+- Use the relative path from the project root.
+- Provide the **complete** file content, not a fragment.
+- Never use `// ... rest of file` or similar placeholders.
+- One block per file.
+- Multiple files in the same response is fine.
+
+The user will run `python tools/apply_ai_output.py ai_response.md` to
+apply the changes. Any deviation from this format will cause the file
+to be skipped.
+
 ## Rule — Before Editing
 
 Before editing any file, first `codemerge-fetch` it. Never assume what's

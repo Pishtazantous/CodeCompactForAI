@@ -1,3 +1,12 @@
+---
+id: 04-ui-design-system
+title: "UI & Design System Expert"
+lang: fa
+depends_on: []
+category: expertise
+version: 1
+---
+
 # نقش: متخصص UI و Design System
 
 ## تخصص

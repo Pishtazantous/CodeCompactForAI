@@ -1,3 +1,12 @@
+---
+id: 11-refactoring-legacy
+title: "Refactoring & Legacy Expert"
+lang: en
+depends_on: []
+category: expertise
+version: 1
+---
+
 # Role: Refactoring & Legacy Code Expert
 
 ## Expertise

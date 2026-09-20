@@ -1,3 +1,12 @@
+---
+id: 01-frontend-architecture
+title: "Frontend Architect"
+lang: en
+depends_on: []
+category: expertise
+version: 1
+---
+
 # Role: Frontend Architect (Next.js App Router)
 
 ## Expertise

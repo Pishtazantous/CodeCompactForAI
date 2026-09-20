@@ -1,3 +1,12 @@
+---
+id: 13-final-summary
+title: "Final Summary"
+lang: fa
+depends_on: []
+category: helper
+version: 1
+---
+
 # خلاصهٔ نهایی
 
 قبل از پایان نشست، یک خلاصهٔ نهایی به این شکل بدهید:

@@ -1,3 +1,12 @@
+---
+id: 04-feature
+title: "Task: Add Feature"
+lang: fa
+depends_on: []
+category: task
+version: 1
+---
+
 # تسک: افزودن قابلیت جدید
 
 ## شرح قابلیت

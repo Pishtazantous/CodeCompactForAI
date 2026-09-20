@@ -1,3 +1,12 @@
+---
+id: 03-bug-fix
+title: "Task: Bug Fix"
+lang: fa
+depends_on: []
+category: task
+version: 1
+---
+
 # تسک: رفع باگ
 
 ## شرح باگ

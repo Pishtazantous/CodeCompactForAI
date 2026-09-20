@@ -1,3 +1,12 @@
+---
+id: 05-state-management
+title: "State Management Expert"
+lang: en
+depends_on: []
+category: expertise
+version: 1
+---
+
 # Role: State Management Expert
 
 ## Expertise

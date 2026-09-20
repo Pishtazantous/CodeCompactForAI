@@ -1,3 +1,12 @@
+---
+id: 02-typescript
+title: "TypeScript Expert"
+lang: fa
+depends_on: []
+category: expertise
+version: 1
+---
+
 # نقش: متخصص TypeScript
 
 ## تخصص

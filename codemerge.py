@@ -65,7 +65,7 @@ EXCLUDE_FILES = {
 
 EXCLUDE_GLOBS = {"*.min.js", "*.min.css", "*.map"}
 
-COMMON_EXTS = {".md", ".markdown", ".rst", ".txt", ".adoc"}
+COMMON_EXTS = { ".markdown", ".rst", ".txt", ".adoc"}
 COMMON_GLOBS = {
     "readme*", "license*", "licence*", "changelog*", "contributing*",
     "authors*", "notice*",
@@ -151,14 +151,10 @@ def is_sensitive(name: str) -> bool:
     for pat in SENSITIVE_GLOBS:
         if fnmatch.fnmatch(lower, pat):
             return True
-    if lower == ".env" or lower.startswith(".env."):
-        rest = lower[4:].lstrip(".")
-        if rest:
-            parts = rest.split(".")
-            if any(p in {"example", "sample", "template", "dist"}
-                   for p in parts):
-                return False
-        return True
+    if lower.startswith(".env."):
+        suffix = lower[5:]
+        # `.env.example` is safe; `.env.example.local` is NOT.
+        return suffix not in {"example", "sample", "template", "dist"}
     return False
 
 
@@ -759,8 +755,13 @@ def _collect_imports_generic(text: str) -> list[str]:
 _PAREN_INNER = r"[^()]|\([^()]*\)"
 _PAREN = rf"\(((?:{_PAREN_INNER})*)\)"
 
-# Type parameters like <T>, <T, U>, <T extends X = Y>.
-_TPARAM = r"<[^<>]*(?:<[^<>]*>[^<>]*)*>"
+# Type parameters up to three levels of nesting, e.g.
+#   <T>, <T, U>, <T extends X = Y>, <A<B<C>>>, <A<B>, C<D<E>>>
+_TPARAM = (
+    r"<[^<>]*"
+    r"(?:<[^<>]*(?:<[^<>]*>[^<>]*)*>[^<>]*)*"
+    r">"
+)
 
 # Return type: simple or single-level object literal.
 _RETURN = r"(?:[A-Za-z_$\[\]\(\)\.\w\s\|&<>,?:]+|\{[^{}]*\})"
@@ -940,7 +941,8 @@ def _extract_js(text: str) -> tuple[list[str], list[Symbol], str]:
                 sym = Symbol(kind="method", name=name,
                              signature=sig, line=i + 1)
                 consumed = m.group(0).count("\n") + 1
-                opens_body = "{" in m.group(0)
+                after_arrow = window[m.end():].lstrip()
+                opens_body = after_arrow.startswith("{")
 
         # 7) arrow function (with generics + return type)
         if sym is None:
@@ -956,7 +958,8 @@ def _extract_js(text: str) -> tuple[list[str], list[Symbol], str]:
                 sym = Symbol(kind="function", name=name,
                              signature=sig, line=i + 1)
                 consumed = m.group(0).count("\n") + 1
-                opens_body = "{" in m.group(0)
+                after_arrow = window[m.end():].lstrip()
+                opens_body = after_arrow.startswith("{")
 
         # 8) method inside class / interface
         if sym is None and scope_stack:
@@ -1540,7 +1543,7 @@ def compute_delta(
             continue
 
         try:
-            h = file_hash(p)
+            h = file_sha(p)
         except OSError:
             continue
 
@@ -1595,6 +1598,12 @@ def write_bundle(
             header = "\n".join(lines)
             out.write(header)
             total_bytes += len(header.encode("utf-8"))
+        elif deleted:
+            # Minimal deleted-files manifest even when header is disabled,
+            # so downstream consumers (LLM) know what was removed.
+            mini = "# deleted: " + ", ".join(deleted) + "\n\n"
+            out.write(mini)
+            total_bytes += len(mini.encode("utf-8"))
 
         for p in files:
             try:

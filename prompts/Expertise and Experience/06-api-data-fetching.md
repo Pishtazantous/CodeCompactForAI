@@ -1,3 +1,12 @@
+---
+id: 06-api-data-fetching
+title: "API & Data Fetching Expert"
+lang: en
+depends_on: []
+category: expertise
+version: 1
+---
+
 # Role: API & Data Fetching Expert
 
 ## Expertise

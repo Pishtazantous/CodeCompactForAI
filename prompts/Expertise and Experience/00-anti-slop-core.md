@@ -1,3 +1,12 @@
+---
+id: 00-anti-slop-core
+title: "Core Anti-Slop Layer"
+lang: en
+depends_on: []
+category: expertise
+version: 1
+---
+
 # Core Anti-Slop Layer (Project-Specific)
 
 Always send this file alongside any expertise prompt. Rules here apply to

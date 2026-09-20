@@ -1,3 +1,12 @@
+---
+id: 07-tests
+title: "Task: Write Tests"
+lang: fa
+depends_on: []
+category: task
+version: 1
+---
+
 # تسک: نوشتن تست
 
 ## محدوده

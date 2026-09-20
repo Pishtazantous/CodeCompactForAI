@@ -1,3 +1,12 @@
+---
+id: 10-recovery
+title: "Recovery Prompt"
+lang: fa
+depends_on: []
+category: helper
+version: 1
+---
+
 # بازیابی مسیر
 
 لطفاً یک لحظه صبر کنید.

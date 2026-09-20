@@ -1,3 +1,12 @@
+---
+id: 09-testing
+title: "Testing Expert"
+lang: en
+depends_on: []
+category: expertise
+version: 1
+---
+
 # Role: Testing Expert
 
 ## Expertise

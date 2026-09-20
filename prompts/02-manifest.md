@@ -1,3 +1,12 @@
+---
+id: 02-manifest
+title: "Send Project Manifest"
+lang: fa
+depends_on: [01-system]
+category: base
+version: 1
+---
+
 # ارسال manifest
 
 manifest پروژه در ادامه آمده است. لطفاً:

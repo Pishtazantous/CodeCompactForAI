@@ -1,3 +1,12 @@
+---
+id: 11-refactoring-legacy
+title: "Refactoring & Legacy Expert"
+lang: fa
+depends_on: []
+category: expertise
+version: 1
+---
+
 # نقش: متخصص بازآرایی کد
 
 ## تخصص

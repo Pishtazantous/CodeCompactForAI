@@ -1,3 +1,4 @@
 # AI workflow
 .ai/
-ai_response.md
+__pycache__
+tests

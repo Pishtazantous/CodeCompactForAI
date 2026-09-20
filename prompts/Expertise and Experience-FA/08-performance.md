@@ -1,3 +1,12 @@
+---
+id: 08-performance
+title: "Performance Expert"
+lang: fa
+depends_on: []
+category: expertise
+version: 1
+---
+
 # نقش: متخصص کارایی Frontend
 
 ## تخصص

@@ -1,3 +1,12 @@
+---
+id: 09-continue-session
+title: "Continue Session"
+lang: fa
+depends_on: []
+category: task
+version: 1
+---
+
 # ادامهٔ نشست
 
 ## خلاصهٔ نشست قبلی

@@ -1,3 +1,12 @@
+---
+id: 05-refactor
+title: "Task: Refactor"
+lang: fa
+depends_on: []
+category: task
+version: 1
+---
+
 # تسک: بازآرایی کد
 
 ## هدف بازآرایی

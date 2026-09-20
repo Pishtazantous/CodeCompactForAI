@@ -1,3 +1,12 @@
+---
+id: 10-devops-deployment
+title: "DevOps & Deployment Expert"
+lang: fa
+depends_on: []
+category: expertise
+version: 1
+---
+
 # نقش: متخصص DevOps
 
 ## تخصص
