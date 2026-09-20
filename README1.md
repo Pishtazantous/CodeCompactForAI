@@ -1,4 +1,3 @@
-
 # CodeCompactForAI
 
 A command-line tool for preparing software projects to send to AI models
