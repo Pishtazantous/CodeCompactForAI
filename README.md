@@ -1,7 +1,6 @@
 # CodeCompactForAI
 
-| [English](README.md) | [فارسی](README.fa.md) |
-|---|---|
+**Read in:** [English](README.md) · [فارسی](README.fa.md)
 
 A command-line tool for preparing software projects to send to AI models
 without sending the entire codebase. Instead, you send a compact map and let
