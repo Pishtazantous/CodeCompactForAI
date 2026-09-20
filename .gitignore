@@ -1,4 +1,5 @@
 # AI workflow
 .ai/
+.kilo
 __pycache__
 tests

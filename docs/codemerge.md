@@ -1,122 +1,122 @@
-# راهنمای کامل `codemerge.py`
+# Complete Guide to `codemerge.py`
 
-## نسخهٔ نهایی با پشتیبانی کامل از TypeScript، Object Literal، Generic Types و `.codemergeignore`
-
----
-
-## فهرست
-
-1. [معرفی](#معرفی)
-2. [نصب و پیش‌نیازها](#نصب-و-پیشنیازها)
-3. [گردش کار با هوش مصنوعی](#گردش-کار-با-هوش-مصنوعی)
-4. [دستورات](#دستورات)
-5. [گزینه‌های مشترک](#گزینههای-مشترک)
-6. [پشتیبانی زبان‌ها](#پشتیبانی-زبانها)
-7. [فایل `.codemergeignore`](#فایل-codemergeignore)
-8. [فایل‌های حساس](#فایلهای-حساس)
-9. [نمونه‌های کامل](#نمونههای-کامل)
-10. [عیب‌یابی](#عیبیابی)
-11. [پرامپت‌های آماده برای AI](#پرامپتهای-آماده-برای-ai)
+## Final version with full support for TypeScript, Object Literal, Generic Types, and `.codemergeignore`
 
 ---
 
-## معرفی
+## Table of Contents
 
-`codemerge.py` ابزاری خط فرمان است که پروژه‌های نرم‌افزاری را برای ارسال به مدل‌های هوش مصنوعی (DeepSeek، ChatGPT، Claude و ...) آماده می‌کند. به جای فرستادن کل پروژه، ابتدا یک **نقشهٔ فشرده** از ساختار پروژه می‌فرستید، سپس هوش مصنوعی خودش تصمیم می‌گیرد کدام فایل‌ها را بخواهد.
-
-### مزایا
-- **کاهش ۱۰ تا ۵۰ برابری** حجم ارسال نسبت به فرستادن کل پروژه
-- **استخراج دقیق نمادها** برای TypeScript/JavaScript (شامل generic، arrow، object literal)
-- **پشتیبانی از ۴۰+ زبان برنامه‌نویسی**
-- **بدون وابستگی خارجی** (فقط Python 3.8+)
-- **چهار دستور مجزا**: manifest، fetch، diff، search
-- **پشتیبانی از `.codemergeignore`** برای کنترل دقیق فایل‌ها
+1. [Introduction](#introduction)
+2. [Installation and Prerequisites](#installation-and-prerequisites)
+3. [AI Workflow](#ai-workflow)
+4. [Commands](#commands)
+5. [Common Options](#common-options)
+6. [Language Support](#language-support)
+7. [`.codemergeignore` File](#codemergeignore-file)
+8. [Sensitive Files](#sensitive-files)
+9. [Complete Examples](#complete-examples)
+10. [Troubleshooting](#troubleshooting)
+11. [Ready-to-Use Prompts for AI](#ready-to-use-prompts-for-ai)
 
 ---
 
-## نصب و پیش‌نیازها
+## Introduction
 
-### پیش‌نیازها
-- Python 3.8 یا بالاتر
-- (اختیاری) Git
-- (اختیاری) `pip install tiktoken` برای شمارش دقیق توکن
+`codemerge.py` is a command-line tool that prepares software projects for submission to AI models (DeepSeek, ChatGPT, Claude, etc.). Instead of sending the entire project, you first send a **compact map** of the project structure, then the AI decides which files it needs.
 
-### نصب
-فقط فایل `codemerge.py` را در ریشهٔ پروژه قرار دهید. نیازی به نصب پکیج نیست.
+### Advantages
+- **10 to 50 times less** data sent compared to sending the whole project
+- **Accurate symbol extraction** for TypeScript/JavaScript (including generics, arrow functions, object literals)
+- **Support for 40+ programming languages**
+- **No external dependencies** (Python 3.8+ only)
+- **Four separate commands**: manifest, fetch, diff, search
+- **`.codemergeignore` support** for precise file control
+
+---
+
+## Installation and Prerequisites
+
+### Prerequisites
+- Python 3.8 or higher
+- (Optional) Git
+- (Optional) `pip install tiktoken` for accurate token counting
+
+### Installation
+Just place the `codemerge.py` file in the project root. No package installation needed.
 
 ```bash
-# بررسی نصب
+# Verify installation
 python codemerge.py --help
 ```
 
 ---
 
-## گردش کار با هوش مصنوعی
+## AI Workflow
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  گام ۱: ساخت Manifest                                        │
-│    python codemerge.py manifest -o manifest.txt              │
+│  Step 1: Create Manifest                                      │
+│    python codemerge.py manifest -o manifest.txt               │
 │                                                              │
-│  گام ۲: ارسال manifest.txt به هوش مصنوعی                    │
+│  Step 2: Send manifest.txt to AI                             │
 │                                                              │
-│  گام ۳: AI پاسخ می‌دهد: «auth/login.py و lib/api.ts را بفرست» │
+│  Step 3: AI responds: "send auth/login.py and lib/api.ts"   │
 │                                                              │
-│  گام ۴: ساخت Bundle با فایل‌های درخواستی                     │
-│    python codemerge.py fetch auth/login.py lib/api.ts \      │
-│        -o bundle.txt                                         │
+│  Step 4: Create Bundle with requested files                   │
+│    python codemerge.py fetch auth/login.py lib/api.ts \       │
+│        -o bundle.txt                                          │
 │                                                              │
-│  گام ۵: ارسال bundle.txt به هوش مصنوعی                      │
+│  Step 5: Send bundle.txt to AI                               │
 │                                                              │
-│  گام ۶: در نشست بعدی، فقط تغییرات                            │
-│    python codemerge.py diff -o bundle.txt                    │
+│  Step 6: In next session, only changes                       │
+│    python codemerge.py diff -o bundle.txt                     │
 └──────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## دستورات
+## Commands
 
-### ۱. `manifest` — ساخت نقشهٔ پروژه
+### 1. `manifest` — Build Project Map
 
 ```bash
 python codemerge.py manifest [OPTIONS]
 ```
 
-خروجی شامل مسیر، زبان، تعداد خطوط، اندازه، sha، imports و لیست توابع/کلاس‌ها است.
+Output includes path, language, line count, size, sha, imports, and list of functions/classes.
 
-**گزینه‌های اختصاصی:**
+**Specific Options:**
 
-| گزینه | توضیح |
+| Option | Description |
 |---|---|
-| `--format {text,md,json}` | فرمت خروجی (پیش‌فرض: `text`). |
-| `--no-symbols` | فقط لیست فایل‌ها بدون توابع/کلاس‌ها. |
-| `--no-imports` | بدون نمایش importها. |
-| `--max-tokens N` | سقف نرم توکن. اگر از سقف رد شود، symbols حذف می‌شوند. |
+| `--format {text,md,json}` | Output format (default: `text`). |
+| `--no-symbols` | Only file list without functions/classes. |
+| `--no-imports` | Exclude imports from output. |
+| `--max-tokens N` | Soft token cap. If exceeded, symbols are removed. |
 
-**نمونه‌ها:**
+**Examples:**
 
 ```bash
-# manifest کامل در فرمت متن
+# Full manifest in text format
 python codemerge.py manifest -o manifest.txt
 
-# فقط TypeScript/JavaScript
+# TypeScript/JavaScript only
 python codemerge.py manifest -l typescript,javascript -o manifest_ts.txt
 
-# فرمت Markdown (مناسب برای ارسال به AI)
+# Markdown format (suitable for sending to AI)
 python codemerge.py manifest --format md -o manifest.md
 
-# فرمت JSON (مناسب برای ابزارهای خودکار)
+# JSON format (suitable for automation tools)
 python codemerge.py manifest --format json -o manifest.json
 
-# فشرده‌ترین حالت
+# Most compact
 python codemerge.py manifest --no-symbols --no-imports -o files.txt
 
-# با محدودیت توکن
+# With token limit
 python codemerge.py manifest --max-tokens 8000 -o manifest.txt
 ```
 
-**نمونهٔ خروجی `text`:**
+**Sample `text` output:**
 
 ```
 # Project Manifest
@@ -155,38 +155,38 @@ python codemerge.py manifest --max-tokens 8000 -o manifest.txt
 
 ---
 
-### ۲. `fetch` — ارسال فایل‌های درخواستی
+### 2. `fetch` — Fetch Requested Files
 
 ```bash
 python codemerge.py fetch [FILES ...] [OPTIONS]
 ```
 
-**گزینه‌های اختصاصی:**
+**Specific Options:**
 
-| گزینه | توضیح |
+| Option | Description |
 |---|---|
-| `FILES ...` | مسیر فایل‌ها (نسبت به ریشهٔ پروژه). |
-| `--files-from FILE` | خواندن لیست از فایل (هر خط یک مسیر، `#` کامنت). |
-| `--from-stdin` | خواندن لیست از ورودی استاندارد. |
+| `FILES ...` | File paths (relative to project root). |
+| `--files-from FILE` | Read list from file (one path per line, `#` for comments). |
+| `--from-stdin` | Read list from standard input. |
 
-**نمونه‌ها:**
+**Examples:**
 
 ```bash
-# مستقیم با آرگومان
+# Direct with arguments
 python codemerge.py fetch auth/login.py lib/api/auth.ts -o bundle.txt
 
-# از فایل لیست
+# From file list
 python codemerge.py fetch --files-from requested.txt -o bundle.txt
 
-# از STDIN
+# From STDIN
 echo "auth/login.py
 lib/api/auth.ts" | python codemerge.py fetch --from-stdin -o bundle.txt
 ```
 
-**نمونهٔ `requested.txt`:**
+**Sample `requested.txt`:**
 
 ```
-# پاسخ AI:
+# AI response:
 auth/login.py
 lib/api/auth.ts
 lib/api/client.ts
@@ -195,66 +195,66 @@ store/authStore.ts
 
 ---
 
-### ۳. `diff` — فقط تغییرات از آخرین اجرا
+### 3. `diff` — Only Changes Since Last Run
 
 ```bash
 python codemerge.py diff [OPTIONS]
 ```
 
-اولین اجرا مثل `fetch` روی کل پروژه عمل می‌کند و یک state می‌سازد. اجراهای بعدی فقط فایل‌های تغییر یافته، اضافه‌شده و حذف‌شده را گزارش می‌دهد.
+The first run acts like `fetch` on the whole project and creates a state. Subsequent runs only report changed, added, and deleted files.
 
-**گزینه‌های اختصاصی:**
+**Specific Options:**
 
-| گزینه | توضیح |
+| Option | Description |
 |---|---|
-| `--state-file PATH` | مسیر دلخواه برای state. پیش‌فرض: `<output>.state.json`. |
-| `--full` | ادغام کامل (state را به‌روز می‌کند). |
-| `--reset-state` | حذف state قبل از اجرا. |
-| `--dry-run` | فقط نمایش فایل‌های تغییر یافته. |
+| `--state-file PATH` | Custom state path. Default: `<output>.state.json`. |
+| `--full` | Full merge (updates state). |
+| `--reset-state` | Delete state before running. |
+| `--dry-run` | Show changed files only. |
 
-**نمونه‌ها:**
+**Examples:**
 
 ```bash
-# اجرای اول
+# First run
 python codemerge.py diff -o bundle.txt
 
-# اجرای بعدی: فقط تغییرات
+# Subsequent run: only changes
 python codemerge.py diff -o bundle.txt
 
-# اجبار به full
+# Force full
 python codemerge.py diff --full -o bundle.txt
 
-# پیش‌نمایش
+# Preview
 python codemerge.py diff --dry-run
 ```
 
-**رفتار در سناریوها:**
+**Behavior in Scenarios:**
 
-| سناریو | نتیجه |
+| Scenario | Result |
 |---|---|
-| اجرای اول (بدون state) | حالت `full` — کل پروژه. |
-| بدون تغییر | پیام `No changes since last run.` |
-| فایل `a.py` تغییر کرده | فقط `a.py` در خروجی. |
-| فایل `b.py` حذف شده | در هدر گزارش می‌شود. |
-| فایل `c.py` اضافه شده | در خروجی نوشته می‌شود. |
-| `.codemergeignore` تغییر کند | خودکار به `full` سوییچ می‌کند. |
+| First run (no state) | `full` mode — whole project. |
+| No changes | Message `No changes since last run.` |
+| `a.py` changed | Only `a.py` in output. |
+| `b.py` deleted | Reported in header. |
+| `c.py` added | Written in output. |
+| `.codemergeignore` changed | Automatically switches to `full`. |
 
 ---
 
-### ۴. `search` — جستجوی یک نماد
+### 4. `search` — Search for a Symbol
 
 ```bash
 python codemerge.py search PATTERN [OPTIONS]
 ```
 
-**گزینه‌های اختصاصی:**
+**Specific Options:**
 
-| گزینه | توضیح |
+| Option | Description |
 |---|---|
-| `PATTERN` | الگوی regex یا متن ساده. |
-| `--max-hits N` | حداکثر نتیجه (پیش‌فرض: 500). |
+| `PATTERN` | Regex or plain text pattern. |
+| `--max-hits N` | Maximum results (default: 500). |
 
-**نمونه‌ها:**
+**Examples:**
 
 ```bash
 python codemerge.py search verify_password
@@ -264,7 +264,7 @@ python codemerge.py search UserRepository --output hits.txt
 
 ---
 
-### ۵. `langs` — فهرست زبان‌های پشتیبانی‌شده
+### 5. `langs` — List Supported Languages
 
 ```bash
 python codemerge.py langs
@@ -272,138 +272,138 @@ python codemerge.py langs
 
 ---
 
-## گزینه‌های مشترک
+## Common Options
 
-این گزینه‌ها در همهٔ دستورات (به‌جز `langs`) قابل استفاده‌اند:
+These options work in all commands (except `langs`):
 
-| گزینه | توضیح |
+| Option | Description |
 |---|---|
-| `-l`, `--lang LANG [LANG ...]` | انتخاب زبان(ها). با کاما یا فاصله. |
-| `-o`, `--output FILE` | نام فایل خروجی. |
-| `-r`, `--root DIR` | ریشهٔ پروژه. |
-| `--max-size MB` | حداکثر حجم هر فایل (پیش‌فرض: 100). |
-| `--no-git` | نادیده گرفتن Git و پیمایش مستقیم. |
-| `--include PATTERN [...]` | الگوهای glob برای اجبار به شامل کردن. |
-| `--exclude PATTERN [...]` | الگوهای glob برای حذف. |
-| `--allow-sensitive` | شامل کردن فایل‌های حساس. |
-| `--all-files` | نادیده گرفتن فیلتر زبان. |
-| `--no-header` | بدون هدر در خروجی. |
-| `-q`, `--quiet` | عدم چاپ خلاصهٔ نهایی. |
-| `--ignore-file PATH` | فایل ignore سفارشی. |
-| `--no-ignore-file` | نادیده گرفتن همهٔ فایل‌های ignore. |
+| `-l`, `--lang LANG [LANG ...]` | Select language(s). Comma or space separated. |
+| `-o`, `--output FILE` | Output file name. |
+| `-r`, `--root DIR` | Project root. |
+| `--max-size MB` | Maximum file size (default: 100). |
+| `--no-git` | Ignore Git and scan directly. |
+| `--include PATTERN [...]` | Glob patterns to force inclusion. |
+| `--exclude PATTERN [...]` | Glob patterns for exclusion. |
+| `--allow-sensitive` | Include sensitive files. |
+| `--all-files` | Ignore language filter. |
+| `--no-header` | No header in output. |
+| `-q`, `--quiet` | Suppress final summary. |
+| `--ignore-file PATH` | Custom ignore file. |
+| `--no-ignore-file` | Ignore all ignore files. |
 
 ---
 
-## پشتیبانی زبان‌ها
+## Language Support
 
-### کیفیت استخراج
+### Extraction Quality
 
-| زبان | کلاس | تابع | متد | imports | کیفیت |
+| Language | Class | Function | Method | Imports | Quality |
 |---|---|---|---|---|---|
-| **Python** | ✅ AST | ✅ AST | ✅ AST | ✅ | عالی |
-| **TypeScript** | ✅ | ✅ | ✅ | ✅ | عالی |
-| **JavaScript** | ✅ | ✅ | ✅ | ✅ | عالی |
-| **Vue / Svelte** | ✅ | ✅ | ✅ | ✅ | عالی |
-| **Java** | ✅ | ✅ | ✅ | ✅ | خوب |
-| **C#** | ✅ | ✅ | ✅ | ✅ | خوب |
-| **C++ / C** | ✅ | ✅ | ✅ | ✅ | خوب |
-| **Go** | ✅ | ✅ | ✅ | ✅ | عالی |
-| **Rust** | ✅ | ✅ | ✅ | ✅ | عالی |
-| **Ruby** | ✅ | ✅ | ✅ | ✅ | خوب |
-| **PHP** | ✅ | ✅ | ✅ | ✅ | خوب |
-| **Kotlin** | ✅ | ✅ | ✅ | ✅ | خوب |
-| **Swift** | ✅ | ✅ | ✅ | ✅ | خوب |
-| **Dart** | ✅ | ✅ | ✅ | ✅ | خوب |
-| **Scala** | ✅ | ✅ | ✅ | ✅ | خوب |
+| **Python** | ✅ AST | ✅ AST | ✅ AST | ✅ | Excellent |
+| **TypeScript** | ✅ | ✅ | ✅ | ✅ | Excellent |
+| **JavaScript** | ✅ | ✅ | ✅ | ✅ | Excellent |
+| **Vue / Svelte** | ✅ | ✅ | ✅ | ✅ | Excellent |
+| **Java** | ✅ | ✅ | ✅ | ✅ | Good |
+| **C#** | ✅ | ✅ | ✅ | ✅ | Good |
+| **C++ / C** | ✅ | ✅ | ✅ | ✅ | Good |
+| **Go** | ✅ | ✅ | ✅ | ✅ | Excellent |
+| **Rust** | ✅ | ✅ | ✅ | ✅ | Excellent |
+| **Ruby** | ✅ | ✅ | ✅ | ✅ | Good |
+| **PHP** | ✅ | ✅ | ✅ | ✅ | Good |
+| **Kotlin** | ✅ | ✅ | ✅ | ✅ | Good |
+| **Swift** | ✅ | ✅ | ✅ | ✅ | Good |
+| **Dart** | ✅ | ✅ | ✅ | ✅ | Good |
+| **Scala** | ✅ | ✅ | ✅ | ✅ | Good |
 
-### قابلیت‌های TypeScript/JavaScript
+### TypeScript/JavaScript Features
 
-- ✅ توابع arrow با multi-statement body
+- ✅ Arrow functions with multi-statement body
 - ✅ Type parameters (`function foo<T>(...)`)
-- ✅ Return types (ساده و object literal)
+- ✅ Return types (simple and object literal)
 - ✅ Multi-line signatures
-- ✅ Balanced nested parens در params
-- ✅ Object literals با متدها
-- ✅ Scope tracking (توابع nested زیر parent)
+- ✅ Balanced nested parens in params
+- ✅ Object literals with methods
+- ✅ Scope tracking (nested functions under parent)
 - ✅ Interface/Enum/Type alias
-- ✅ فیلتر خودکار hooks (`useState`, `useEffect` و... نویز نمی‌سازند)
+- ✅ Auto-filter hooks (`useState`, `useEffect`, etc. don't create noise)
 
 ---
 
-## فایل `.codemergeignore`
+## `.codemergeignore` File
 
-فایل ignore در ریشهٔ پروژه قرار می‌گیرد و نحو gitignore دارد.
+The ignore file lives at the project root and uses gitignore syntax.
 
-### نمونهٔ پیشنهادی برای پروژه‌های Next.js
+### Recommended Example for Next.js Projects
 
 ```gitignore
 # ============ .codemergeignore ============
 
-# محتوای بلاگ (خواندنی)
+# Blog content (read-only)
 content/posts/
 content/authors/
 content/categories/
 
-# فایل‌های backup
+# Backup files
 *.bak
 *.tsbuildinfo
 
-# خروجی‌های codemerge
+# codemerge outputs
 manifest*.txt
 project_source*.txt
 codemerge.state.json
 check.ps1
 
-# فایل‌های تولیدشده
+# Generated files
 public/sitemap*.xml
 public/robots.txt
 public/images/
 
-# فایل‌های حجیم و عمومی
+# Large and public files
 public/telegram-web-app.js
 
-# اسکریپت‌های نصب سرور
+# Server install scripts
 scripts/install-*.sh
 
-# فایل‌های config جانبی
+# Side config files
 next-sitemap.config.js
 postcss.config.js
 ```
 
-### نحو پشتیبانی‌شده
+### Supported Syntax
 
-| الگو | توضیح |
+| Pattern | Description |
 |---|---|
-| `docs/` | پوشه در هر عمق |
-| `/config.json` | فقط در ریشه |
-| `*.min.js` | الگو glob |
-| `**/snapshots/` | پوشه در هر عمق |
-| `!docs/README.md` | negation (استثنا) |
-| `# comment` | کامنت |
+| `docs/` | Folder at any depth |
+| `/config.json` | Root only |
+| `*.min.js` | glob pattern |
+| `**/snapshots/` | Folder at any depth |
+| `!docs/README.md` | negation (exception) |
+| `# comment` | Comment |
 
-### نمونه‌های پیچیده
+### Complex Examples
 
 ```gitignore
-# حذف همهٔ تست‌ها
+# Remove all tests
 tests/
 **/*.spec.ts
 **/*.test.ts
 
-# استثنا
+# Exception
 !tests/integration/api.spec.ts
 
-# فایل‌های شخصی
+# Personal files
 *.local
 TODO.private.md
 ```
 
 ---
 
-## فایل‌های حساس
+## Sensitive Files
 
-این فایل‌ها **هرگز** در خروجی قرار نمی‌گیرند (مگر با `--allow-sensitive`):
+These files **never** appear in the output (unless `--allow-sensitive` is used):
 
-- `.env` و نسخه‌هایش (به‌جز `.env.example`, `.env.sample`, `.env.template`, `.env.dist`)
+- `.env` and its variants (except `.env.example`, `.env.sample`, `.env.template`, `.env.dist`)
 - `id_rsa`, `id_dsa`, `id_ecdsa`, `id_ed25519`
 - `credentials.json`, `secrets.json`, `service-account.json`
 - `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `*.ppk`, `*.secret`, `*.crt`
@@ -411,71 +411,71 @@ TODO.private.md
 
 ---
 
-## نمونه‌های کامل
+## Complete Examples
 
-### سناریو ۱: شروع پروژهٔ جدید
+### Scenario 1: Starting a New Project
 
 ```bash
-# گام ۱: ساخت manifest برای AI
+# Step 1: Build manifest for AI
 python codemerge.py manifest -l typescript,javascript -o manifest.txt
 
-# گام ۲: AI می‌گوید این فایل‌ها را بفرست:
+# Step 2: AI says send these files:
 #   lib/api/auth.ts
 #   lib/api/client.ts
 #   store/authStore.ts
 
-# گام ۳: ساخت bundle
+# Step 3: Create bundle
 python codemerge.py fetch lib/api/auth.ts lib/api/client.ts store/authStore.ts -o bundle.txt
 
-# گام ۴: ارسال bundle.txt
+# Step 4: Send bundle.txt
 ```
 
-### سناریو ۲: ادامهٔ کار در نشست بعدی
+### Scenario 2: Continuing in Next Session
 
 ```bash
-# فقط تغییرات از آخرین اجرا
+# Only changes from last run
 python codemerge.py diff -o changes.txt
 
-# ارسال changes.txt که شامل فقط فایل‌های تغییر یافته است
+# Send changes.txt which includes only changed files
 ```
 
-### سناریو ۳: بررسی یک باگ خاص
+### Scenario 3: Investigating a Specific Bug
 
 ```bash
-# جستجوی تابع در کل پروژه
+# Search for function across project
 python codemerge.py search "handleLogin"
 
-# نتیجه:
+# Result:
 # lib/api/auth.ts:172: export const loginUser = async ...
 # app/auth/login/page.tsx:45: const handleLogin = ...
 
-# ارسال فایل‌های مرتبط
+# Send related files
 python codemerge.py fetch lib/api/auth.ts app/auth/login/page.tsx -o bundle.txt
 ```
 
-### سناریو ۴: پروژهٔ چندزبانه
+### Scenario 4: Multi-Language Project
 
 ```bash
-# فقط بک‌اند (Python)
+# Backend only (Python)
 python codemerge.py manifest -l python -o backend.txt
 
-# فقط فرانت‌اند (TypeScript)
+# Frontend only (TypeScript)
 python codemerge.py manifest -l typescript -o frontend.txt
 ```
 
-### سناریو ۵: ساختار پیشنهادی پوشه
+### Scenario 5: Recommended Folder Structure
 
 ```
 .ai/
-├── manifest.txt           # نقشهٔ پروژه
-├── bundle.txt             # فایل‌های ارسالی به AI
-├── bundle.state.json      # وضعیت diff
+├── manifest.txt           # project map
+├── bundle.txt             # files sent to AI
+├── bundle.state.json      # diff state
 └── sessions/
     ├── 01-auth-refactor.md
     └── 02-payment-fix.md
 ```
 
-برای این ساختار:
+For this structure:
 
 ```bash
 mkdir -p .ai
@@ -485,41 +485,41 @@ python codemerge.py diff -o .ai/bundle.txt --state-file .ai/state.json
 
 ---
 
-## عیب‌یابی
+## Troubleshooting
 
 ### `No source files found`
-- زبان انتخابی اشتباه است. با `python codemerge.py langs` بررسی کنید.
-- همهٔ فایل‌ها در `.codemergeignore` هستند.
-- با `--all-files` امتحان کنید.
+- The selected language is wrong. Check with `python codemerge.py langs`.
+- All files are in `.codemergeignore`.
+- Try `--all-files`.
 
 ### `Unknown language: xxx`
-نام زبان را با `python codemerge.py langs` چک کنید.
+Check the language name with `python codemerge.py langs`.
 
-### فایل در manifest هست ولی در `fetch` رد می‌شود
-- احتمالاً باینری است.
-- یا حجمش از `--max-size` بیشتر است.
-- یا مسیر را نسبت به ریشه اشتباه داده‌اید.
+### File exists in manifest but is rejected by `fetch`
+- It is probably binary.
+- Or its size exceeds `--max-size`.
+- Or you gave the path relative to root incorrectly.
 
-### `diff` همیشه full است
-- state ذخیره نشده. مسیر نوشتن آن را بررسی کنید.
-- یا `--root` بین دو اجرا تغییر کرده.
+### `diff` is always full
+- State was not saved. Check the write path.
+- Or `--root` changed between runs.
 
-### خروجی خیلی بزرگ است
+### Output is too large
 ```bash
-# manifest کوچک‌تر
+# Smaller manifest
 python codemerge.py manifest --no-symbols --no-imports -o manifest.txt
 
-# با محدودیت توکن
+# With token limit
 python codemerge.py manifest --max-tokens 8000 -o manifest.txt
 ```
 
-### شمارش توکن دقیق نیست
+### Token count is inaccurate
 ```bash
 pip install tiktoken
 ```
 
-### در PowerShell دستور `grep` کار نمی‌کند
-از `Select-String` استفاده کنید:
+### `grep` doesn't work in PowerShell
+Use `Select-String` instead:
 ```powershell
 Select-String -Path manifest.txt -Pattern "apiGet"
 (Select-String -Path manifest.txt -Pattern "^  function ").Count
@@ -527,126 +527,125 @@ Select-String -Path manifest.txt -Pattern "apiGet"
 
 ---
 
-## پرامپت‌های آماده برای AI
+## Ready-to-Use Prompts for AI
 
-### پرامپت ۱: شروع نشست
+### Prompt 1: Start Session
 
 ```
-شما یک مهندس نرم‌افزار ارشد هستید که با ابزار codemerge.py کار می‌کنید.
+You are a senior software engineer working with the codemerge.py tool.
 
-این ابزار چهار دستور دارد:
-- manifest: ساخت نقشهٔ فشرده پروژه
-- fetch: دریافت محتوای لیست مشخصی از فایل‌ها
-- diff: دریافت فقط فایل‌های تغییر یافته
-- search: جستجوی یک نماد در پروژه
+This tool has four commands:
+- manifest: build compact project map
+- fetch: fetch content of specific files
+- diff: fetch only changed files
+- search: search for a symbol in the project
 
-قواعد:
-1. در ابتدا فقط manifest را دارید.
-2. برای دریافت محتوای فایل، از فرمت زیر استفاده کنید:
+Rules:
+1. At first, you only have the manifest.
+2. To fetch file content, use this format:
 
 ```codemerge-fetch
 path/to/file1.ts
 path/to/file2.ts
 ```
 
-3. برای جستجو:
+3. For search:
 
 ```codemerge-search
 symbol_name
 ```
 
-4. هرگز نخواهید «کل پروژه» را بفرستد.
+4. Never ask for the "whole project".
 
-من الان manifest را می‌فرستم. تا دریافت آن، تأیید کنید.
+I am sending the manifest now. Until you receive it, confirm.
 ```
 
-### پرامپت ۲: ارسال manifest
+### Prompt 2: Send Manifest
 
 ```
-manifest پروژه در ادامه آمده است. لطفاً:
+The project manifest is below. Please:
+1. Give a 5-10 line summary of the project structure.
+2. Wait for my command.
 
-1. یک خلاصهٔ ۵-۱۰ خطی از ساختار پروژه بدهید.
-2. منتظر دستور من بمانید.
-
---- شروع manifest ---
-[محتوا]
---- پایان manifest ---
+--- start manifest ---
+[content]
+--- end manifest ---
 ```
 
-### پرامپت ۳: رفع باگ
+### Prompt 3: Bug Fix
 
 ```
-# تسک: رفع باگ
+# Task: Bug Fix
 
-## شرح باگ
-[توضیح مشکل]
+## Bug Description
+[problem description]
 
-## پیام خطا
-[متن خطا]
+## Error Message
+[error text]
 
-## دستورالعمل
-1. بر اساس manifest، حدس بزنید باگ کجاست.
-2. فقط همان فایل‌ها را با codemerge-fetch درخواست کنید.
-3. ریشهٔ باگ را تحلیل کنید.
-4. راه‌حل را ارائه دهید.
+## Instructions
+1. Based on the manifest, guess where the bug is.
+2. Request only those files using codemerge-fetch.
+3. Analyze the root cause.
+4. Provide the solution.
 ```
 
-### پرامپت ۴: ادامهٔ نشست
+### Prompt 4: Continue Session
 
 ```
-# ادامهٔ نشست
+# Continue Session
 
-## خلاصهٔ نشست قبلی
-[خلاصه]
+## Previous Session Summary
+[summary]
 
-## تغییرات اعمال‌شده
-[توضیح]
+## Applied Changes
+[description]
 
-## خروجی codemerge diff
-[محتوای bundle.txt از diff]
+## codemerge diff output
+[content of bundle.txt from diff]
 
-## تسک فعلی
-[تسک جدید]
+## Current Task
+[new task]
 ```
 
-### پرامپت ۵: بازیابی وقتی AI از مسیر خارج شده
+### Prompt 5: Recovery When AI Goes Off Track
 
 ```
-لطفاً یک لحظه صبر کنید.
+Please pause for a moment.
 
-به یاد بیاورید:
-1. برای دریافت فایل، از codemerge-fetch استفاده کنید.
-2. برای جستجو، از codemerge-search استفاده کنید.
-3. برای تغییرات، از codemerge-diff استفاده کنید.
-4. هرگز نخواهید «کل پروژه» را بفرستد.
+Remember:
+1. To fetch files, use codemerge-fetch.
+2. To search, use codemerge-search.
+3. For changes, use codemerge-diff.
+4. Never ask for the "whole project".
 
-اکنون به تسک اصلی برگردیم:
-[تسک]
+Now back to the main task:
+[task]
 ```
 
 ---
 
-## جمع‌بندی
+## Summary
 
-| خواسته | وضعیت |
+| Feature | Status |
 |---|---|
-| Manifest با مسیر و توابع | ✅ |
-| Fetch لیست فایل | ✅ |
-| Diff از آخرین اجرا | ✅ |
+| Manifest with paths and functions | ✅ |
+| Fetch file list | ✅ |
+| Diff from last run | ✅ |
 | Search | ✅ |
-| انتخاب زبان | ✅ |
-| پشتیبانی از TypeScript + ۱۵ زبان | ✅ |
+| Language selection | ✅ |
+| TypeScript + 15 languages support | ✅ |
 | Generic type parameters | ✅ |
 | Object literals | ✅ |
 | Scope tracking | ✅ |
 | `.codemergeignore` | ✅ |
-| فایل‌های حساس | ✅ |
-| بدون وابستگی خارجی | ✅ |
+| Sensitive files | ✅ |
+| No external dependencies | ✅ |
 
-با این ابزار، حجم ارسال به AI معمولاً **۱۰ تا ۵۰ برابر** کمتر از فرستادن کل پروژه می‌شود، در حالی که هوش مصنوعی دید کامل نسبت به ساختار پروژه دارد.
+With this tool, the data sent to AI is typically **10 to 50 times less** than sending the whole project, while the AI has full visibility into the project structure.
 
 ---
 
-**نسخه:** ۱.۰ نهایی  
-**مجوز:** MIT  
-**سازگاری:** Python 3.8+
+**Version:** 1.0 Final  
+**License:** MIT  
+**Compatibility:** Python 3.8+

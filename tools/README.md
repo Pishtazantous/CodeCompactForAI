@@ -188,4 +188,3 @@ After this, the following shortcuts are available:
 | `cm-estimate` | `python tools/estimate.py @args` |
 | `cm-metrics` | `python tools/log_metrics.py @args` |
 | `cm-watch` | `python tools/watch.py @args` |
-

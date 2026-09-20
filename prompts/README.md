@@ -1,63 +1,62 @@
-file:prompts/README.md
-# پرامپت‌های codemerge
+# codemerge Prompts
 
-این پوشه شامل پرامپت‌های آماده برای استفاده از دستیار هوش مصنوعی با ابزار `codemerge.py` است.
+This folder contains ready-to-use prompts for working with the AI assistant using the `codemerge.py` tool.
 
-## ترتیب استفاده
+## Usage Order
 
-### در نشست اول
+### First Session
 
-1. `01-system.md` — یک بار در ابتدای نشست
-2. `01-system-append-2.md` — قواعد ویرایش و خروجی (همیشه همراه قبلی)
-3. `02-manifest.md` — بعد از آن، همراه با محتوای manifest
-4. `Anti-AI-Slop/00-master-anti-slop.md` — لایهٔ ضد-Slop عمومی
-5. `Expertise and Experience/00-anti-slop-core.md` — لایهٔ ضد-Slop پروژه
-6. یکی از فایل‌های تخصص (`Expertise and Experience/XX-*.md`) — حداکثر یکی
-7. یکی از فایل‌های تسک (`03-bug-fix.md` تا `08-explain-code.md`) — بسته به تسک
+1. `01-system.md` — once at the beginning of the session
+2. `01-system-append-2.md` — editing and output rules (always with the previous)
+3. `02-manifest.md` — after that, along with manifest content
+4. `Anti-AI-Slop/00-master-anti-slop.md` — general anti-slop layer
+5. `Expertise and Experience/00-anti-slop-core.md` — project-specific anti-slop layer
+6. One expertise file (`Expertise and Experience/XX-*.md`) — at most one
+7. One task file (`03-bug-fix.md` to `08-explain-code.md`) — depending on the task
 
-### در نشست‌های بعدی
+### Subsequent Sessions
 
-1. `01-system.md` + `01-system-append-2.md` — دوباره اگر دستیار جدیدی استفاده می‌کنید
-2. `09-continue-session.md` — برای ادامه
+1. `01-system.md` + `01-system-append-2.md` — again if using a new assistant
+2. `09-continue-session.md` — to continue
 
-### پرامپت‌های کمکی (در صورت نیاز)
+### Auxiliary Prompts (as needed)
 
-- `10-recovery.md` — وقتی AI از مسیر خارج شده
-- `11-limit-files.md` — وقتی AI فایل زیادی درخواست می‌کند
-- `12-long-response.md` — وقتی پاسخ AI طولانی است
-- `13-final-summary.md` — برای گرفتن خلاصهٔ پایانی
-- `14-checklist.md` — چک‌لیست داخلی AI
+- `10-recovery.md` — when AI goes off track
+- `11-limit-files.md` — when AI requests too many files
+- `12-long-response.md` — when AI response is too long
+- `13-final-summary.md` — for getting a final summary
+- `14-checklist.md` — AI internal checklist
 
-## نمونهٔ جریان کامل
+## Full Workflow Example
 
 ```bash
-# 1. ساخت manifest
+# 1. Build manifest
 python codemerge.py manifest --format md -o .ai/manifest.md
 
-# 2. کپی محتوای 01-system.md و 01-system-append-2.md و ارسال به AI
-# 3. کپی محتوای 02-manifest.md + محتوای manifest و ارسال به AI
+# 2. Copy content of 01-system.md and 01-system-append-2.md and send to AI
+# 3. Copy content of 02-manifest.md + manifest content and send to AI
 
-# 4. انتخاب تسک و ارسال (مثلاً 03-bug-fix.md)
+# 4. Select task and send (e.g., 03-bug-fix.md)
 
-# 5. AI درخواست فایل‌ها را می‌دهد با فرمت codemerge-fetch
-# 6. اجرای درخواست AI
+# 5. AI requests files in codemerge-fetch format
+# 6. Execute AI request
 python codemerge.py fetch lib/api/auth.ts lib/api/client.ts -o bundle.txt
 
-# 7. ارسال bundle.txt به AI
+# 7. Send bundle.txt to AI
 
-# 8. اعمال تغییرات پیشنهادی AI
+# 8. Apply AI-proposed changes
 
-# 9. ذخیرهٔ state برای diff
+# 9. Save state for diff
 python codemerge.py diff -o changes.txt
 
-# 10. در نشست بعدی
-#     کپی محتوای 09-continue-session.md + محتوای changes.txt و ارسال به AI
+# 10. In next session
+#     Copy content of 09-continue-session.md + content of changes.txt and send to AI
 ```
 
-## نکات مهم
+## Important Notes
 
-- **پرامپت ۰۱ و ۰۱-append را همیشه اول بفرستید** — بدون آن‌ها AI نمی‌داند با چه ابزاری کار می‌کند و چه فرمتی باید بدهد.
-- **پرامپت ۰۲ را بلافاصله بعد از آن‌ها بفرستید** — همراه با محتوای manifest.
-- **در هر تسک، یک پرامپت تسک بفرستید** — نه چند تسک در یک پیام.
-- **در پایان نشست، پرامپت ۱۳ را بفرستید** — تا خلاصهٔ آماده برای نشست بعد داشته باشید.
-- **در نشست بعدی، از پرامپت ۰۹ استفاده کنید** — همراه با خلاصهٔ نشست قبل و خروجی diff.
+- **Always send prompt 01 and 01-append first** — without them, AI doesn't know what tool it's working with or what format to use.
+- **Send prompt 02 immediately after them** — along with manifest content.
+- **For each task, send one task prompt** — not multiple tasks in one message.
+- **At the end of the session, send prompt 13** — to have a ready summary for the next session.
+- **In the next session, use prompt 09** — along with the previous session summary and diff output.
