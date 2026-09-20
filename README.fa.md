@@ -2,48 +2,29 @@
 
 ابزار خط فرمان برای آماده‌سازی پروژه‌های نرم‌افزاری جهت ارسال به مدل‌های هوش مصنوعی — بدون فرستادن کل پروژه.
 
-با این ابزار، به‌جای ارسال کل کدبیس به AI، ابتدا یک **نقشهٔ فشرده** می‌فرستید و AI خودش تصمیم می‌گیرد کدام فایل‌ها را لازم دارد. نتیجه: **کاهش ۱۰ تا ۵۰ برابری** حجم ارسال، هزینهٔ کمتر، و پاسخ دقیق‌تر.
-
----
+به جای ارسال کل کدبیس، یک **نقشهٔ فشرده** ارسال می‌کنید و هوش مصنوعی خودش تصمیم می‌گیرد کدام فایل‌ها را لازم دارد. نتیجه: **کاهش ۱۰ تا ۵۰ برابری** حجم ارسال، هزینه کمتر و پاسخ دقیق‌تر.
 
 ## فهرست
 
-1. [معرفی کوتاه](#معرفی-کوتاه)
-2. [پیش‌نیازها](#پیشنیازها)
-3. [نصب](#نصب)
-4. [شروع سریع](#شروع-سریع)
-5. [تولید خروجی از کل پروژه](#تولید-خروجی-از-کل-پروژه)
-6. [گردش کار کامل با AI](#گردش-کار-کامل-با-ai)
-7. [دستورات codemerge.py](#دستورات-codemergepy)
-8. [گزینه‌های مشترک](#گزینههای-مشترک)
-9. [فایل ignore](#فایل-ignore)
-10. [فایل‌های حساس](#فایلهای-حساس)
-11. [ساختار promptها](#ساختار-promptها)
-12. [ابزارهای کمکی](#ابزارهای-کمکی)
-13. [تست](#تست)
-14. [عیب‌یابی](#عیبیابی)
-15. [ساختار پروژه](#ساختار-پروژه)
-
----
-
-## معرفی کوتاه
-
-`codemerge.py` یک اسکریپت تک‌فایل پایتون است که چهار کار انجام می‌دهد:
-
-| دستور | کار |
-|---|---|
-| `manifest` | ساخت نقشهٔ فشردهٔ پروژه (مسیر + imports + توابع + کلاس‌ها) |
-| `fetch` | دریافت محتوای کامل لیست مشخصی از فایل‌ها |
-| `diff` | دریافت فقط فایل‌های تغییر یافته از آخرین اجرا |
-| `search` | جستجوی یک نماد در کل پروژه |
-
-به همراه این‌ها، مجموعه‌ای از ابزارهای جانبی در `tools/` برای snapshot، اعمال خروجی AI، verify، مدیریت session و... وجود دارد.
-
----
+- [پیش‌نیازها](#پیشنیازها)
+- [شروع سریع](#شروع-سریع)
+- [تولید خروجی از کل پروژه](#تولید-خروجی-از-کل-پروژه)
+- [گردش کار کامل با AI](#گردش-کار-کامل-با-ai)
+- [دستورات](#دستورات)
+- [گزینه‌های مشترک](#گزینههای-مشترک)
+- [فایل ignore](#فایل-ignore)
+- [فایل‌های حساس](#فایلهای-حساس)
+- [ساختار promptها](#ساختار-promptها)
+- [ابزارهای کمکی](#ابزارهای-کمکی)
+- [تست](#تست)
+- [عیب‌یابی](#عیبیابی)
+- [ساختار پروژه](#ساختار-پروژه)
+- [مجوز](#مجوز)
+- [سازگاری](#سازگاری)
 
 ## پیش‌نیازها
 
-- **Python 3.9+** (توصیه‌شده: 3.11+)
+- **Python 3.9 یا بالاتر** (3.11+ توصیه می‌شود)
 - **Git** (اختیاری، ولی توصیه می‌شود)
 - **tiktoken** (اختیاری، برای شمارش دقیق توکن)
 
@@ -51,106 +32,86 @@
 pip install tiktoken    # اختیاری
 ```
 
----
-
-## نصب
-
-هیچ نصبی لازم نیست. کل پروژه را کپی کنید و از دستورات استفاده کنید.
-
-```bash
-# بررسی سلامت
-python codemerge.py --help
-python codemerge.py langs
-```
-
----
-
 ## شروع سریع
 
-سه دستور برای شروع:
+هیچ نصب لازم نیست. کافیست پروژه را کپی کنید و دستورات را اجرا کنید.
 
 ```bash
-# ۱. ساخت نقشهٔ پروژه
+# بررسی سلامت ابزار
+python codemerge.py --help
+python codemerge.py langs
+
+# ساخت نقشهٔ فشردهٔ پروژه
 python codemerge.py manifest --format md -o .ai/manifest.md
 
-# ۲. ارسال .ai/manifest.md به AI
-#    (به همراه promptهای مناسب — ببینید بخش «گردش کار کامل»)
-
-# ۳. بعد از پاسخ AI، دریافت فایل‌های درخواستی
+# ارسال .ai/manifest.md به AI همراه با promptهای مربوطه
+# بعد از درخواست فایل توسط AI، دریافت محتوای آن‌ها
 python codemerge.py fetch lib/api/auth.ts lib/api/client.ts -o .ai/bundle.txt
 ```
 
 سپس `.ai/bundle.txt` را به AI بفرستید.
 
----
-
 ## تولید خروجی از کل پروژه
 
-گاهی لازم است کل پروژه — نه فقط فایل‌های انتخابی — در یک فایل خروجی گرفته شود. مثلاً:
-- بارگذاری اولیه برای AI که context کامل را ببیند (پروژه‌های کوچک)
-- آرشیو یا backup قبل از تغییرات بزرگ
-- بازبینی offline یا انتقال به سیستم دیگر
-- ساخت bundle برای فایل‌های خاص (مثلاً فقط TypeScript)
+در بعضی موارد نیاز دارید کل پروژه در یک فایل باشد: بارگذاری اولیه برای AI، backup یا بررسی آفلاین. `codemerge.py` **چهار روش** برای این کار دارد.
 
-`codemerge.py` چهار روش برای این کار دارد. هر روش برای سناریوی متفاوتی مناسب است.
+### روش ۱ — فقط نقشه (مسیرها + نمادها)
 
-### روش ۱ — نقشهٔ کامل پروژه (فقط فهرست + نمادها)
-
-**مناسب برای:** ارسال سریع ساختار کل پروژه به AI بدون محتوای فایل‌ها.
+ساختار پروژه را بدون محتوای فایل‌ها ارسال می‌کند.
 
 ```bash
-# فرمت متن
+# متن
 python codemerge.py manifest --all-files -o .ai/manifest-full.txt
 
-# فرمت Markdown (مناسب AI)
+# Markdown
 python codemerge.py manifest --all-files --format md -o .ai/manifest-full.md
 
-# فرمت JSON (مناسب ابزارهای خودکار)
+# JSON
 python codemerge.py manifest --all-files --format json -o .ai/manifest-full.json
 
-# فشرده‌ترین حالت (بدون symbols و imports)
+# بدون نمادها و imports
 python codemerge.py manifest --all-files --no-symbols --no-imports -o .ai/files-list.txt
 ```
 
-**نکته:** `--all-files` فیلتر زبان را نادیده می‌گیرد و همهٔ فایل‌های متنی را شامل می‌شود.
+`--all-files` فیلتر زبان را نادیده می‌گیرد.
 
-**اندازهٔ معمول:** برای پروژه‌ای با ۲۰۰ فایل، حدود ۱۰ تا ۳۰ کیلوبایت.
+اندازه معمول: برای ۲۰۰ فایل، حدود ۱۰ تا ۳۰ کیلوبایت.
 
-### روش ۲ — bundle کامل محتوای پروژه (شامل متن همهٔ فایل‌ها)
+### روش ۲ — bundle کامل محتوا
 
-**مناسب برای:** پروژه‌های کوچک یا بارگذاری اولیه.
+متن همهٔ فایل‌های انتخاب‌شده را شامل می‌شود.
 
 ```bash
-# اجرای اول diff = کل پروژه (بدون state قبلی)
+# اجرای اول — diff برابر کل پروژه است
 python codemerge.py diff -o .ai/full_project.txt
 
-# اگر قبلاً diff اجرا کرده‌اید و می‌خواهید دوباره کل پروژه را بگیرید:
+# اگر قبلاً diff اجرا کرده‌اید و می‌خواهید دوباره کل پروژه را بگیرید
 python codemerge.py diff --full --reset-state -o .ai/full_project.txt
 
 # بدون هدر (فقط محتوای فایل‌ها)
 python codemerge.py diff --full --reset-state --no-header -o .ai/full_project.txt
 ```
 
-**چرا `diff` و نه `fetch`؟** چون `fetch` نیاز به لیست صریح فایل‌ها دارد و برای «کل پروژه» باید لیست کامل ساخت. در حالی که `diff` با `--full` خودش همهٔ فایل‌ها را انتخاب می‌کند.
+`fetch` نیاز به لیست صریح فایل‌ها دارد، بنابراین برای «کل پروژه» مناسب نیست. `diff --full` به‌طور خودکار همه فایل‌ها را انتخاب می‌کند.
 
-### روش ۳ — bundle کامل با فیلتر زبان
+### روش ۳ — bundle با فیلتر زبان
 
-**مناسب برای:** پروژه‌های چندزبانه که می‌خواهید فقط یک زبان را داشته باشید.
+برای پروژه‌های چندزبانه که می‌خواهید فقط یک زبان را داشته باشید.
 
 ```bash
-# فقط TypeScript/JavaScript
+# فقط TypeScript / JavaScript
 python codemerge.py diff --full --reset-state -l typescript,javascript -o .ai/ts-only.txt
 
-# فقط Python (بک‌اند)
+# فقط Python
 python codemerge.py diff --full --reset-state -l python -o .ai/backend.txt
 
-# فقط Markdown (مستندات)
+# فقط Markdown
 python codemerge.py diff --full --reset-state -l markdown -o .ai/docs.txt
 ```
 
-### روش ۴ — bundle کامل از لیست مشخص (لیست سفارشی)
+### روش ۴ — لیست سفارشی
 
-**مناسب برای:** وقتی لیست دقیق فایل‌های موردنظر را دارید (مثل `md-list.txt`).
+برای مواردی که لیست دقیق فایل‌ها را دارید (مثل `md-list.txt`).
 
 ```bash
 # از فایل لیست
@@ -160,129 +121,103 @@ python codemerge.py fetch --files-from md-list.txt -o .ai/bundle-custom.txt
 Get-Content md-list.txt | python codemerge.py fetch --from-stdin -o .ai/bundle-custom.txt
 ```
 
-این روش در پروژهٔ فعلی رایج‌ترین روش است، چون `md-list.txt` حاوی لیست دقیق ۴۷ فایل مهم پروژه است.
+### هشدارها
 
----
+خروجی‌های بزرگ می‌توانند از پنجرهٔ context AI عبور کنند. اکثر مدل‌های فعلی حدود ۱۲۸K توکن limit دارند و یک پروژهٔ Node.js می‌تواند ۱۰۰K+ توکن باشد. همچنین هر bundle بزرگ هزینهٔ ورودی API را چند برابر می‌کند. به عنوان قاعدهٔ عملی، اگر bundle از ۳۰,۰۰۰ توکن بیشتر شد، آن را به قسمت‌های کوچک‌تر تقسیم کنید.
 
-### هشدارها و محدودیت‌ها
+فلگ `--allow-sensitive` فایل‌های `.env`، کلیدهای خصوصی و سایر اعتبارنامه‌ها را در bundle قرار می‌دهد. فقط زمانی استفاده کنید که مطمئن باشید خروجی به طرف ثالثی ارسال نمی‌شود.
 
-> ⚠️ **خروجی می‌تواند بسیار بزرگ باشد.** برای پروژه‌های بالای ۵۰ فایل، خروجی ممکن است چند مگابایت شود.
+### تخمین حجم و هزینه
 
-> ⚠️ **از context window AI عبور می‌کند.** مدل‌های فعلی حدود ۱۲۸K توکن context دارند. یک پروژهٔ متوسط Node.js می‌تواند ۱۰۰K+ توکن باشد.
-
-> ⚠️ **هزینهٔ API را زیاد می‌کند.** هر درخواست با bundle بزرگ، هزینهٔ ورودی را چند برابر می‌کند.
-
-> ⚠️ **`--allow-sensitive` خطرناک است.** استفادهٔ نادرست از این فلگ باعث می‌شود `.env` و کلیدهای خصوصی وارد bundle شوند و برای AI فرستاده شوند.
-
-**قاعدهٔ سرانگشتی:** اگر bundle بالای ۳۰,۰۰۰ توکن است، آن را به بخش‌های کوچک‌تر تقسیم کنید.
-
----
-
-### تخمین حجم و هزینه قبل از تولید
-
-**قبل از اینکه خروجی کامل بگیرید، اندازه را تخمین بزنید:**
+قبل از تولید bundle کامل، پیش‌نمایش کنید که کدام فایل‌ها وارد خروجی می‌شوند:
 
 ```bash
-# پیش‌نمایش لیست فایل‌هایی که وارد خروجی می‌شوند (بدون نوشتن فایل)
 python codemerge.py diff --dry-run --full
-
-# خروجی نمونه:
-# [full] Would merge 47 file(s) into .ai/full_project.txt:
-#   codemerge.py  (60,234 bytes)
-#   docs/CHEATSHEET.md  (3,412 bytes)
-#   ...
-# Total changed size: 342,891 bytes
 ```
 
-**بعد از تولید، توکن و هزینه را تخمین بزنید:**
+نمونه خروجی:
+
+```text
+[full] Would merge 47 file(s) into .ai/full_project.txt:
+  codemerge.py  (60,234 bytes)
+  docs/CHEATSHEET.md  (3,412 bytes)
+  ...
+Total changed size: 342,891 bytes
+```
+
+بعد از تولید، توکن و هزینه را تخمین بزنید:
 
 ```bash
-# تخمین توکن (با tiktoken اگر نصب باشد)
-python tools\estimate.py .ai/full_project.txt
-
-# تخمین هزینه برای یک مدل خاص
-python tools\estimate.py .ai/full_project.txt --model deepseek-chat
-python tools\estimate.py .ai/full_project.txt --model gpt-4o
-python tools\estimate.py .ai/full_project.txt --model claude-sonnet-4
+python tools/estimate.py .ai/full_project.txt
+python tools/estimate.py .ai/full_project.txt --model deepseek-chat
+python tools/estimate.py .ai/full_project.txt --model gpt-4o
 ```
 
----
+### توصیه‌ها
 
-### توصیه‌های عملی
-
-| سناریو | روش پیشنهادی |
+| سناریو | روش |
 |---|---|
-| پروژه کوچک (< ۳۰ فایل) | روش ۲ (`diff --full`) |
-| پروژه متوسط (۳۰-۱۰۰ فایل) | روش ۱ (manifest) + روش ۴ (fetch انتخابی) |
-| پروژه بزرگ (> ۱۰۰ فایل) | فقط روش ۱ (manifest) یا روش ۳ (فیلتر زبان) |
-| پروژهٔ چندزبانه | روش ۳ (هر زبان جداگانه) |
-| آرشیو یا backup | روش ۲ یا ۴ (بسته به نیاز) |
-| ارسال اولیه به AI | روش ۱ (نقشه) → سپس درخواست AI → روش ۴ |
-
----
+| پروژه کوچک (کمتر از ۳۰ فایل) | روش ۲ (`diff --full`) |
+| پروژه متوسط (۳۰ تا ۱۰۰ فایل) | روش ۱، سپس روش ۴ |
+| پروژه بزرگ (بیش از ۱۰۰ فایل) | روش ۱، یا روش ۳ |
+| پروژه چندزبانه | روش ۳، یک زبان در هر بار |
+| آرشیو یا backup | روش ۲ یا ۴ |
+| ارسال اولیه به AI | روش ۱، سپس روش ۴ |
 
 ### ترکیب با `.codemergeignore`
 
-قواعد `.codemergeignore` روی **همهٔ روش‌ها** اعمال می‌شود. مثلاً اگر `content/posts/` را ignore کرده باشید، در هیچ‌کدام از روش‌های بالا ظاهر نمی‌شود.
-
-برای نادیده گرفتن قواعد ignore (مثلاً گرفتن bundle واقعاً کامل):
+قواعد `.codemergeignore` روی **همهٔ روش‌ها** اعمال می‌شود. برای نادیده گرفتن آن‌ها:
 
 ```bash
 python codemerge.py diff --full --reset-state --no-ignore-file -o .ai/everything.txt
 ```
 
-> ⚠️ استفاده از `--no-ignore-file` همراه با `--allow-sensitive` **بسیار خطرناک** است. فقط در محیط‌های بسیار کنترل‌شده استفاده کنید.
+ترکیب `--no-ignore-file` با `--allow-sensitive` همهٔ فایل‌های پروژه، شامل اعتبارنامه‌ها را وارد bundle می‌کند. این کار باید اجتناب شود.
 
----
-
-### چه چیزی همیشه حذف می‌شود (حتی در حالت full)
+### فایل‌هایی که همیشه حذف می‌شوند
 
 حتی با `--all-files`، این‌ها هرگز وارد bundle نمی‌شوند:
 
-| دسته | مثال |
+| دسته | مثال‌ها |
 |---|---|
 | پوشه‌های سیستمی | `.git`, `node_modules`, `__pycache__`, `dist`, `build` |
-| lock files | `package-lock.json`, `yarn.lock`, `poetry.lock` |
+| فایل‌های قفل | `package-lock.json`, `yarn.lock`, `poetry.lock` |
 | فایل‌های minified | `*.min.js`, `*.min.css`, `*.map` |
-| فایل‌های باینری | تصاویر، فونت‌ها، فایل‌های فشرده |
+| فایل‌های باینری | تصاویر، فونت‌ها، آرشیوها |
 | فایل‌های حساس | `.env`, `*.pem`, `*.key`, `id_rsa` |
-| فایل‌های بزرگ | بالای `--max-size` (پیش‌فرض: 100 MB) |
+| فایل‌های بزرگ | بیشتر از `--max-size` (پیش‌فرض: ۱۰۰ مگابایت) |
 
-برای شامل کردن فایل‌های حساس: `--allow-sensitive` (بسیار پرخطر).
-برای فایل‌های باینری: هیچ راهی نیست — طراحی tool به‌عمد آن‌ها را حذف می‌کند.
-برای lock files: `--include package-lock.json` (فقط force-include).
-
----
+برای شامل کردن فایل‌های حساس از `--allow-sensitive` استفاده کنید. فایل‌های باینری به‌طور عمدی قابل شامل نیستند. فایل‌های قفل را می‌توان با `--include package-lock.json` وارد کرد.
 
 ## گردش کار کامل با AI
 
 ### گام ۱ — آماده‌سازی
 
 ```powershell
-# Snapshot قبل از شروع (اختیاری، ولی توصیه‌شده)
-python tools\snapshot.py --label before-session
+# اختیاری، ولی توصیه می‌شود: snapshot قبل از شروع
+python tools/snapshot.py --label before-session
 
-# ساخت manifest در فرمت Markdown
-python codemerge.py manifest --format md -o .ai\manifest.md
+# ساخت نقشه
+python codemerge.py manifest --format md -o .ai/manifest.md
 ```
 
 ### گام ۲ — ارسال promptها به AI
 
-به ترتیب زیر promptها را کپی و به AI بفرستید:
+در این ترتیب promptها را ارسال کنید:
 
 1. `prompts/01-system.md` — قواعد پایه
 2. `prompts/01-system-append-2.md` — قواعد ویرایش و فرمت خروجی
-3. `prompts/02-manifest.md` + محتوای `.ai/manifest.md`
+3. `prompts/02-manifest.md` به همراه محتوای `.ai/manifest.md`
 4. `prompts/Anti-AI-Slop/00-master-anti-slop.md` — قواعد ضد-Slop عمومی
 5. `prompts/Expertise and Experience/00-anti-slop-core.md` — قواعد ضد-Slop پروژه
-6. **حداکثر یکی** از `prompts/Expertise and Experience/XX-*.md` — تخصص موردنیاز
-7. یکی از تسک‌ها: `prompts/03-bug-fix.md` تا `prompts/08-explain-code.md`
+6. **حداکثر یکی** از `prompts/Expertise and Experience/XX-*.md`
+7. یک prompt تسک: `prompts/03-bug-fix.md` تا `prompts/08-explain-code.md`
 
-> **قاعدهٔ فولادی:** هرگز دو فایل تخصص را در یک نشست ترکیب نکنید.
+در هر نشست فقط از یک فایل تخصص استفاده کنید. ترکیب دو فایل تخصص می‌تواند باعث شود AI راهنمایی ناسازگار دریافت کند.
 
-### گام ۳ — دریافت درخواست AI
+### گام ۳ — دریافت درخواست فایل از AI
 
-AI با این فرمت پاسخ می‌دهد:
+AI پاسخ می‌دهد:
 
 ```
 ```codemerge-fetch
@@ -292,70 +227,47 @@ store/authStore.ts
 ```
 ```
 
-شما این را با دستور زیر اجرا می‌کنید:
+اجرا کنید:
 
 ```powershell
-python codemerge.py fetch lib/api/auth.ts lib/api/client.ts store/authStore.ts -o .ai\bundle.txt
-```
+python codemerge.py fetch lib/api/auth.ts lib/api/client.ts store/authStore.ts -o .ai/bundle.txt
 
-یا از فایل:
-
-```powershell
-# ذخیرهٔ لیست در requested.txt
-python codemerge.py fetch --files-from requested.txt -o .ai\bundle.txt
+# یا از فایل
+python codemerge.py fetch --files-from requested.txt -o .ai/bundle.txt
 ```
 
 ### گام ۴ — ارسال bundle به AI
 
-محتوای `.ai/bundle.txt` را در ادامهٔ گفتگو کپی کنید.
+محتوای `.ai/bundle.txt` را در گفتگو پیست کنید.
 
 ### گام ۵ — اعمال تغییرات AI
 
-AI پاسخ را در این فرمت می‌دهد:
-
-```
-```file:lib/api/auth.ts
-<محتوای کامل فایل>
-```
-```
-
-پاسخ را در `ai_response.md` ذخیره کنید و:
+پاسخ AI را در `ai_response.md` ذخیره کنید، سپس:
 
 ```powershell
-# پیش‌نمایش
-python tools\apply_ai_output.py ai_response.md --dry-run
-
-# اعمال
-python tools\apply_ai_output.py ai_response.md
-
-# بررسی سلامت
+python tools/apply_ai_output.py ai_response.md --dry-run
+python tools/apply_ai_output.py ai_response.md
 .\tools\verify.ps1
 ```
 
 ### گام ۶ — پایان نشست
 
 ```powershell
-# ذخیرهٔ state برای diff آینده
-python codemerge.py diff -o .ai\changes.txt
-
-# خلاصهٔ نشست
-python tools\session_summary.py --last 1
+python codemerge.py diff -o .ai/changes.txt
+python tools/session_summary.py --last 1
 ```
 
 ### گام ۷ — نشست بعدی
 
 ```powershell
-# فقط تغییرات را به AI بفرستید
-python codemerge.py diff -o .ai\changes.txt
+python codemerge.py diff -o .ai/changes.txt
 ```
 
-همراه با `prompts/09-continue-session.md`.
+همراه با `prompts/09-continue-session.md` ارسال کنید.
 
----
+## دستورات
 
-## دستورات `codemerge.py`
-
-### `manifest` — نقشهٔ پروژه
+### manifest — نقشهٔ پروژه
 
 ```bash
 python codemerge.py manifest [OPTIONS]
@@ -363,28 +275,21 @@ python codemerge.py manifest [OPTIONS]
 
 | گزینه | توضیح |
 |---|---|
-| `--format {text,md,json}` | فرمت خروجی (پیش‌فرض: `text`) |
-| `--no-symbols` | بدون توابع/کلاس‌ها |
-| `--no-imports` | بدون imports |
+| `--format {text,md,json}` | فرمت خروجی (پیش‌فرض: text) |
+| `--no-symbols` | حذف توابع و کلاس‌ها |
+| `--no-imports` | حذف imports |
 | `--max-tokens N` | سقف نرم توکن |
 
-**نمونه‌ها:**
+نمونه‌ها:
 
 ```bash
-# نقشهٔ کامل
 python codemerge.py manifest -o .ai/manifest.txt
-
-# فقط TypeScript
 python codemerge.py manifest -l typescript -o .ai/manifest.txt
-
-# فرمت Markdown (مناسب AI)
 python codemerge.py manifest --format md -o .ai/manifest.md
-
-# فشرده
 python codemerge.py manifest --no-symbols --no-imports -o .ai/files.txt
 ```
 
-### `fetch` — دریافت محتوای فایل‌ها
+### fetch — دریافت محتوای فایل‌ها
 
 ```bash
 python codemerge.py fetch FILES... [OPTIONS]
@@ -392,21 +297,19 @@ python codemerge.py fetch FILES... [OPTIONS]
 
 | گزینه | توضیح |
 |---|---|
-| `FILES ...` | مسیر فایل‌ها (نسبت به ریشه) |
-| `--files-from FILE` | خواندن لیست از فایل |
-| `--from-stdin` | خواندن لیست از stdin |
+| `FILES ...` | مسیر فایل‌ها نسبت به ریشهٔ پروژه |
+| `--files-from FILE` | خواندن مسیرها از فایل |
+| `--from-stdin` | خواندن مسیرها از stdin |
 
-**نمونه‌ها:**
+نمونه‌ها:
 
 ```bash
 python codemerge.py fetch lib/api/auth.ts lib/api/client.ts -o .ai/bundle.txt
-
 python codemerge.py fetch --files-from requested.txt -o .ai/bundle.txt
-
 Get-Content requested.txt | python codemerge.py fetch --from-stdin -o .ai/bundle.txt
 ```
 
-### `diff` — فقط تغییرات
+### diff — فقط تغییرات
 
 ```bash
 python codemerge.py diff [OPTIONS]
@@ -414,22 +317,22 @@ python codemerge.py diff [OPTIONS]
 
 | گزینه | توضیح |
 |---|---|
-| `--state-file PATH` | مسیر state (پیش‌فرض: `<output>.state.json`) |
-| `--full` | ادغام کامل |
-| `--reset-state` | حذف state قبل از اجرا |
-| `--dry-run` | فقط نمایش تغییرات |
+| `--state-file PATH` | مسیر فایل state (پیش‌فرض: `<output>.state.json`) |
+| `--full` | اجبار به ادغام کامل |
+| `--reset-state` | حذف فایل state قبل از اجرا |
+| `--dry-run` | نمایش تغییرات بدون نوشتن |
 
-**رفتار:**
+رفتار:
 
 | سناریو | نتیجه |
 |---|---|
-| اجرای اول | حالت `full` (کل پروژه) |
-| بدون تغییر | `No changes since last run.` |
+| اجرای اول | حالت کامل (full) |
+| بدون تغییر | پیام `No changes since last run.` |
 | فایل تغییر کرده | فقط همان فایل |
 | فایل حذف شده | در هدر گزارش می‌شود |
-| `.codemergeignore` تغییر کرد | خودکار به `full` سوییچ می‌کند |
+| `.codemergeignore` تغییر کرد | به‌طور خودکار به حالت full سوییچ می‌کند |
 
-### `search` — جستجوی نماد
+### search — جستجوی نماد
 
 ```bash
 python codemerge.py search PATTERN [OPTIONS]
@@ -438,9 +341,9 @@ python codemerge.py search PATTERN [OPTIONS]
 | گزینه | توضیح |
 |---|---|
 | `PATTERN` | regex یا متن ساده |
-| `--max-hits N` | حداکثر نتیجه (پیش‌فرض: 500) |
+| `--max-hits N` | حداکثر نتیجه (پیش‌فرض: ۵۰۰) |
 
-**نمونه:**
+نمونه‌ها:
 
 ```bash
 python codemerge.py search "handleLogin"
@@ -448,46 +351,42 @@ python codemerge.py search "function handle.*Login" -l typescript
 python codemerge.py search UserRepository --output hits.txt
 ```
 
-### `langs` — فهرست زبان‌ها
+### langs — فهرست زبان‌ها
 
 ```bash
 python codemerge.py langs
 ```
 
----
-
 ## گزینه‌های مشترک
 
-همهٔ این‌ها در `manifest`, `fetch`, `diff`, `search` کار می‌کنند:
+این گزینه‌ها در `manifest`, `fetch`, `diff` و `search` کار می‌کنند:
 
 | گزینه | توضیح |
 |---|---|
-| `-l`, `--lang LANG [LANG ...]` | انتخاب زبان(ها) |
-| `-o`, `--output FILE` | نام فایل خروجی |
+| `-l`, `--lang LANG [LANG ...]` | فیلتر زبان |
+| `-o`, `--output FILE` | فایل خروجی |
 | `-r`, `--root DIR` | ریشهٔ پروژه |
-| `--max-size MB` | حداکثر حجم هر فایل (پیش‌فرض: 100) |
+| `--max-size MB` | حداکثر حجم فایل (پیش‌فرض: ۱۰۰) |
 | `--no-git` | نادیده گرفتن Git |
-| `--include PATTERN [...]` | الگوهای glob برای force-include |
+| `--include PATTERN [...]` | الگوهای glob برای شامل کردن اجباری |
 | `--exclude PATTERN [...]` | الگوهای glob برای حذف |
 | `--allow-sensitive` | شامل کردن فایل‌های حساس |
 | `--all-files` | نادیده گرفتن فیلتر زبان |
 | `--no-header` | بدون هدر در خروجی |
-| `-q`, `--quiet` | عدم چاپ خلاصه |
+| `-q`, `--quiet` | عدم نمایش خلاصه |
 | `--ignore-file PATH` | فایل ignore سفارشی |
 | `--no-ignore-file` | نادیده گرفتن فایل‌های ignore |
 
----
-
 ## فایل ignore
 
-فایل `.codemergeignore` در ریشهٔ پروژه با نحو gitignore:
+فایل `.codemergeignore` در ریشهٔ پروژه با نحو gitignore کار می‌کند:
 
 ```gitignore
 # محتوای بلاگ
 content/posts/
 content/authors/
 
-# فایل‌های backup
+# فایل‌های پشتیبان
 *.bak
 *.tsbuildinfo
 
@@ -500,7 +399,7 @@ codemerge.state.json
 !content/README.md
 ```
 
-**نحو پشتیبانی‌شده:**
+الگوهای پشتیبانی‌شده:
 
 | الگو | معنی |
 |---|---|
@@ -511,49 +410,43 @@ codemerge.state.json
 | `!docs/README.md` | استثنا |
 | `# comment` | کامنت |
 
----
-
 ## فایل‌های حساس
 
 این فایل‌ها **هرگز** در خروجی قرار نمی‌گیرند (مگر با `--allow-sensitive`):
 
-- `.env` و نسخه‌هایش (به‌جز `.env.example`, `.env.sample`, `.env.template`, `.env.dist`)
-- `id_rsa`, `id_dsa`, `id_ecdsa`, `id_ed25519`
-- `credentials.json`, `secrets.json`, `service-account.json`
-- `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `*.ppk`, `*.secret`, `*.crt`
-- `.netrc`, `.pypirc`, `.htpasswd`, `.pgpass`
-
----
+- `.env` و نسخه‌هایش، به‌جز `.env.example`، `.env.sample`، `.env.template`، `.env.dist`
+- `id_rsa`، `id_dsa`، `id_ecdsa`، `id_ed25519`
+- `credentials.json`، `secrets.json`، `service-account.json`
+- `*.pem`، `*.key`، `*.p12`، `*.pfx`، `*.jks`، `*.keystore`، `*.ppk`، `*.secret`، `*.crt`
+- `.netrc`، `.pypirc`، `.htpasswd`، `.pgpass`
 
 ## ساختار promptها
 
 ```
 prompts/
-├── 01-system.md                    ← قواعد پایه (فارسی)
-├── 01-system-append-2.md           ← قواعد ویرایش (انگلیسی)
-├── 02-manifest.md                  ← همراه با manifest
-├── 03-bug-fix.md                   ← تسک: رفع باگ
-├── 04-feature.md                   ← تسک: افزودن قابلیت
-├── 05-refactor.md                  ← تسک: بازآرایی
-├── 06-code-review.md               ← تسک: بررسی کد
-├── 07-tests.md                     ← تسک: نوشتن تست
-├── 08-explain-code.md              ← تسک: توضیح کد
-├── 09-continue-session.md          ← ادامهٔ نشست
-├── 10-recovery.md                  ← بازیابی وقتی AI از مسیر خارج شد
-├── 11-limit-files.md               ← محدودسازی درخواست
-├── 12-long-response.md             ← مدیریت پاسخ طولانی
-├── 13-final-summary.md             ← خلاصهٔ پایانی
-├── 14-checklist.md                 ← چک‌لیست
+├── 01-system.md                    base rules (Persian)
+├── 01-system-append-2.md           editing rules (English)
+├── 02-manifest.md                  used with the manifest
+├── 03-bug-fix.md                   task: bug fix
+├── 04-feature.md                   task: add feature
+├── 05-refactor.md                  task: refactor
+├── 06-code-review.md               task: code review
+├── 07-tests.md                     task: write tests
+├── 08-explain-code.md              task: explain code
+├── 09-continue-session.md          continue session
+├── 10-recovery.md                  recovery when the AI goes off track
+├── 11-limit-files.md               limit request scope
+├── 12-long-response.md             manage long responses
+├── 13-final-summary.md             final summary
+├── 14-checklist.md                 checklist
 ├── Anti-AI-Slop/
-│   └── 00-master-anti-slop.md      ← قواعد ضد-Slop عمومی
-├── Expertise and Experience/       ← تخصص‌ها (انگلیسی)
+│   └── 00-master-anti-slop.md      general anti-slop rules
+├── Expertise and Experience/       expertise files (English)
 │   ├── 00-anti-slop-core.md
 │   ├── 01-frontend-architecture.md
 │   ├── 02-typescript.md
-│   ├── ...
-│   └── 12-accessibility.md
-└── Expertise and Experience-FA/    ← تخصص‌ها (فارسی)
-    └── (آینه‌سازی نسخهٔ انگلیسی)
+│   └── ...
+└── Expertise and Experience-FA/    expertise files (Persian)
 ```
 
 هر فایل prompt با **YAML frontmatter** شروع می‌شود:
@@ -569,170 +462,142 @@ version: 1
 ---
 ```
 
----
-
 ## ابزارهای کمکی
 
-پوشهٔ `tools/` شامل این اسکریپت‌ها است:
+اسکریپت‌های پوشه `tools/`:
 
-| ابزار | کار |
+| ابزار | توضیح |
 |---|---|
-| `snapshot.py` | Snapshot کامل پروژه قبل از ویرایش‌های بزرگ |
-| `apply_ai_output.py` | اعمال خروجی AI (بلوک‌های `file:`) روی دیسک |
-| `verify.ps1` / `verify.sh` | اجرای type-check، lint، تست، build |
+| `snapshot.py` | عکس کامل پروژه قبل از ویرایش‌های بزرگ |
+| `apply_ai_output.py` | اعمال بلوک‌های `file:` AI روی دیسک |
+| `verify.ps1` / `verify.sh` | اجرای type-check، lint، تست و build |
 | `new_session.py` | ساخت فایل session جدید |
 | `session_summary.py` | چاپ خلاصهٔ sessionهای اخیر |
 | `estimate.py` | تخمین توکن و هزینه |
-| `watch.py` | اجرای خودکار `diff` با تغییر فایل |
-| `log_metrics.py` | ثبت متریک گردش کار AI |
-| `setup_profile.ps1` | نصب shortcutهای PowerShell |
+| `watch.py` | اجرای خودکار `diff` با تغییر فایل‌ها |
+| `log_metrics.py` | ثبت متریک‌های گردش کار AI |
+| `setup_profile.ps1` | نصب میانبرهای PowerShell |
 | `add_frontmatter.py` | افزودن YAML frontmatter به promptها |
 | `fix_frontmatter_lang.py` | تصحیح `lang` در frontmatter |
 | `diagnose_cheatsheet.py` | تشخیص نبود فایل در bundle |
 
-### نمونهٔ استفاده
+نمونه‌های استفاده:
 
 ```powershell
 # Snapshot
-python tools\snapshot.py --label before-ai
-python tools\snapshot.py --list
-python tools\snapshot.py --restore before-ai
+python tools/snapshot.py --label before-ai
+python tools/snapshot.py --list
+python tools/snapshot.py --restore before-ai
 
 # اعمال خروجی AI
-python tools\apply_ai_output.py ai_response.md --dry-run
-python tools\apply_ai_output.py ai_response.md
+python tools/apply_ai_output.py ai_response.md --dry-run
+python tools/apply_ai_output.py ai_response.md
 
-# Verify
+# بررسی سلامت
 .\tools\verify.ps1
 .\tools\verify.ps1 -SkipTests
 .\tools\verify.ps1 -Only "type-check","lint"
 
 # Session
-python tools\new_session.py "auth refactor" --prev 02
-python tools\session_summary.py --last 3
+python tools/new_session.py "auth refactor" --prev 02
+python tools/session_summary.py --last 3
 
 # تخمین هزینه
-python tools\estimate.py .ai\bundle.txt --model deepseek-chat
+python tools/estimate.py .ai/bundle.txt --model deepseek-chat
 ```
-
----
 
 ## تست
 
-پروژه دارای تست واحد است:
-
 ```bash
-# اجرای تست‌ها
+# کتابخانه استاندارد
 python -m unittest discover -s tests -v
-
-# یا مستقیم
 python tests/test_codemerge.py
 
-# یا با pytest (توصیه‌شده)
+# با pytest (توصیه می‌شود)
 pip install pytest
 pytest tests/ -v
 ```
 
-پوشش تست‌ها:
-
-- `is_sensitive` — تشخیص فایل‌های حساس
-- `IgnoreMatcher` — الگوهای gitignore
-- `extract_python` — استخراج نمادهای پایتون (AST)
-- `_extract_js` — استخراج JS/TS (شامل generic سه‌سطحی، arrow با return object)
-- `write_bundle` — نوشتن bundle با/بدون header
-- `compute_delta` — محاسبهٔ تغییرات diff
-- `detect_lang` — تشخیص زبان از extension
-
----
+تست‌های پوشش داده شده: `is_sensitive`، `IgnoreMatcher`، `extract_python`، `_extract_js`، `write_bundle`، `compute_delta` و `detect_lang`.
 
 ## عیب‌یابی
 
-### `No source files found`
+### No source files found
 
-- زبان انتخابی اشتباه است → `python codemerge.py langs`
-- همهٔ فایل‌ها در `.codemergeignore` → با `--no-ignore-file` امتحان کنید
-- با `--all-files` امتحان کنید
+- زبان انتخابی را با `python codemerge.py langs` بررسی کنید.
+- همه فایل‌ها در `.codemergeignore` هستند → `--no-ignore-file` را امتحان کنید.
+- `--all-files` را امتحان کنید.
 
-### `Unknown language: xxx`
+### Unknown language: xxx
 
-نام زبان را با `python codemerge.py langs` چک کنید.
+`python codemerge.py langs` را اجرا کنید.
 
-### فایل در manifest هست ولی در fetch رد می‌شود
+### File exists in manifest but fetch rejects it
 
-- احتمالاً باینری است
-- یا حجمش از `--max-size` بیشتر است
-- یا مسیر را نسبت به ریشه اشتباه داده‌اید
+فایل احتمالاً باینری است، یا حجمش از `--max-size` بیشتر است، یا مسیر را نسبت به ریشه اشتباه داده‌اید.
 
-### `diff` همیشه full است
+### diff always produces full output
 
-- state ذخیره نشده → مسیر نوشتن آن را بررسی کنید
-- `--root` بین دو اجرا تغییر کرده
+فایل state قابل نوشتن نیست، یا `--root` بین دو اجرا تغییر کرده.
 
-### خروجی خیلی بزرگ است
+### Output is too large
 
 ```bash
-# manifest کوچک‌تر
 python codemerge.py manifest --no-symbols --no-imports -o .ai/files.txt
-
-# با محدودیت توکن
 python codemerge.py manifest --max-tokens 8000 -o .ai/manifest.txt
-
-# فقط یک زبان
 python codemerge.py diff --full -l typescript -o .ai/ts.txt
 ```
 
-### شمارش توکن دقیق نیست
+### Token count is inaccurate
 
 ```bash
 pip install tiktoken
 ```
 
-### در PowerShell دستور `grep` کار نمی‌کند
+### grep does not work in PowerShell
 
 از `Select-String` استفاده کنید:
 
 ```powershell
-Select-String -Path .ai\manifest.txt -Pattern "apiGet"
-(Select-String -Path .ai\manifest.txt -Pattern "^  function ").Count
+Select-String -Path .ai/manifest.txt -Pattern "apiGet"
+(Select-String -Path .ai/manifest.txt -Pattern "^  function ").Count
 ```
 
-### نمایش فارسی در PowerShell به‌هم‌ریخته است
+### Persian text is garbled in PowerShell
 
-PowerShell 5.1 به‌طور پیش‌فرض UTF-8 نمی‌خواند. از `-Encoding UTF8` استفاده کنید:
+PowerShell 5.1 به‌طور پیش‌فرض UTF-8 نمی‌خواند.
 
 ```powershell
-Get-Content prompts\01-system.md -Encoding UTF8
+Get-Content prompts/01-system.md -Encoding UTF8
 ```
 
-یا PowerShell 7+ نصب کنید.
-
----
+یا PowerShell 7 یا بالاتر نصب کنید.
 
 ## ساختار پروژه
 
 ```
 CodeCompactForAI/
-├── codemerge.py                    ← ابزار اصلی
-├── README.md                       ← همین فایل (انگلیسی)
-├── README.fa.md                    ← نسخهٔ فارسی
-├── md-list.txt                     ← لیست فایل‌های مهم
-├── .codemergeignore                ← قواعد ignore
+├── codemerge.py
+├── README.md
+├── README.fa.md
+├── md-list.txt
+├── .codemergeignore
 │
 ├── docs/
 │   ├── CHEATSHEET.md
-│   └── codemerge.md                ← راهنمای کامل فارسی
+│   └── codemerge.md
 │
-├── prompts/                        ← promptهای AI
+├── prompts/
 │   ├── 01-system.md
 │   ├── 01-system-append-2.md
 │   ├── 02-manifest.md
-│   ├── 03..08-*.md
-│   ├── 09..14-*.md
+│   ├── 03-bug-fix.md through 08-explain-code.md
+│   ├── 09-continue-session.md through 14-checklist.md
 │   ├── Anti-AI-Slop/
 │   ├── Expertise and Experience/
 │   └── Expertise and Experience-FA/
 │
-├── tools/                          ← ابزارهای کمکی
+├── tools/
 │   ├── snapshot.py
 │   ├── apply_ai_output.py
 │   ├── verify.ps1 / verify.sh
@@ -750,14 +615,12 @@ CodeCompactForAI/
     └── test_codemerge.py
 ```
 
----
-
 ## مجوز
 
 MIT
 
 ## سازگاری
 
-- Python 3.9+
+- Python 3.9 یا بالاتر
 - ویندوز، macOS، لینوکس
 - Bash، PowerShell، cmd
