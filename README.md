@@ -13,6 +13,7 @@ cost and usually improves response accuracy.
 
 - [Prerequisites](#prerequisites)
 - [Quick Start](#quick-start)
+- [Working Directory](#working-directory)
 - [Generating Full Project Output](#generating-full-project-output)
 - [Complete AI Workflow](#complete-ai-workflow)
 - [Commands](#commands)
@@ -55,6 +56,45 @@ python codemerge.py fetch lib/api/auth.ts lib/api/client.ts -o .ai/bundle.txt
 ```
 
 Then send `.ai/bundle.txt` to the AI.
+
+## Working Directory
+
+By default, codemerge operates on the current working directory. If you keep
+`codemerge.py` outside your project, or want to run against several projects
+without changing your shell, use `-C` / `--cd DIR`:
+
+```bash
+python codemerge.py manifest -C C:\projects\myapp -o .ai/manifest.md
+python codemerge.py fetch -C /home/user/projects/myapp -o .ai/bundle.txt
+python codemerge.py diff --cd ../other-project -o .ai/changes.txt
+```
+
+The option must come **after** the subcommand (`manifest`, `fetch`, `diff`,
+`search`), not before it. This mirrors how the option is scoped to each
+subcommand.
+
+### What `--cd` Affects
+
+- All relative paths (`--output`, `--ignore-file`, `--state-file`,
+  `--files-from`) are resolved against the new directory.
+- Git detection uses the new directory as its starting point.
+- The `.codemergeignore` file is read from the new directory.
+
+A short `cd: <path>` line is printed to stderr after the change, unless
+`--quiet` is given.
+
+### Difference Between `--cd` and `--root`
+
+| Option | Purpose | What It Changes |
+|---|---|---|
+| `-C`, `--cd DIR` | Change working directory | Input, output, ignore file, state file, Git detection |
+| `-r`, `--root DIR` | Set the project root for discovery | File discovery only; output stays in cwd |
+
+Use `--cd` when running `codemerge.py` from outside the project.
+Use `--root` when you want to narrow discovery to a subdirectory.
+
+Both can be combined: `--cd` runs first, then `--root` overrides the
+discovery root within that directory.
 
 ## Generating Full Project Output
 
@@ -235,14 +275,11 @@ the AI to mix incompatible guidance.
 ### Step 3 — Receive the AI file request
 
 The AI responds with:
-
-````
-```codemerge-fetch
+codemerge-fetch
 lib/api/auth.ts
 lib/api/client.ts
 store/authStore.ts
-```
-````
+text
 
 Run:
 
@@ -260,12 +297,9 @@ Paste the contents of `.ai/bundle.txt` into the conversation.
 ### Step 5 — Apply AI changes
 
 The AI responds with file blocks:
-
-````
-```file:lib/api/auth.ts
+file:lib/api/auth.ts
 <full file content>
-```
-````
+text
 
 Save the response to `ai_response.md`, then:
 
@@ -388,6 +422,7 @@ These options are available on `manifest`, `fetch`, `diff`, and `search`:
 
 | Option | Description |
 |---|---|
+| `-C`, `--cd DIR` | Change working directory to `DIR` before running |
 | `-l`, `--lang LANG [LANG ...]` | Language filter |
 | `-o`, `--output FILE` | Output file |
 | `-r`, `--root DIR` | Project root |
@@ -570,6 +605,16 @@ relative to something other than the project root.
 
 The state file may not be writable, or `--root` changed between runs.
 
+### `--cd` does not work before the subcommand
+
+The `-C` / `--cd` option is defined per subcommand. Use it after the
+subcommand name:
+
+```
+python codemerge.py manifest -C DIR       # correct
+python codemerge.py -C DIR manifest       # not supported
+```
+
 ### Output is too large
 
 ```bash
@@ -654,5 +699,3 @@ MIT
 - Python 3.9 or later
 - Windows, macOS, Linux
 - Bash, PowerShell, cmd
-
-

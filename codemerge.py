@@ -19,6 +19,18 @@ overridden or disabled from the CLI:
     --ignore-file PATH    use a custom ignore file
     --no-ignore-file      disable ignore-file support
 
+Working directory
+-----------------
+By default, codemerge operates on the current working directory. To work
+on a different directory without changing your shell, use ``-C`` / ``--cd``:
+
+    python codemerge.py -C /path/to/project manifest -o .ai/manifest.md
+    python codemerge.py manifest --cd /path/to/project -o .ai/manifest.md
+
+This changes the process working directory before any command runs, so
+all relative paths (input, output, ignore file, state file) are resolved
+against the new directory, and Git detection uses that directory too.
+
 Requires Python 3.8+.
 """
 
@@ -153,7 +165,6 @@ def is_sensitive(name: str) -> bool:
             return True
     if lower.startswith(".env."):
         suffix = lower[5:]
-        # `.env.example` is safe; `.env.example.local` is NOT.
         return suffix not in {"example", "sample", "template", "dist"}
     return False
 
@@ -755,8 +766,7 @@ def _collect_imports_generic(text: str) -> list[str]:
 _PAREN_INNER = r"[^()]|\([^()]*\)"
 _PAREN = rf"\(((?:{_PAREN_INNER})*)\)"
 
-# Type parameters up to three levels of nesting, e.g.
-#   <T>, <T, U>, <T extends X = Y>, <A<B<C>>>, <A<B>, C<D<E>>>
+# Type parameters up to three levels of nesting.
 _TPARAM = (
     r"<[^<>]*"
     r"(?:<[^<>]*(?:<[^<>]*>[^<>]*)*>[^<>]*)*"
@@ -787,7 +797,6 @@ JS_CLASS = re.compile(
 JS_ENUM = re.compile(r"^\s*(?:export\s+)?(?:const\s+)?enum\s+(\w+)")
 JS_TYPE = re.compile(r"^\s*(?:export\s+)?type\s+(\w+)")
 
-# function declaration — captures name, tparam, params, return type
 JS_FUNCTION = re.compile(
     r"^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?"
     r"function\s*\*?\s*(\w+)\s*"
@@ -795,7 +804,6 @@ JS_FUNCTION = re.compile(
     r"(?:\s*:\s*(" + _RETURN + r"))?\s*\{"
 )
 
-# arrow function — captures name, tparam, params (paren or single), return
 JS_ARROW = re.compile(
     r"^\s*(?:export\s+)?(?:const|let|var)\s+(\w+)\s*"
     r"(?::\s*[^=]+?)?\s*=\s*"
@@ -811,7 +819,6 @@ JS_OBJECT = re.compile(
     re.M,
 )
 
-# object member — captures name, paren-params, single-param, return type
 JS_OBJECT_METHOD = re.compile(
     r"^\s*(?:async\s+)?(\w+)\s*:\s*(?:async\s+)?"
     r"(?:" + _TPARAM + r"\s*)?"
@@ -828,18 +835,7 @@ JS_METHOD = re.compile(
 
 
 def _extract_js(text: str) -> tuple[list[str], list[Symbol], str]:
-    """Extract JS / TS / Vue / Svelte symbols.
-
-    Handles:
-      * multi-line signatures with balanced nested parens
-      * generic type parameters <T>
-      * return types (simple and object literal)
-      * scope tracking (nested funcs go under their parent)
-      * object literals with method children
-      * arrow functions (unified with `function` prefix)
-    React hooks (useState / useEffect / useMemo / useCallback) are
-    silently ignored because they are call expressions, not declarations.
-    """
+    """Extract JS / TS / Vue / Svelte symbols."""
     imports = _collect_imports_generic(text)
     lines = text.splitlines()
     symbols: list[Symbol] = []
@@ -912,7 +908,7 @@ def _extract_js(text: str) -> tuple[list[str], list[Symbol], str]:
                 consumed = m.group(0).count("\n") + 1
                 opens_body = True
 
-        # 5) function declaration (with generics + return type)
+        # 5) function declaration
         if sym is None:
             m = JS_FUNCTION.match(window)
             if m and m.group(1) not in KEYWORDS:
@@ -928,7 +924,7 @@ def _extract_js(text: str) -> tuple[list[str], list[Symbol], str]:
                 consumed = m.group(0).count("\n") + 1
                 opens_body = True
 
-        # 6) object method (inside object literal)
+        # 6) object method
         if sym is None and in_object:
             m = JS_OBJECT_METHOD.match(window)
             if m and m.group(1) not in KEYWORDS:
@@ -944,7 +940,7 @@ def _extract_js(text: str) -> tuple[list[str], list[Symbol], str]:
                 after_arrow = window[m.end():].lstrip()
                 opens_body = after_arrow.startswith("{")
 
-        # 7) arrow function (with generics + return type)
+        # 7) arrow function
         if sym is None:
             m = JS_ARROW.match(window)
             if m and m.group(1) not in KEYWORDS:
@@ -994,7 +990,7 @@ def _extract_js(text: str) -> tuple[list[str], list[Symbol], str]:
 
 
 # ============================================================
-# C-family: Java / C# / C++ / C / Kotlin / Swift / Dart / Scala
+# C-family
 # ============================================================
 
 C_CLASS = re.compile(
@@ -1599,8 +1595,6 @@ def write_bundle(
             out.write(header)
             total_bytes += len(header.encode("utf-8"))
         elif deleted:
-            # Minimal deleted-files manifest even when header is disabled,
-            # so downstream consumers (LLM) know what was removed.
             mini = "# deleted: " + ", ".join(deleted) + "\n\n"
             out.write(mini)
             total_bytes += len(mini.encode("utf-8"))
@@ -2049,6 +2043,17 @@ def cmd_langs(_args) -> int:
 # ============================================================
 
 def add_common(parser: argparse.ArgumentParser, *, output_default: str) -> None:
+    # --cd must come first so users see it prominently in --help.
+    parser.add_argument(
+        "-C", "--cd",
+        default=None,
+        metavar="DIR",
+        help="Change working directory to DIR before running. "
+             "All input, output, ignore, and state paths are resolved "
+             "against DIR, and Git detection uses DIR as the starting "
+             "point. Useful when running codemerge.py from a different "
+             "location than the project (like `git -C`).",
+    )
     parser.add_argument("-l", "--lang", nargs="+", action="extend",
                         default=None, metavar="LANG",
                         help="Language(s). Default: all.")
@@ -2153,9 +2158,51 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _apply_cd(args) -> int | None:
+    """Change working directory if --cd/-C was given.
+
+    Returns an exit code on failure, or None on success.
+    Safe to call even if the subcommand did not define --cd.
+    """
+    cd_dir = getattr(args, "cd", None)
+    if not cd_dir:
+        return None
+
+    target = Path(cd_dir).expanduser()
+    if not target.is_absolute():
+        target = Path.cwd() / target
+    try:
+        target = target.resolve()
+    except OSError as e:
+        print(f"Error: cannot resolve --cd {cd_dir}: {e}", file=sys.stderr)
+        return 2
+
+    if not target.is_dir():
+        print(f"Error: --cd is not a directory: {target}", file=sys.stderr)
+        return 2
+
+    try:
+        os.chdir(target)
+    except OSError as e:
+        print(f"Error: cannot change directory to {target}: {e}",
+              file=sys.stderr)
+        return 2
+
+    if not getattr(args, "quiet", False):
+        print(f"cd: {target}", file=sys.stderr)
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    # Handle --cd/-C before dispatching to any command so that
+    # every path in the run resolves against the new directory.
+    rc = _apply_cd(args)
+    if rc is not None:
+        return rc
+
     try:
         return args.func(args)
     except KeyboardInterrupt:
