@@ -1,4 +1,4 @@
---
+---
 id: 04-ui-design-system
 title: "UI & Design System Anti-Slop Layer"
 lang: en
@@ -585,7 +585,5 @@ No justification. No apology paragraph. Fix and move on.
 If the violation is a visual inconsistency in already-shipped code,
 add a note: "This pattern is likely repeated in other components.
 Consider a project-wide audit."
-
-text
 
 ---

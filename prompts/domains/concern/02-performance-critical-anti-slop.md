@@ -557,6 +557,6 @@ If the violation is a performance regression in already-shipped
 code, add a note: "This may affect the SLO. Measure in the target
 environment before deploying."
 
-text
+
 
 ---

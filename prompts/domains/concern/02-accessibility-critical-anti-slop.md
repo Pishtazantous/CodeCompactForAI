@@ -728,6 +728,6 @@ If the violation is in already-shipped code, add a note: "This may
 require an accessibility audit of related components. The same
 pattern is likely repeated elsewhere."
 
-text
+
 
 ---

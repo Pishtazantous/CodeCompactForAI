@@ -214,7 +214,7 @@ Checking "is the user authenticated" is not enough. The server must
 check "does this user own this resource".
 
 BAD:
-```typescript
+typescript
 app.get("/orders/:id", auth, async (req, res) => {
   const order = await db.orders.findById(req.params.id);
   res.json(order); // any user can read any order
@@ -229,7 +229,7 @@ app.get("/orders/:id", auth, async (req, res) => {
   });
   if (!order) return res.status(404).json({ error: "not found" });
   res.json(order);
-});```
+});
 Return 404, not 403, when the resource exists but belongs to another
 user. Returning 403 leaks existence.
 
@@ -745,6 +745,6 @@ accompanied by a note: "This issue may require secret rotation,
 session invalidation, or user notification. Coordinate with the
 user before deploying."
 
-text
+
 
 ---

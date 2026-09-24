@@ -660,6 +660,5 @@ In the previous response, [specific rule] was violated. Correction:
 [corrected code]
 No justification. No apology paragraph. Fix and move on.
 
-text
 
 ---
