@@ -384,6 +384,7 @@ python codemerge.py search PATTERN [OPTIONS]
 python codemerge.py search "handleLogin"
 python codemerge.py search "function handle.*Login" -l typescript
 python codemerge.py search UserRepository --output hits.txt
+python codemerge.py search "deductCredit|addCredit|requireSubscription|SubscriptionService"
 ```
 
 ### langs — فهرست زبان‌ها
