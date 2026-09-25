@@ -9,14 +9,11 @@ version: 1
 ---
 # Astro Anti-Slop Layer
 
-Layered under the master, architecture, and frontend layers. This file adds
-rules for Astro pages, islands, content collections, server rendering, and
-progressive hydration.
+Layered under the master, architecture, and frontend layers. This file adds Astro page, island, content-collection, rendering, and hydration rules.
 
 ## 1. Stack Assumptions
 
-1. Read the installed Astro major version before using content collection or
-   island APIs.
+1. Read the installed Astro major version before using collection or island APIs.
 2. Use Astro's server-rendered default for content-first pages.
 3. Use framework components only where interactive behavior is required.
 4. Keep islands small and independently owned.
@@ -29,14 +26,12 @@ progressive hydration.
 
 1. Keep `.astro` pages focused on layout, content, and server composition.
 2. Extract repeated UI into components with typed props.
-3. Use `.astro` components for static presentation and framework components for
-   stateful interaction.
+3. Use `.astro` components for static presentation and framework components for stateful interaction.
 4. Keep frontmatter free of unrelated business logic.
 5. Do not turn every page into a client component.
 6. Keep accessibility semantics in the server-rendered tree.
 7. Use explicit slots and named slots when composition is dynamic.
-8. Keep styles scoped to the component that owns them unless the design system
-   requires a global token file.
+8. Keep styles scoped to their component unless the design system requires a global token file.
 
 BAD:
 
@@ -69,8 +64,7 @@ const users = await listUsers();
 4. Do not pass an entire server data graph to an interactive component.
 5. Keep island state local unless multiple islands require shared state.
 6. Avoid hydrating a static list for a CSS-only interaction.
-7. Place the client boundary at the interactive subtree, not the page root,
-   when possible.
+7. Place the client boundary at the interactive subtree, not the page root, when possible.
 8. Measure bundle and hydration cost before adding another island.
 
 BAD:
@@ -86,10 +80,23 @@ GOOD:
 
 ```astro
 ---
-import SaveButton from "../components/SaveButton.tsx";
+import { getEntry } from "astro:content";
+import Counter from "../components/Counter.tsx";
+const entry = await getEntry("counters", "home");
+if (!entry) return Astro.redirect("/404");
 ---
-<SaveButton client:idle documentId={document.id} />
+<Counter client:idle initialCount={entry.data.count} />
 ```
+
+```tsx
+import { useState } from "react";
+export default function Counter({ initialCount }: { initialCount: number }) {
+  const [count, setCount] = useState(initialCount);
+  return <button onClick={() => setCount(count + 1)}>{count}</button>;
+}
+```
+
+Each island owns its mutable state and never reads or writes shared application state.
 
 ## 4. Data Fetching
 
@@ -195,11 +202,22 @@ return <Doc data={entry.data} />;
 GOOD:
 
 ```ts
-const entry = await getEntry("docs", slug);
+import { z } from "astro:content";
+
+const postSchema = z.object({
+  title: z.string().min(1),
+  published: z.boolean(),
+  count: z.number().int().nonnegative(),
+});
+
+const entry = await getEntry("blog", slug);
 if (!entry) return Astro.redirect("/404");
-const props = entry.data;
-return <Doc data={props} />;
+const data = postSchema.parse(entry.data);
+return <Post data={data} />;
 ```
+
+The parse result is the only data passed to the component. A collection schema
+or an equivalent guard belongs at the content boundary, not only in a page.
 
 ### 9.3 Island State Leaking Across Pages
 
@@ -212,6 +230,11 @@ BAD:
 GOOD:
 
 ```astro
+---
+import { getEntry } from "astro:content";
+const entry = await getEntry("counters", "home");
+if (!entry) return Astro.redirect("/404");
+---
 <Counter client:visible count={entry.data.count} />
 ```
 

@@ -7,165 +7,392 @@ category: domain
 domain_type: delivery
 version: 1
 ---
+
 # CI/CD Anti-Slop Layer
 
-Layered under `_universal/00-master-anti-slop.md`. Universal rules are not
-repeated. Deployment behavior is coordinated with the DevOps layer.
+Layered under `_universal/00-master-anti-slop.md`. Universal rules
+(fabrication, fake completion, over-engineering, silent assumptions,
+security anti-patterns, output format) are NOT repeated here.
+
+This file covers rules specific to continuous integration and
+continuous delivery: pipeline stages, caching, secret masking, test
+selection, artifact handling, and deployment strategy. Application
+deployment rules live in `domains/delivery/02-devops-anti-slop.md`.
+Infrastructure rules live in `domains/delivery/02-infra-anti-slop.md`.
 
 ## 1. Stack Assumptions
 
-**1.1 Identify the authoritative pipeline.** Confirm the repository, CI
-provider, branch protections, required checks, artifact registry, and deploy
-environment.
+This layer applies to pipelines in:
 
-**1.2 Preserve existing jobs.** Reuse the current runner image, package
-manager, test commands, and release conventions unless a task requires a
-documented change.
+- GitHub Actions
+- GitLab CI
+- CircleCI
+- Jenkins
+- Buildkite
+- Azure Pipelines
+- Bitbucket Pipelines
+- Drone
 
-**1.3 Treat CI as a security boundary.** Untrusted forks, pull requests,
-build scripts, logs, and caches may contain hostile input.
+The principles are tool-agnostic. YAML syntax varies.
 
-## 2. Domain Contracts
+## 2. Pipeline Structure
 
-**2.1 Stages have clear gates.** Install, verify, package, publish, and deploy
-have explicit inputs and conditions. A failed required gate stops promotion.
+### 2.1 Stages That Fail Fast
 
-**2.2 Builds are reproducible.** Pin lockfiles, toolchains, and base images;
-publish immutable artifacts and their source revision.
+Order stages from fastest to slowest, and from most likely to fail to
+least:
 
-**2.3 Secrets are scoped and masked.** Use the provider's secret store,
-minimize exposure, and never print secret values or untrusted environment
-dumps.
+1. Lint
+2. Type check
+3. Unit tests
+4. Build
+5. Integration tests
+6. End-to-end tests
+7. Deploy
 
-**2.4 Rollback is available.** Keep the previous artifact and a deployment
-mechanism that can restore it without rebuilding an unknown source.
+A failure in stage 1 stops the pipeline before stage 2 runs. Do not
+waste five minutes on a build when the lint fails in 10 seconds.
 
-## 3. Domain-Specific Rules
+### 2.2 Parallelism When It Is Free
 
-**3.1 Cache narrowly.** Key caches by lockfile, toolchain, and compatible OS
-or architecture. Never cache credentials, mutable test output, or secrets.
+Independent jobs run in parallel:
 
-**3.2 Protect untrusted pull requests.** Do not expose write-capable secrets
-or privileged runners to fork jobs. Restrict network and package publishing
-permissions.
+- Lint and type-check can run simultaneously.
+- Unit tests split across shards.
+- Multiple platforms (Linux, macOS, Windows) in parallel.
 
-**3.3 Pin action and image versions.** Use reviewed versions appropriate to
-the repository; do not track an untrusted moving tag for security-critical
-steps.
+Parallelism has a cost (more runners, more minutes). Use it when the
+wall-clock time saved matters.
 
-**3.4 Fail closed on missing tools.** Verify required runtimes and versions
-before running the build rather than installing arbitrary latest tools.
+### 2.3 One Job, One Purpose
 
-**3.5 Keep logs useful.** Log stage, revision, duration, and test counts while
-redacting tokens, cookies, environment values, and private artifacts.
+BAD: A single `build-and-test-and-deploy` job.
+GOOD: `lint`, `test`, `build`, `deploy` as separate jobs.
 
-**3.6 Use least privilege.** Give jobs only the registry, cloud, and package
-permissions required for their stage.
+Separate jobs have separate logs, separate retry semantics, and
+separate resource usage.
 
-**3.7 Separate verification from publication.** A test job cannot publish a
-release artifact that has not passed the required checks.
+### 2.4 Dependencies Are Explicit
 
-**3.8 Make retries safe.** Re-running a job may republish an immutable tag or
-retry a migration; define deduplication and recovery.
+A deploy job depends on the build job. Do not rely on execution order
+implicitly.
 
-**3.9 Verify release artifacts.** Check checksum or digest, provenance, and
-the deployed revision before promotion.
+### 2.5 Deterministic
 
-**3.10 Record rollback ownership.** Name who may deploy, who may approve,
-and which command restores the previous release.
+The same commit produces the same result. No random failures from
+race conditions, timing, or external state.
 
-**3.25 Keep promotion artifacts immutable.** The deploy job consumes the exact digest produced by the verified build job.
+Flaky tests are bugs. Do not retry them into passing.
 
-**3.26 Record gate evidence.** Store safe revision, test summary, digest, and approval data with a defined retention period.
+## 3. Caching
 
-**3.27 Restrict runner access.** Untrusted jobs cannot read production secrets, privileged metadata, or mutable release credentials.
+### 3.1 Cache Dependencies
 
-**3.28 Make retries idempotent.** Re-running publication or migration steps uses a deduplication key and an explicit recovery result.
+Cache the package manager's directory:
 
-**3.29 Test release recovery.** Exercise failed gates, expired credentials, registry outage, cancellation, and rollback with the real permissions model.
+- npm: `~/.npm` or `node_modules`.
+- pip: `~/.cache/pip` or the virtualenv.
+- Go: `~/go/pkg/mod` and the build cache.
+- Cargo: `~/.cargo/registry` and `target`.
+- Maven: `~/.m2/repository`.
 
-**3.30 Gate every promotion.** Required checks, approvals, and environment policy are evaluated before deployment.
+A cache miss costs minutes on every run.
 
-**3.31 Verify the artifact.** Compare source revision, digest, provenance, and tested output at each boundary.
+### 3.2 Cache Keys Include the Lockfile Hash
 
-**3.32 Preserve rollback evidence.** The previous release and the identity that restores it remain available.
+```yaml
+key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+```
 
-**3.33 Protect release evidence.** Keep revision, digest, gate result, approval, and rollback target without secrets.
+Without the lockfile hash, the cache is stale after a dependency
+change and produces incorrect builds.
 
-## 4. Domain-Specific Anti-Patterns
+### 3.3 Never Cache Build Artifacts Across Branches
 
-### 4.1 Secret Printed by Debug Flag
+A build artifact from `main` must not be reused on a feature branch
+that changed source. Cache only inputs (dependencies), not outputs.
+
+### 3.4 Cache Size Limits
+
+Every CI provider has a cache size limit. Exceeding it silently evicts
+older entries. Monitor cache size and prune.
+
+## 4. Secrets in CI
+
+### 4.1 Never Echo Secrets
+
+BAD: `echo $API_KEY` in a step.
+GOOD: Use the value directly in the tool that needs it.
+
+Even "safe" commands like `env` print secrets.
+
+### 4.2 Mask Logs
+
+GitHub Actions, GitLab CI, and others mask registered secrets in logs.
+This is the safety net, not the primary defense. Do not rely on it.
+
+### 4.3 Scope Secrets Per Environment
+
+- A secret for staging is not available in production jobs.
+- A secret for one repository is not available to forks.
+- A secret for one branch is not available on PRs from forks.
+
+GitHub Actions: `pull_request` from a fork does not have access to
+secrets by default. `pull_request_target` does; use it with extreme
+care.
+
+### 4.4 Rotate Secrets
+
+A secret that has been in CI for two years has leaked somewhere. Set
+a rotation schedule.
+
+### 4.5 Short-Lived Credentials Over Static
+
+Prefer OIDC-based authentication (GitHub Actions to AWS, GCP, Azure)
+over static access keys. The credential is issued per job and expires.
+
+### 4.6 No Secrets in Build Artifacts
+
+A container image built in CI must not contain secrets. Use build args
+sparingly, and never bake secrets into layers.
+
+## 5. Testing in CI
+
+### 5.1 Run the Same Tests Locally
+
+A test that only passes in CI is a test with hidden dependencies. The
+developer runs the same command locally.
+
+### 5.2 Fail on Flaky Tests
+
+A flaky test is worse than no test. It erodes trust in the suite.
+Fix it or remove it. Do not add `retry: 3`.
+
+### 5.3 Test Sharding
+
+Large test suites split across parallel runners. Each shard runs a
+subset. Merge coverage reports.
+
+### 5.4 Coverage Without Obsession
+
+Report coverage as a signal, not a gate. A coverage of 100% with
+meaningless assertions is worse than 60% with real tests.
+
+A decrease in coverage on a PR is worth a comment, not a block.
+
+### 5.5 Test Data Isolation
+
+Tests do not share state. Each test creates and cleans up its own
+data. Parallel jobs use separate databases or schemas.
+
+## 6. Build Artifacts
+
+### 6.1 Build Once, Deploy Many
+
+Build the artifact once (a binary, a container image, a bundle), tag
+it with the commit SHA, and promote the same artifact through
+environments.
+
+BAD: Build again for staging and for production.
+GOOD: One artifact, promoted.
+
+### 6.2 Immutable Artifacts
+
+Once published, an artifact is never overwritten. A version `1.4.2`
+always refers to the same bytes.
+
+### 6.3 Tag With Commit SHA
+
+Every artifact is tagged with the commit SHA it was built from.
+Debugging a production issue requires knowing the exact source.
+
+### 6.4 Sign Artifacts
+
+Container images and binaries are signed (Sigstore, Cosign). Consumers
+verify the signature before running.
+
+## 7. Deployment in CI
+
+### 7.1 Deploy Is a Separate Job
+
+Do not deploy in the same job that runs tests. The deploy job depends
+on the test job and runs only on the target branch.
+
+### 7.2 Environment Protection
+
+Production deploys require:
+
+- Manual approval (GitHub Environments, GitLab Protected Environments).
+- Branch restrictions (only `main`).
+- Reviewer requirements (one or two approvers).
+
+### 7.3 Rollback Is a Job, Not a Manual Step
+
+The pipeline can roll back to the previous version. A rollback is a
+re-run of a previously successful deploy, not an ad-hoc `kubectl`
+command.
+
+### 7.4 Migration Order
+
+Database migrations run before the new code. The old code must tolerate
+the new schema. See `02-devops-anti-slop.md` section 4.5.
+
+### 7.5 Post-Deploy Verification
+
+After deploy, run a smoke test against the new version. If it fails,
+roll back automatically.
+
+### 7.6 Notify on Failure
+
+A failed production deploy notifies the on-call channel. Silent
+failures are the worst.
+
+## 8. CI/CD-Specific Anti-Patterns
+
+### 8.1 Secrets in YAML
 
 BAD:
 ```yaml
-run: env | tee build.env
+- run: curl -H "Authorization: Bearer ghp_xxx" ...
 ```
-
 GOOD:
 ```yaml
-run: node scripts/build.js
+- run: curl -H "Authorization: Bearer ${{ secrets.TOKEN }}" ...
 ```
 
-Logs do not dump the entire environment.
+Even in a private repository, secrets in Git history are permanent.
 
-### 4.2 Shared Cache Across Branches
+### 8.2 Long-Running Pipelines
 
-BAD:
-```yaml
-cache: key: build
+A pipeline that takes 30 minutes per commit is a pipeline developers
+avoid. Profile the slowest jobs and fix them.
+
+### 8.3 Rebuilding Dependencies Every Run
+
+Covered in 3.1.
+
+### 8.4 Cache Hit Rate Below 80%
+
+A cache that misses more than it hits is misconfigured. Check the key
+strategy.
+
+### 8.5 No Timeout on Jobs
+
+A hanging job consumes a runner for hours. Set a timeout on every
+job.
+
+### 8.6 Deploy From Feature Branches
+
+BAD: Any branch can deploy to production.
+GOOD: Only `main` (or a release branch) deploys to production.
+
+### 8.7 No Rollback
+
+Covered in 7.3.
+
+### 8.8 Tests That Depend on Network
+
+BAD: A unit test that calls `api.github.com`.
+GOOD: A test with a mocked or local server.
+
+External services fail; CI fails with them.
+
+### 8.9 `npm install` Instead of `npm ci`
+
+BAD: `npm install` in CI. It may update the lockfile.
+GOOD: `npm ci` for a reproducible install. Same for `yarn --frozen-lockfile`, `pip install --require-hashes`, `go mod download`.
+
+### 8.10 Ignoring Exit Codes
+
+BAD: `command || true` to make a failing step pass.
+GOOD: Let it fail, or handle the error explicitly.
+
+### 8.11 Running Everything on Every Commit
+
+BAD: A 40-minute end-to-end suite on every push.
+GOOD: Unit tests on every push; E2E on PR merge or a schedule.
+
+### 8.12 No Cancellation of Stale Runs
+
+A new push to a branch cancels the previous run. Otherwise, five
+runners process five commits that are all outdated except the last.
+
+### 8.13 Single Point of Failure
+
+BAD: All pipelines depend on one self-hosted runner.
+GOOD: Multiple runners, or a managed pool.
+
+### 8.14 Deploy Without Approval
+
+Covered in 7.2.
+
+### 8.15 No Visibility
+
+BAD: A pipeline with no status badge, no notifications, and no
+dashboard.
+GOOD: A status badge in the README, notifications on failure.
+
+### 8.16 Reused Secrets Across Environments
+
+BAD: The same `DATABASE_URL` in staging and production.
+GOOD: Separate secrets per environment, with separate values.
+
+### 8.17 Overly Broad Permissions
+
+BAD: A CI job with `permissions: write-all`.
+GOOD: `permissions: contents: read, packages: write` and only what is
+needed.
+
+### 8.18 Deploy Scripts in the Repository
+
+BAD: A `deploy.sh` that everyone runs with different flags.
+GOOD: A pipeline that is the single source of truth for how a project
+is deployed.
+
+### 8.19 Environment Variables in CI That Shadow Secrets
+
+BAD: A workflow that sets `DATABASE_URL=localhost` in `env:` and
+forgets the production override.
+GOOD: Secrets set at the environment level, not the workflow level.
+
+### 8.20 No Artifact Retention Policy
+
+BAD: Artifacts kept forever.
+GOOD: 30 days for test artifacts, 90 days for release artifacts,
+longer for compliance.
+
+### 8.21 Manual Steps in the Pipeline
+
+BAD: "After the pipeline succeeds, SSH into the server and..."
+GOOD: Every step is in the pipeline.
+
+### 8.22 No Feedback on PR
+
+BAD: The developer has to check the CI dashboard manually.
+GOOD: A status check on the PR, a comment on failure.
+
+### 8.23 Pipeline That Only Works on `main`
+
+A pipeline that fails on feature branches is a pipeline that was not
+designed for the workflow developers actually use.
+
+### 8.24 Tests That Require a Specific Order
+
+BAD: Test A populates a database that test B reads.
+GOOD: Each test is independent.
+
+### 8.25 No Cost Awareness
+
+CI minutes cost money. A pipeline that runs 1,000 times per day for
+a project with 5 developers is burning budget. Optimize.
+
+## 9. Response to Violation
+
+If a previous response violated a rule here:
+
+```
+In the previous response, [specific rule] was violated. Correction:
+[corrected code]
 ```
 
-GOOD:
-```yaml
-cache: key: build-${{ hashFiles('package-lock.json') }}
-```
-
-A cache hit cannot hide stale or hostile source output.
-
-### 4.3 Deploy Before Required Gate
-
-BAD:
-```yaml
-needs: build
-```
-
-GOOD:
-```yaml
-needs: [build, test, security-scan]
-```
-
-Promotion waits for every required verification.
-
-**3.11 Constrain network access.** Permit only required registries and APIs in build jobs; deny production networks from untrusted test code.
-
-**3.12 Validate artifacts before deploy.** Compare the artifact digest, provenance, and source revision at the deployment boundary.
-
-**3.13 Handle cancellation safely.** A cancelled job stops new side effects, preserves diagnostics, and does not leave a partially published release marked successful.
-
-**3.14 Use explicit environments.** Production deployment requires the configured approval, identity, and branch or tag policy.
-
-**3.15 Retain release history.** Store enough metadata to identify what was tested, published, deployed, and rolled back without retaining secrets.
-
-**3.16 Keep job identities narrow.** Fork jobs, maintenance jobs, and release jobs have different token scopes and network policy.
-
-**3.17 Check dependency provenance.** Pin lockfiles and verify the source of external actions, packages, and build images.
-
-**3.18 Preserve failed-job evidence.** Upload only safe test reports, logs, and diagnostics with clear retention rules.
-
-**3.19 Avoid mutable environments.** A release promotion consumes a verified artifact and does not rebuild from a moving branch.
-
-**3.20 Verify rollback permissions.** The rollback identity and target are available even when the primary deploy credential is unavailable.
-
-**3.21 Test pipeline failure.** Simulate missing tools, expired secrets, dependency outage, cache miss, and interrupted publication.
-
-**3.22 Keep promotion auditable.** Every promotion records the source revision, artifact digest, approver policy, and target environment.
-
-**3.23 Preserve reproducibility.** The release can be rebuilt or verified from the recorded source, lockfile, toolchain, and build inputs.
-
-**3.24 Treat a failed gate as release-blocking.** Do not weaken a required check to make a pipeline green without a reviewed decision.
-
-## 5. Response to Violation
-
-If a prior response violated this layer, identify the stage, cache, secret,
-permission, or rollback defect and show the corrected workflow. Do not report
-a pipeline as passing without evidence from an actual run.
+No justification. No apology paragraph. Fix and move on.

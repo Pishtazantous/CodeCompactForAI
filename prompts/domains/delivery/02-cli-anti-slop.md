@@ -5,166 +5,715 @@ lang: en
 depends_on: [00-master-anti-slop]
 category: domain
 domain_type: delivery
-version: 1
+version: 2
 ---
+
 # CLI Anti-Slop Layer
 
-Layered under `_universal/00-master-anti-slop.md`. Universal rules are not
-repeated. Language and framework rules remain in their related layers.
+Layered under `_universal/00-master-anti-slop.md`. Universal rules
+(fabrication, fake completion, over-engineering, silent assumptions,
+generic security, dependency addition, output format) are NOT
+repeated here.
+
+This file covers rules specific to command-line tools: command
+design, argument parsing, exit codes, standard streams, signals,
+help text, configuration, and distribution. It does NOT cover
+application code (see other delivery files), language rules (see
+the language files), framework rules (see the framework files), or
+security and performance concerns (see the concern files).
+
+A CLI is a program that runs unattended in scripts, in CI, and from
+a shell. Every behavior is a contract with the caller. The
+contract is the tool's public API.
 
 ## 1. Stack Assumptions
 
-**1.1 Confirm the command surface.** Identify the executable name, supported
-shells, target runtimes, configuration files, and platform matrix before
-implementation.
+This file applies to CLIs distributed as:
 
-**1.2 Prefer an existing parser.** Use the repository's argument parser,
-configuration loader, and test conventions. Do not add a parser merely to
-change formatting.
+- Standalone binaries (Go, Rust, C, C++).
+- Node.js scripts (`#!/usr/bin/env node`).
+- Python scripts (`#!/usr/bin/env python3`).
+- Shell scripts.
+- Bundled scripts via `pkg`, `pyinstaller`, `nexe`, or similar.
 
-**1.3 Define machine and human modes.** Decide which output is data, which is
-progress, and which is an error. Keep the distinction stable across commands.
+The examples use POSIX shell conventions. The principles are
+language-agnostic. Parser library choices (commander, click, cobra,
+clap) live in the framework files. Language-specific rules live in
+the language files.
 
-## 2. Domain Contracts
+## 2. Delivery Contracts
 
-**2.1 Parse before work.** Normalize arguments, resolve configuration, and
-report invalid input before creating files, sending requests, or mutating
-state.
+A CLI commits to seven contracts. Every section below enforces one
+or more of these.
 
-**2.2 Use stable exit codes.** Reserve zero for success and document each
-non-zero code. Do not return success when a required operation only partially
-completed.
+### 2.1 Command Interface Stability
 
-**2.3 Keep streams meaningful.** Write results to stdout, progress and
-diagnostics to stderr, and keep stdout parseable. Do not mix banners with
-machine output.
+Once a flag, subcommand, or output format is documented, consumers
+depend on it. Changing it requires a major version bump.
 
-**2.4 Make help truthful.** Help lists supported commands, options, defaults,
-required inputs, and examples that are exercised by tests.
+### 2.2 Exit Code Correctness
 
-**2.5 Make signals bounded.** Handle interruption, termination, and cleanup
-once. Preserve already durable work and report unfinished operations clearly.
+Exit codes carry success or failure. A zero exit means success; a
+non-zero exit means failure. Scripts depend on this.
 
-**2.6 Treat configuration as untrusted input.** Validate precedence,
-environment names, paths, URLs, and sensitive values before using them.
+### 2.3 Stream Separation
 
-## 3. Domain-Specific Rules
+Data goes to stdout. Diagnostics, progress, and errors go to
+stderr. The separation allows piping without corruption.
 
-**3.1 Parse deterministically.** Reject unknown options unless the project
-explicitly supports permissive parsing. Never silently ignore misspelled
-flags.
+### 2.4 Non-Interactive by Default
 
-**3.2 Bound every input.** Set limits for argument length, repeat counts,
-payload size, and file size before allocating or reading unbounded data.
+A command that runs in a script does not block waiting for input
+unless explicitly in interactive mode.
 
-**3.3 Make operations restartable.** A retry must not duplicate a local write
-or remote mutation unless the operation is explicitly repeatable.
+### 2.5 Signal Safety
 
-**3.4 Avoid hidden prompting.** Interactive prompts require a TTY, a timeout,
-and a non-interactive policy. Scripts must never hang waiting for input.
+The tool handles SIGINT and SIGTERM by cleaning up and exiting
+with the conventional code.
 
-**3.5 Use atomic local writes.** Write to a temporary location, flush, and
-rename according to the platform contract. Clean up failed temporary files.
+### 2.6 Configuration Determinism
 
-**3.6 Keep output format explicit.** Support the repository's machine-readable
-mode and document whether values are JSON, CSV, or line-delimited records.
+Given the same flags, environment, config files, and inputs, the
+command produces the same output.
 
-**3.7 Respect terminal capabilities.** Avoid color when output is redirected;
-never use terminal width to change semantic content.
+### 2.7 Reproducible Distribution
 
-**3.8 Include correlation context.** Errors identify the operation and safe
-input context without printing tokens, passwords, or full sensitive values.
+The installed version matches the source version. The version is
+queryable with `--version`.
 
-**3.9 Test boundary behavior.** Cover missing arguments, invalid values,
-broken pipes, permissions, signals, interrupted writes, and non-TTY runs.
+## 3. Command Design
 
-**3.22 Keep command help synchronized.** Update parser tests, shell completions, and examples in the same change as a flag.
+### 3.1 One Command, One Job
 
-**3.23 Bound diagnostics.** Emit one concise failure record for each command and avoid repeating a message for every attempted item.
+A CLI does one thing. `git` is a suite of commands, each doing one
+thing. A binary named `mytool` that runs migrations, sends emails,
+and generates reports is three tools.
 
-**3.24 Make platform behavior explicit.** Record executable lookup, path normalization, and signal differences for each supported operating system.
+### 3.2 Conventional Subcommand Structure
 
-**3.25 Separate dry-run output.** A dry run states the planned effect and does not perform a remote or filesystem mutation.
+`tool [global-flags] <command> [command-flags] [args]`.
 
-**3.26 Preserve command history safety.** Redact arguments that may contain credentials before they reach shell history or telemetry.
+Global flags precede the command. Command flags follow it. Every
+subcommand has its own `--help`. This structure matches `git`,
+`docker`, and `kubectl`, so it is already familiar.
 
-**3.30 Keep option parsing centralized.** Shared flags use one schema and one error path.
+### 3.3 Verb-Noun Subcommand Names
 
-**3.31 Make output parsable.** Document record delimiters and stable field names for automation.
+Subcommands are verbs or verb-noun pairs.
 
-**3.32 Preserve shell safety.** Quote expansions and use argument arrays where the runtime supports them.
+BAD: `tool users`, `tool data`, `tool thing`.
 
-## 4. Domain-Specific Anti-Patterns
+GOOD: `tool list-users`, `tool export-data`, `tool create-thing`.
 
-### 4.1 Logging to stdout
+The name tells the user what the command does.
+
+### 3.4 No Overloaded Commands
+
+A subcommand that behaves differently based on multiple flags is
+hard to document and hard to test.
+
+BAD: `tool sync --from x --to y --mode full --direction both`.
+
+GOOD: `tool sync-full` and `tool sync-incremental` as separate
+commands, with shared config.
+
+## 4. Argument Parsing
+
+### 4.1 Use a Parser Library
+
+Hand-parsing `process.argv` or `sys.argv` beyond trivial cases
+leads to inconsistent help, missing validation, and bugs.
+
+Use the language's standard or de-facto parser: `commander`,
+`yargs`, `cac`, `argparse`, `click`, `typer`, `cobra`, `pflag`,
+`clap`, `optparse`.
+
+### 4.2 Follow POSIX and GNU Conventions
+
+- Short flags: `-h`, `-v`, `-f value`.
+- Long flags: `--help`, `--verbose`, `--file value` or
+  `--file=value`.
+- Combined short flags: `-vf` only for flags that take no value.
+- `--` terminates flag parsing; the rest are positional arguments.
+
+Do not invent a new convention. Users expect POSIX.
+
+### 4.3 Short Flags for Common Options
+
+The conventional short flags:
+
+- `-h` for `--help`.
+- `-v` for `--verbose` (or `--version` in some tools).
+- `-V` for `--version` when `-v` is verbose.
+- `-q` for `--quiet`.
+- `-f` for `--file` or `--force` (do not use both in one tool).
+- `-o` for `--output`.
+- `-n` for `--dry-run` or `--no-...` (context-dependent).
+
+### 4.4 Long Flags for Everything Else
+
+A flag not in the conventional list has only a long form.
+`--max-retries` does not need a short form.
+
+### 4.5 Kebab-Case Flag Names
+
+BAD: `--maxRetries`, `--MaxRetries`, `--max_retries`.
+
+GOOD: `--max-retries`.
+
+GNU convention uses kebab-case.
+
+### 4.6 Boolean Flags Are Flags, Not Options
+
+BAD: `--verbose true`, `--verbose=false`.
+
+GOOD: `--verbose`, `--no-verbose`.
+
+A boolean flag is present or absent. A `--no-` prefix negates it.
+
+### 4.7 Required Arguments Have No Brackets
+
+In help text:
+
+- `<file>` = required.
+- `[file]` = optional.
+- `<file...>` = one or more.
+- `[file...]` = zero or more.
+
+Match the convention. Do not invent.
+
+## 5. Validation and Defaults
+
+### 5.1 Validate All Arguments
+
+Arguments come from the user. Validate:
+
+- Required arguments are present.
+- Types match (number where a number is expected).
+- Enumerated values are in the allowed set.
+- File paths exist when they must.
+- Mutually exclusive flags are not both set.
+
+An invalid argument produces a clear error and exits with code 2.
+
+### 5.2 Sensible Defaults
+
+A tool that requires ten flags to do anything is unfriendly. Default
+to the common case. Expose flags for the uncommon case.
+
+### 5.3 Configuration Precedence
+
+Standard precedence, highest to lowest:
+
+1. Command-line flags.
+2. Environment variables.
+3. Project config file (`.mytoolrc` in the current directory).
+4. User config file (`~/.config/mytool/config`).
+5. Built-in defaults.
+
+Document the precedence in `--help`. Follow it consistently.
+
+### 5.4 Environment Variable Names
+
+- Uppercase with a consistent prefix: `MYTOOL_API_KEY`.
+- Never collide with common variables (`PATH`, `HOME`, `USER`,
+  `EDITOR`).
+- Document every env var in the help text.
+
+### 5.5 Explicit Config Paths
+
+The config file has a documented default location. `--config
+<path>` overrides it. `--no-config` disables loading entirely.
+
+### 5.6 No Silent Config Loading
+
+Loading a config file from a surprising location confuses users.
+Print the loaded config path to stderr in verbose mode.
+
+## 6. Exit Codes
+
+### 6.1 Zero for Success, Non-Zero for Failure
+
+- `0`: success.
+- `1`: general error.
+- `2`: usage error (bad arguments).
+- `64`-`78`: reserved by `sysexits.h` for specific failures.
+- `126`: command found but not executable.
+- `127`: command not found.
+- `130`: terminated by SIGINT (128 + 2).
+- `143`: terminated by SIGTERM (128 + 15).
+
+### 6.2 Exit Codes Are Public API
+
+Scripts depend on exit codes. Changing an exit code from `1` to `2`
+breaks callers. Treat exit codes as documented contract.
+
+### 6.3 Distinct Codes for Distinct Failures
+
+BAD: `1` for both "file not found" and "invalid JSON".
+
+GOOD: `1` for general error, `2` for usage error, and a documented
+set of additional codes for specific failures.
+
+### 6.4 Document the Codes
+
+The help text lists the exit codes the tool produces. Callers should
+not have to read the source.
+
+## 7. Standard Streams
+
+### 7.1 stdout for Data, stderr for Everything Else
 
 BAD:
 ```bash
-echo "downloading" && curl "$URL" -o file
+echo "Processing file..." > output.txt
 ```
 
 GOOD:
 ```bash
-printf 'downloading\n' >&2
-curl "$URL" -o file
+echo "Processing file..." >&2
 ```
 
-The result stream remains safe for machine consumers.
+Program output that a caller might pipe goes to stdout. Logs,
+progress, and errors go to stderr. A pipe between two tools must
+not receive progress messages.
 
-### 4.2 Silent Argument Drift
+### 7.2 Exit 0 With stderr Output Is Valid
 
-BAD:
-```bash
-command --name value --verbse sync
+A successful run may still produce warnings on stderr. Do not treat
+any stderr output as failure.
+
+### 7.3 Respect `isatty`
+
+When stdout is a TTY, use colored output, progress bars, and
+spinners. When stdout is not a TTY, use plain output, no progress,
+no colors.
+
+A JSON output piped to `jq` with ANSI codes is a bug.
+
+### 7.4 `--no-color` and `NO_COLOR`
+
+Respect the `NO_COLOR` environment variable (see
+https://no-color.org/). Also provide `--no-color` as a flag. The
+flag overrides the environment.
+
+### 7.5 No Secrets on stdout or stderr
+
+Passwords, tokens, and keys never appear on either stream, even in
+debug mode. Redact them in log output.
+
+### 7.6 Buffering
+
+stdout is line-buffered when connected to a terminal and
+block-buffered when piped. A tool that writes a progress line and
+expects it to appear immediately must flush or write to stderr.
+
+## 8. Help and Documentation
+
+### 8.1 Every Command Has `--help`
+
+`tool --help` shows the top-level commands and global flags.
+`tool <command> --help` shows the command's flags and arguments.
+Both exit with code 0.
+
+### 8.2 Help Text Structure
+
+- One-line summary.
+- Usage line.
+- Arguments with types and defaults.
+- Options with types and defaults.
+- At least one example.
+- Exit codes.
+- Environment variables that affect behavior.
+
+### 8.3 No Help That Lies
+
+If a flag is documented, it works. If a flag works, it is
+documented. Help text and behavior drift; test them together.
+
+### 8.4 `--version`
+
+`tool --version` prints the version and exits 0. The format is
+consistent across releases. A common format is `tool 1.4.2`.
+
+### 8.5 Examples That Work
+
+Every example in help text must actually run against the current
+version. Stale examples are worse than no examples.
+
+### 8.6 Man Pages for Complex Tools
+
+A tool with subcommands or many flags ships a man page. The man
+page is generated from the same source as `--help` when possible.
+
+## 9. Signals and Interruption
+
+### 9.1 Handle SIGINT Gracefully
+
+On Ctrl+C, the tool cleans up (temp files, locks, partial output)
+and exits with code 130.
+
+### 9.2 Handle SIGTERM
+
+On SIGTERM, the same cleanup runs and the tool exits with code 143.
+
+### 9.3 Never Ignore Signals
+
+Ignoring SIGINT traps the user in a hanging process. Never do it.
+A tool that must complete a critical section defers the signal, not
+ignores it.
+
+### 9.4 Clean Up on Exit
+
+A tool that creates temp files, acquires locks, or opens
+connections cleans up in a `finally` block or a signal handler.
+
+### 9.5 Atomic Writes
+
+A command that writes a file either writes it completely or leaves
+the original unchanged. Write to a temp file, then rename.
+
+BAD: Write directly to `output.json`; a crash mid-write leaves a
+corrupt file.
+
+GOOD: Write to `output.json.tmp`, then `rename` to `output.json`.
+
+### 9.6 Idempotent Cleanup
+
+A signal handler that runs twice must not break. Signal handlers
+are not reentrant; use a flag to mark "cleanup in progress".
+
+## 10. Long-Running Operations
+
+### 10.1 Progress to stderr
+
+Progress bars, spinners, and status messages go to stderr. Never
+stdout. The stdout stream belongs to the actual output.
+
+### 10.2 Progress Only on TTY
+
+When stderr is not a TTY, do not emit progress. Logs replace
+progress in CI environments.
+
+### 10.3 Report Start and End
+
+A long-running command prints a "starting..." line at the start and
+a "done" line at the end. The lines go to stderr. This allows a
+caller to see in logs what happened.
+
+### 10.4 Interruptible Work
+
+A long-running loop checks for interruption between iterations.
+SIGINT cancels the loop, not just the current operation.
+
+### 10.5 Timeout for Network Operations
+
+Every network call has a timeout. `--timeout <seconds>` overrides
+the default. A command that hangs forever is a bug.
+
+## 11. Non-Interactive by Default
+
+### 11.1 No Interactive Prompts
+
+A command runs to completion without user input. Interactive
+prompts are opt-in.
+
+BAD: A command that asks for confirmation in CI.
+
+GOOD: A command that requires `--force` for destructive actions,
+and only prompts when stdin is a TTY and `--no-input` is not set.
+
+### 11.2 `--no-input` Flag
+
+A global `--no-input` flag disables all prompts. In its presence,
+the command uses defaults or fails clearly.
+
+### 11.3 Destructive Actions Require Confirmation
+
+A destructive command (`delete`, `drop`, `overwrite`) requires one
+of:
+
+- `--force` for non-interactive confirmation.
+- A prompt when interactive.
+- `--dry-run` as a default, with `--apply` to execute.
+
+### 11.4 `--dry-run` for Every Destructive Command
+
+A destructive command provides `--dry-run`. It prints what would
+happen without doing it. This is the safest way to preview.
+
+## 12. Configuration and Environment
+
+### 12.1 No Hidden Config
+
+The tool does not read configuration from surprising places. Every
+config source is documented in `--help`.
+
+### 12.2 Environment Overrides Are Visible
+
+If an environment variable overrides a flag, the help text says so.
+Users debug faster when the source of a value is visible.
+
+### 12.3 Sensible Working Directory Behavior
+
+The tool operates on the current directory by default. If it must
+operate elsewhere, provide `--dir` or `-C` (matching `git` and
+`make`).
+
+### 12.4 No Global State Mutation
+
+A CLI invocation does not modify the user's shell environment,
+`PATH`, or files outside the project. If it must, ask first.
+
+## 13. Distribution and Packaging
+
+### 13.1 Single Binary When Possible
+
+- Go, Rust, and C++ compile to a single binary.
+- Node.js CLIs bundle via `pkg`, `bun build --compile`, or `nexe`,
+  or ship with a `node_modules`.
+- Python CLIs ship via `pipx`, `uv tool`, `pex`, or `zipapp`.
+
+The user should not need to install a runtime separately if
+avoidable.
+
+### 13.2 Versioned Releases
+
+Every release has a version number. The version is queryable with
+`--version`.
+
+### 13.3 Changelog
+
+Every release documents what changed. Users need to know before
+upgrading.
+
+### 13.4 No Auto-Update Without Consent
+
+If the tool auto-updates, it does so with the user's consent, or
+on an explicit `tool update` command. Silent updates are hostile.
+
+### 13.5 Install Path
+
+Document where the binary is installed (`/usr/local/bin`, a package
+manager's prefix, or a user directory). A tool that installs to a
+surprising location confuses users.
+
+### 13.6 Uninstall
+
+Provide an uninstall path or document the package manager's
+uninstall. Do not leave files behind.
+
+## 14. Anti-Patterns
+
+### 14.1 No `--help`
+
+A CLI without `--help` is unusable without reading the source.
+
+### 14.2 Exit Code Always 0
+
+BAD: A failing command that exits 0 "to not scare users".
+
+GOOD: Exit non-zero on failure. Scripts depend on this.
+
+### 14.3 Errors to stdout
+
+BAD: `console.log("Error: file not found")`.
+
+GOOD: `console.error("Error: file not found")`.
+
+Piped output that includes error text is a bug.
+
+### 14.4 Colors When Piped
+
+BAD: ANSI codes in a JSON output meant for `jq`.
+
+GOOD: Detect `isatty`, disable colors when piped.
+
+### 14.5 Silent Failure
+
+BAD: A command that fails without any message.
+
+GOOD: Print the error to stderr and exit non-zero.
+
+### 14.6 Interactive by Default
+
+BAD: A command that prompts for input in CI.
+
+GOOD: Non-interactive by default. Interactive only via
+`--interactive`.
+
+### 14.7 Inconsistent Flag Names
+
+BAD: `--output` in one command, `--out` in another, `-o` in a
+third.
+
+GOOD: One name across all commands.
+
+### 14.8 Destructive Without Confirmation
+
+BAD: `tool clean` deletes the cache without asking.
+
+GOOD: `tool clean` asks, or requires `--force`, or defaults to
+`--dry-run`.
+
+### 14.9 Progress Bars on Piped Output
+
+BAD: A spinner written to stdout that ends up in a JSON file.
+
+GOOD: Progress on stderr, and only when stderr is a TTY.
+
+### 14.10 Config File Without a Schema
+
+BAD: A config that accepts any key, silently ignoring typos.
+
+GOOD: A schema, validated at startup. Unknown keys are errors or
+warnings.
+
+### 14.11 Version Without a Query
+
+BAD: The user cannot tell which version is installed.
+
+GOOD: `--version` prints the version in a parseable format.
+
+### 14.12 Non-Deterministic Output
+
+BAD: A command whose output order depends on filesystem iteration
+order.
+
+GOOD: Sort output deterministically.
+
+### 14.13 Assuming a Shell
+
+BAD: A tool that only works in bash on Linux.
+
+GOOD: A tool that works from any shell on the supported platforms.
+
+### 14.14 Unclear Error Messages
+
+BAD: `Error: ENOENT`.
+
+GOOD: `Error: config file not found at /path/to/.toolrc`.
+
+Include the path, the operation, and the reason.
+
+### 14.15 No `--dry-run`
+
+BAD: A destructive command with no way to preview.
+
+GOOD: `--dry-run` prints what would happen without doing it.
+
+### 14.16 Argument Reordering
+
+BAD: `tool --verbose cmd arg1 arg2` where `--verbose` must come
+after `cmd`.
+
+GOOD: Global flags work before or after the subcommand.
+
+### 14.17 Hidden Global Flags
+
+BAD: A `--config` flag that only works when placed before the
+subcommand, undocumented.
+
+GOOD: Document placement, or make flags position-independent.
+
+### 14.18 Environment Variables Without Prefix
+
+BAD: An env var `API_KEY` that collides with other tools.
+
+GOOD: `MYTOOL_API_KEY`.
+
+### 14.19 Reading stdin Without a Flag
+
+BAD: A command that silently reads stdin when no file argument is
+given.
+
+GOOD: An explicit `-` for stdin, matching `cat`, `grep`, and other
+Unix tools.
+
+### 14.20 Output Without a Trailing Newline
+
+BAD: A command that prints a value with no newline, breaking shell
+pipelines.
+
+GOOD: Every line ends with `\n`.
+
+### 14.21 Losing Exit Code Through a Pipe
+
+BAD: `tool | tee log.txt` where the exit code of `tee` masks the
+exit code of `tool`.
+
+GOOD: Document the pattern with `set -o pipefail`, or provide a
+`--log <path>` flag that writes to a file without a pipe.
+
+### 14.22 Mixed stdout and stderr
+
+BAD: A command that writes some output to stdout and some to
+stderr, with no rule.
+
+GOOD: A documented rule: data to stdout, everything else to
+stderr.
+
+### 14.23 Human-Readable Default, No Machine Format
+
+BAD: A command that only outputs aligned text.
+
+GOOD: A `--format json` (or `tsv`) for scripts. Default can stay
+human-readable.
+
+### 14.24 Breaking Flag Renames in Minor Versions
+
+BAD: Renaming `--output` to `--out` in a minor release.
+
+GOOD: Add `--out` as an alias, deprecate `--output`, remove it in
+the next major.
+
+### 14.25 Overloaded `--force`
+
+BAD: `--force` means "overwrite", "skip confirmation", and
+"continue on error" in different commands.
+
+GOOD: One flag, one meaning. Add `--continue-on-error` if needed.
+
+### 14.26 Unbounded Recursion on Symlinks
+
+BAD: A `tool sync` that follows symlinks and recurses infinitely.
+
+GOOD: Do not follow symlinks unless `--follow-symlinks` is set.
+
+### 14.27 No Progress for Long Operations
+
+BAD: A command that runs for 10 minutes with no output. The user
+thinks it is hung.
+
+GOOD: Progress to stderr, or at least a "working..." line at the
+start.
+
+### 14.28 Help Text That Fits the Terminal
+
+BAD: Help text with lines over 120 characters that wrap badly.
+
+GOOD: Help text wrapped to 80 columns, indented consistently.
+
+### 14.29 No Support for `-` as stdin/stdout
+
+BAD: A command that only accepts file paths.
+
+GOOD: `tool parse -` reads stdin; `tool export -` writes stdout.
+This matches Unix conventions.
+
+### 14.30 Publishing Without Version in Output
+
+BAD: `tool --version` prints nothing or a non-parseable string.
+
+GOOD: `tool --version` prints a single line, parseable by a script.
+
+## 15. Response to Violation
+
+If a previous response violated a rule here:
+
+```
+In the previous response, [specific rule] was violated. Correction:
+[corrected code]
 ```
 
-GOOD:
-```bash
-command --name value --verbose sync
-```
-
-Unknown options fail before work begins.
-
-### 4.3 Partial Failure Reported as Success
-
-BAD:
-```bash
-for item in "$@"; do upload "$item" || true; done
-```
-
-GOOD:
-```bash
-for item in "$@"; do upload "$item" || exit 1; done
-```
-
-Exit status reflects the failed operation.
-
-**3.10 Preserve discovery metadata.** Commands that create files record enough provenance to identify the command version, configuration profile, and target without embedding sensitive input.
-
-**3.11 Keep subcommands consistent.** A subcommand inherits the same stream, exit, cancellation, and configuration rules as its parent; do not create a private contract for one command.
-
-**3.12 Use a single top-level dispatcher.** Validate the complete invocation before selecting a subcommand so an invalid global option cannot enter a destructive path.
-
-**3.13 Make defaults reviewable.** Print effective non-sensitive defaults in verbose or diagnostic modes, while keeping secrets redacted and machine output stable.
-
-**3.14 Respect platform paths.** Normalize separators and working directories according to the supported OS without changing user-specified paths unexpectedly.
-
-**3.15 Add failure tests.** Assert exact exit status, stderr text, cleanup, and no partial output for each documented failure category.
-
-**3.16 Keep shell integration explicit.** Quote paths, preserve arguments, and avoid assuming a POSIX shell on Windows or a TTY on a service host.
-
-**3.17 Make config precedence documented.** Show whether defaults, file, environment, and flags override one another; reject conflicting required sources.
-
-**3.18 Preserve diagnostics.** Include command name, safe argument summary, duration, and cleanup result in verbose output.
-
-**3.19 Keep secrets out of usage text.** Redact values in help, errors, traces, and copied environment information.
-
-**3.20 Keep output deterministic where possible.** Sort map iteration and define locale and timezone when stable machine output is required.
-
-**3.21 Test resource exhaustion.** Cover full disk, permission denied, broken pipe, timeout, cancellation, and unavailable network.
-
-## 5. Response to Violation
-
-If a previous response violated this layer, state the violated rule, show
-the corrected command or code, and identify the changed stream, exit status,
-or signal behavior. Do not repeat universal rules or claim unperformed tests.
+No justification. No apology paragraph. Fix and move on.

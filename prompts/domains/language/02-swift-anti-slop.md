@@ -7,159 +7,434 @@ category: domain
 domain_type: language
 version: 1
 ---
+
 # Swift Anti-Slop Layer
 
-Layered under `_universal/00-master-anti-slop.md`. This layer covers Swift
-value semantics, optionals, concurrency, and UI-independent APIs. Framework
-and platform rules remain separate.
+Layered under `_universal/00-master-anti-slop.md`. Universal rules
+(fabrication, fake completion, over-engineering, silent assumptions,
+security anti-patterns, output format) are NOT repeated here.
 
-## 1. Scope and Assumptions
-1. Read Package.swift, project settings, deployment targets, and existing
-   concurrency configuration before selecting an API.
-2. Match the project's Swift language mode and platform availability. Do not
-   assume a modern actor, macro, or concurrency feature is enabled.
-3. Keep access control and API stability consistent with the package.
+This file covers rules specific to Swift: optionals, value semantics,
+memory management, concurrency, and the patterns that produce crashes
+or retain cycles. Framework rules (SwiftUI, UIKit) live in
+`domains/framework/`.
 
-## 2. Optionals and Force Unwrapping
-4. Every force unwrap, implicitly unwrapped optional, and `try!` is a claim
-   that failure is impossible. Production code must instead handle or narrow
-   the failure.
-5. Use `guard let` or `if let` at boundaries that can be absent. Do not pass
-   optional values through multiple layers before checking them.
-6. Use `try?` only when absence is an intentional domain outcome and the result
-   type remains clear. Do not discard an error with `try!` or `try?`.
-7. Distinguish an absent value from a thrown failure; do not map every error to
-   `nil` without a documented decision.
+## 1. Stack Assumptions
 
-## 3. Ownership and Retain Cycles
-8. Use structs for value-shaped data and classes only when identity or shared
-   mutable state is required.
-9. Closures stored on an object must have an explicit ownership plan. Mark
-   `weak` or `unowned` only when the owner is designed to outlive the closure
-   or the closure must not retain it.
-10. Do not use `unowned` as a convenient replacement for a weak reference;
-    it can crash when the referenced object is gone.
+This layer assumes:
 
-## 4. Actors and Concurrency
-11. An actor protects mutable state; it is not a general replacement for a
-    lock. Keep actor state minimal and name its invariant.
-12. Use async functions at I/O boundaries and propagate `CancellationError` and
-    task cancellation. Do not hide cancellation with a broad catch.
-13. Do not use `Task.detached` to avoid an actor hop. Detached tasks lose
-    priority, task-local values, and actor context; use them only for truly
-    independent work.
-14. Keep `MainActor` isolation at the UI boundary, not on domain services that
-    do not touch UI state.
-15. Avoid concurrent mutable collections. Choose a safe value or place mutation
-    behind a single owner.
+- Swift 5.9 or later.
+- Swift Package Manager or Xcode for builds.
+- Swift Concurrency (async/await, actors) is available.
 
-## 5. Property Wrappers
-16. Use a property wrapper when it centralizes a proven invariant, such as
-    dependency storage or validated state. Do not wrap a property merely to
-    shorten its declaration.
-17. Expose wrapped types and projected values deliberately. A wrapper whose
-    projected value is an implementation detail must not become public API by
-    accident.
-18. Keep wrapped state access on the correct actor or isolation domain.
+## 2. Optionals
 
-## 6. Value Semantics and Copying
-19. Prefer `let` and immutable structs. Use `var` only for intentional local
-    mutation; do not make a value mutable just to satisfy a legacy API.
-20. Treat `Data`, `String`, and collection values according to copy-on-write
-    behavior; do not assume a copy always duplicates bytes.
-21. Do not use `inout` for a hidden mutation. Document whether a function can
-    consume, retain, or alias its argument.
+### 2.1 No Force Unwrap in Production
 
-## 7. Memory and Resources
-22. Use `defer` for cleanup on every path, but prefer scoped APIs when the
-    language provides them.
-23. Avoid `unowned` temporary values in closures and deinitializers. Check the
-    lifetime of every callback retained beyond the current call.
-24. Do not use Objective-C runtime tricks or `unsafeBitCast` to bypass Swift's
-    type system in new code.
+BAD: `let name = user.name!`.
+GOOD: `guard let name = user.name else { return }`.
 
-## 8. API and Style Rules
-25. Use `snake_case` for values and functions, `UpperCamelCase` for types, and
-    follow the project's access-control and naming conventions.
-26. Mark public APIs and non-obvious generic constraints with concise English
-    documentation. Do not document what the signature already proves.
-27. Use a protocol when multiple concrete types need the same behavior and
-    ownership is not the primary concern. Do not create a protocol for one
-    implementation without a boundary reason.
-28. Do not add packages or enable experimental language features without
-    explicit permission.
+Force unwrap crashes on `nil`. Every `!` is a potential crash.
 
-34. Confirm that every stored delegate has a defined owner and lifetime.
-35. Verify that task properties propagate the intended actor and priority.
-36. Exercise missing optionals, thrown errors, and cancellation paths.
-37. Check access control before exposing a property wrapper's projected value.
-39. Test actor reentrancy and task cancellation under contention.
-40. Review weak or unowned captures against object destruction order.
-41. Keep main-actor annotations at the actual presentation boundary.
-42. Record deployment-target and analyzer results.
+### 2.2 `guard let` for Early Exit
 
-42. Inspect stored delegates for reference cycles.
-43. Test actor reentry and cancellation under contention.
-44. Check property wrappers for exposed implementation details.
-45. Confirm concurrency annotations match deployment targets.
-46. Verify every optional boundary handles absence explicitly.
-47. Review task priorities and actor inheritance.
-48. Run the configured formatter, analyzer, and tests.
-49. Record actual verification results.
-
-## Domain-Specific Anti-Patterns
-
-### 9.1 Crash as Validation
 BAD:
 ```swift
-let id = response.value!.id
-return try! decoder.decode(User.self, from: data)
-```
-GOOD:
-```swift
-guard let value = response.value else { throw AppError.invalidResponse }
-return try decoder.decode(User.self, from: data)
-```
-
-### 9.2 Retain Cycles
-BAD:
-```swift
-final class Screen {
-    var onSave: (() -> Void)?
-    func install() { onSave = { [self] in save() } }
-}
-```
-GOOD:
-```swift
-final class Screen {
-    var onSave: (() -> Void)?
-    func install() { onSave = { [weak self] in self?.save() } }
+if let name = user.name {
+    // 50 lines of code
 }
 ```
 
-### 9.3 Unmanaged Tasks
-BAD:
-```swift
-func refresh() { Task.detached { await self.load() } }
-```
 GOOD:
 ```swift
-@MainActor
-func refresh() { Task { await model.load() } }
+guard let name = user.name else { return }
+// 50 lines of code
 ```
 
-## 10. Verification Checklist
-29. Repeated `DispatchQueue.main.async` calls are not a concurrency model; fix
-    the ownership and isolation design instead.
-30. `NotificationCenter` observers and task callbacks must have a clear
-    cancellation or lifecycle policy.
-31. Run the project's formatter, analyzer, and tests for the supported target.
-32. Search for `!`, `try!`, `as!`, `unowned`, and `Task.detached` before review.
-33. Exercise cancellation, missing optionals, actor contention, and deinit paths.
+### 2.3 `if let` for Conditional Logic
 
-## 11. Response to Violation
-Name the file and symbol, cite the numbered rule, and describe the crash or
-concurrency failure it prevents. Make the smallest safe change, preserving
-API compatibility. Do not repeat universal guidance. If fixing the issue
-requires a deployment-target change, new dependency, or public API break,
-stop and state that impact before editing.
+When the branch is short or there is an alternative, `if let` is fine.
+
+### 2.4 Nil-Coalescing Over Force Unwrap
+
+BAD: `let name = user.name!`.
+GOOD: `let name = user.name ?? "Guest"`.
+
+### 2.5 Optional Chaining
+
+BAD:
+```swift
+if user != nil {
+    if user!.profile != nil {
+        print(user!.profile!.bio)
+    }
+}
+```
+
+GOOD: `print(user?.profile?.bio ?? "no bio")`.
+
+### 2.6 `try?` Swallows Errors
+
+BAD: `let data = try? load()` without checking `nil`.
+GOOD: `do { let data = try load() } catch { ... }`.
+
+`try?` discards the error. It is acceptable only when the error is
+genuinely irrelevant.
+
+### 2.7 `try!` Is Almost Never Correct
+
+`try!` crashes on any thrown error. Use it only in tests or when the
+error is truly impossible.
+
+## 3. Value vs Reference Semantics
+
+### 3.1 Structs for Values
+
+Use `struct` for types that represent a value: a point, a user, a
+configuration.
+
+### 3.2 Classes for Identity
+
+Use `class` when two references must share state, or when the type
+has a lifecycle (a view controller, a network client).
+
+### 3.3 Enum With Associated Values for State
+
+```swift
+enum LoadingState {
+    case idle
+    case loading
+    case loaded(User)
+    case failed(Error)
+}
+```
+
+Better than a struct with multiple optional fields.
+
+### 3.4 Mutating Methods on Structs
+
+A method that changes a struct's state is marked `mutating`:
+
+```swift
+struct Counter {
+    var value = 0
+    mutating func increment() { value += 1 }
+}
+```
+
+### 3.5 No Reference Types in Structs Without a Reason
+
+A struct with a `class` field shares reference semantics through
+that field. Use value types consistently.
+
+## 4. Memory Management
+
+### 4.1 `weak` for Delegates
+
+A delegate is `weak`:
+
+```swift
+protocol UserServiceDelegate: AnyObject { ... }
+class UserService {
+    weak var delegate: UserServiceDelegate?
+}
+```
+
+Without `weak`, the delegate relationship creates a retain cycle.
+
+### 4.2 `[weak self]` in Closures
+
+A closure that captures `self` strongly creates a retain cycle if
+`self` holds the closure.
+
+BAD:
+```swift
+service.fetch { result in
+    self.update(result)  // strong capture
+}
+```
+
+GOOD:
+```swift
+service.fetch { [weak self] result in
+    self?.update(result)
+}
+```
+
+### 4.3 `unowned` When the Lifetime Is Guaranteed
+
+`unowned` is like `weak` but crashes if the object is deallocated.
+Use it when the captured object's lifetime is guaranteed to outlive
+the closure.
+
+Use `unowned` sparingly. `weak` with `guard let` is safer.
+
+### 4.4 No Retain Cycles in Closures
+
+Covered in 4.2.
+
+### 4.5 `deinit` for Cleanup
+
+`deinit` is for invalidating timers, removing observers, and closing
+resources.
+
+### 4.6 No `deinit` for State
+
+`deinit` should not have side effects beyond cleanup.
+
+## 5. Concurrency
+
+### 5.1 Structured Concurrency
+
+Use `async let` and `TaskGroup` for parallel work:
+
+BAD:
+```swift
+let a = await fetchA()
+let b = await fetchB()
+```
+
+GOOD:
+```swift
+async let a = fetchA()
+async let b = fetchB()
+let (resultA, resultB) = await (a, b)
+```
+
+### 5.2 `Task` for Unstructured Work
+
+Use `Task { }` for fire-and-forget work. Capture `[weak self]` when
+referencing `self`.
+
+### 5.3 `Task.detached` Rarely
+
+`Task.detached` inherits no context. Use it only when you explicitly
+want no inheritance.
+
+### 5.4 Actors for Shared Mutable State
+
+```swift
+actor Counter {
+    private var value = 0
+    func increment() -> Int {
+        value += 1
+        return value
+    }
+}
+```
+
+Callers use `await counter.increment()`.
+
+### 5.5 `@MainActor` for UI
+
+Every UI update is on `@MainActor`. A `Task` that updates UI is
+`@MainActor` or calls `await MainActor.run { ... }`.
+
+### 5.6 No Blocking on the Main Thread
+
+Synchronous network calls, file I/O, and heavy computation happen
+off the main thread.
+
+### 5.7 Cancellation
+
+Check `Task.isCancelled` or call `try Task.checkCancellation()` in
+long loops.
+
+## 6. Collections
+
+### 6.1 `map`, `filter`, `reduce`
+
+Use the standard library's transformations.
+
+BAD:
+```swift
+var names: [String] = []
+for user in users {
+    if user.active { names.append(user.name) }
+}
+```
+
+GOOD:
+```swift
+let names = users.filter(\.active).map(\.name)
+```
+
+### 6.2 Key Paths
+
+`\.active` and `\.name` are shorter and clearer than closures.
+
+### 6.3 `first(where:)` Over `filter().first`
+
+BAD: `users.filter { $0.active }.first`.
+GOOD: `users.first { $0.active }`.
+
+The first version processes the entire array.
+
+### 6.4 `compactMap` for Optional Transformation
+
+BAD:
+```swift
+let ids = users.map { $0.id }.filter { $0 != nil }.map { $0! }
+```
+
+GOOD:
+```swift
+let ids = users.compactMap { $0.id }
+```
+
+### 6.5 `Dictionary(grouping:by:)`
+
+BAD: Manually grouping.
+GOOD: `Dictionary(grouping: users, by: \.role)`.
+
+## 7. Protocols and Extensions
+
+### 7.1 Protocol-Oriented Design
+
+Prefer protocols over inheritance. A protocol with a small method
+surface is easier to compose.
+
+### 7.2 Protocol Extensions for Defaults
+
+```swift
+protocol Greeter {
+    func greet() -> String
+}
+extension Greeter {
+    func greet() -> String { "Hello" }
+}
+```
+
+### 7.3 No Protocol for a Single Type
+
+A protocol with one conforming type is overhead unless it is
+public API.
+
+### 7.4 Associated Types
+
+A protocol with associated types cannot be used as a type directly.
+Use `some` or `any` (Swift 5.7+).
+
+BAD: `var items: [Collection]` (compile error).
+GOOD: `var items: [any Collection]` or `some Collection`.
+
+### 7.5 `extension` for Organization
+
+Group related methods in `extension`s. Do not put all methods in the
+main type declaration.
+
+## 8. Swift-Specific Anti-Patterns
+
+### 8.1 Force Unwrap
+
+Covered in 2.1.
+
+### 8.2 `try!`
+
+Covered in 2.7.
+
+### 8.3 Retain Cycles
+
+Covered in 4.
+
+### 8.4 `!` on IBOutlets
+
+A `@IBOutlet` that is never connected crashes on first access.
+Verify connections, or use `@IBOutlet weak var` and handle `nil`.
+
+### 8.5 Global Mutable State
+
+BAD: `var currentUser: User?` at file scope.
+GOOD: A dependency injected into the type that needs it, or an
+`@MainActor` observable object.
+
+### 8.6 String Concatenation in Loops
+
+BAD: `var s = ""; for x in items { s += x }`.
+GOOD: `items.joined()` or a `String` builder pattern.
+
+### 8.7 `NSObject` Inherited Without Need
+
+An `NSObject` subclass pays for Objective-C runtime overhead. Use
+plain Swift types unless the type must interoperate with Objective-C
+or KVO.
+
+### 8.8 `@objc` Everywhere
+
+`@objc` exposes the symbol to the Objective-C runtime. Use it only
+when necessary.
+
+### 8.9 `AnyObject` in Protocols by Default
+
+BAD: `protocol UserService: AnyObject`.
+GOOD: `protocol UserService` unless reference semantics are
+required (delegates).
+
+### 8.10 `class` When `struct` Works
+
+Covered in 3.1 and 3.2.
+
+### 8.11 Optional Booleans
+
+BAD: `var isActive: Bool?`.
+GOOD: A three-state enum (`unknown`, `active`, `inactive`), or a
+default value.
+
+### 8.12 Implicitly Unwrapped Optionals in Non-UI Code
+
+`var user: User!` is a crash waiting to happen. Use it only for
+outlets that are guaranteed to be connected.
+
+### 8.13 `DispatchQueue` Over Structured Concurrency
+
+BAD: `DispatchQueue.global().async { ... }`.
+GOOD: `Task { ... }` or an actor.
+
+GCD is not wrong, but Swift Concurrency is safer and more readable
+in new code.
+
+### 8.14 `NotificationCenter` Without Removal
+
+An observer that is not removed leaks. Use the block-based API with
+a stored token, or the async sequence API.
+
+### 8.15 `UserDefaults` for Everything
+
+`UserDefaults` is for small preferences. Not for tokens (use
+Keychain), not for large data (use a database or files).
+
+### 8.16 `print` for Logging
+
+BAD: `print("user logged in")`.
+GOOD: `os.Logger` or the project's logging framework.
+
+### 8.17 `Date()` for Business Logic
+
+`Date()` depends on the system clock, which can be changed by the
+user. For business logic, use a clock abstraction.
+
+### 8.18 `Result` When `async throws` Is Available
+
+BAD: A callback-based API with a `Result` parameter.
+GOOD: An `async throws` function.
+
+### 8.19 `throws` for Non-Recoverable Errors
+
+A function that throws an error the caller cannot handle should
+`fatalError` or `precondition`, not `throw`.
+
+### 8.20 Overuse of `@escaping`
+
+`@escaping` is for closures that outlive the function. Non-escaping
+is the default and is faster.
+
+## 9. Response to Violation
+
+If a previous response violated a rule here:
+
+```
+In the previous response, [specific rule] was violated. Correction:
+[corrected code]
+```
+
+No justification. No apology paragraph. Fix and move on.

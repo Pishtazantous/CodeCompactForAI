@@ -148,36 +148,10 @@ await applyUpdateWithRecovery(update);
 
 ## 7. Response to Violation
 
-57. Stop and identify whether the problem is main, preload, or renderer.
-58. Fetch the current window factory, preload bridge, and service boundary.
-59. Move the operation to the smallest privileged boundary.
-60. Remove unnecessary Node access and generic command dispatch.
-61. Add validation for arguments, navigation, and external targets.
-62. Test renderer failure, denied permission, and update failure paths.
-63. Verify packaging settings in a release artifact.
-64. Report platform-specific behavior that cannot be tested locally.
-65. State changed files, unchanged files, and remaining risks.
-66. Do not silently weaken a security control for a build issue.
-67. Do not claim signed update behavior without inspecting the configuration.
-68. Keep the diff limited to the requested desktop capability.
-69. Run the repository's lint, typecheck, and relevant tests.
-70. Leave no incomplete code or unspecified integration points.
-71. Record the exact commands that were run and their result.
-73. Keep a small inventory of privileged windows and their origins.
-74. Reject unexpected origins before dispatching IPC.
-75. Test menu, shortcut, and protocol handlers with hostile input.
-76. Keep deep links and file-open events outside renderer components.
-77. Validate file-open paths against the configured workspace policy.
-78. Make application state restore explicit after a crash or forced quit.
-79. Test window recreation without duplicate listeners or jobs.
-80. Keep long-running work observable through progress and cancellation.
-81. Do not hold a renderer reference in main-process global state.
-82. Release resources when a window is closed or replaced.
-83. Keep package metadata and runtime permissions in sync.
-84. Test both installed and portable artifacts when supported.
-85. Report platform signing or packaging failures as blockers.
-86. Do not disable sandboxing to work around a preload mistake.
-87. Keep debug tooling absent from production entry points.
-88. Use a single source for remote endpoint and update policy.
-89. Review every new channel against least privilege.
-90. Preserve user data across update and downgrade boundaries.
+- Correction — `Window security / BrowserWindow.webPreferences`: restore context isolation and sandboxing, and route navigation through the existing origin allowlist.
+- Verify — `Window security / BrowserWindow.webPreferences`: run `npm test -- <window-security-test>`; expected result is blocked hostile navigation with secure preferences.
+- Correction — `IPC bridge / contextBridge`: replace generic command dispatch with one named, typed operation and validate arguments and sender in main.
+- Verify — `IPC bridge / contextBridge`: run `npm test -- <preload-test>`; expected result is PASS for success, invalid input, and sender rejection.
+- Correction — `Update recovery / downloadUpdate`: verify and stage the update before an explicit relaunch path that preserves recoverable application state.
+- Verify — `Update recovery / downloadUpdate`: run the repository's packaging command; expected result is a release artifact with no development endpoint or debug entry point.
+- Scope — limit the patch to the cited rule, file, or symbol; record changed and unchanged paths and any untested signed-update or platform behavior.

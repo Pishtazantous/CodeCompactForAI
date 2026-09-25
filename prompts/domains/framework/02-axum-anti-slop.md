@@ -150,31 +150,10 @@ async fn load(State(state): State<AppState>) -> Result<Rows, AppError> {
 
 ## 7. Response to Violation
 
-63. Fetch router, extractor, state, error, and middleware definitions first.
-64. Identify the boundary where the incorrect behavior is introduced.
-65. Replace broad extraction with a typed, bounded contract.
-66. Move shared resources and business work to their owning layers.
-67. Test rejection, cancellation, middleware order, and shutdown paths.
-68. Report any runtime or dependency limitation instead of guessing.
-69. State changed files, unchanged files, and remaining uncertainty.
-70. Run formatting, clippy, tests, and the repository typecheck.
-71. Record commands actually run and their results.
-72. Do not add dependencies or refactor unrelated handlers.
-73. Do not commit unless explicitly requested.
-74. Keep router nesting and fallback order in app setup.
-75. Test extractor rejection with missing and malformed inputs.
-76. Make shutdown drain pools and active tasks deliberately.
-77. Keep request IDs available to handlers without global state.
-78. Bound query, upload, and collection inputs before work begins.
-79. Verify middleware order with authentication failures.
-80. Test cancellation propagation to external services.
-81. Keep lock scopes short and document blocking boundaries.
-82. Report runtime feature flags and enabled capabilities.
-83. Remove routes, extractors, and state together when unused.
-84. Keep typed errors free of internal response details.
-85. Test health and fallback routes separately from business routes.
-86. Record format, clippy, test, and typecheck results.
-87. State changed files, unchanged files, and remaining uncertainty.
-88. Do not claim compile or runtime success without running checks.
-89. Do not add dependencies without explicit permission.
-90. Do not commit unless explicitly requested.
+- Correction — `Typed request boundary / FromRequest`: replace catch-all defaulting with explicit validation, bounded inputs, and the established rejection type.
+- Verify — `Typed request boundary / FromRequest`: run the focused extractor test; expected result is safe rejection for missing, malformed, and oversized input.
+- Correction — `Application state / AppState`: remove request-specific fields, keep owned shared resources explicit, and avoid locks across `.await` points.
+- Verify — `Application state / AppState`: run `cargo test --all-features <state-test>`; expected result is PASS with isolated state and no cross-request leakage.
+- Correction — `Handler boundary / repository call`: replace blocking work with the repository's async contract and preserve cancellation through external calls.
+- Verify — `Handler boundary / repository call`: run `cargo clippy --all-targets --all-features -- -D warnings`; expected result is no blocking, lock, or cancellation diagnostics.
+- Scope — limit the patch to the cited rule, file, or symbol; record changed and unchanged paths plus any untested runtime path.

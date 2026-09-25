@@ -120,7 +120,7 @@
 - فایل‌های `domains/delivery/` و `domains/framework/` تکمیل شده‌اند؛ تنها دو فایل `projects/` هنوز template هستند و نباید به‌عنوان دانش نهایی repository استفاده شوند.
 - مسیرهای prompt در بخشی از `README.md` و `docs/CHEATSHEET.md` قدیمی‌اند؛ ساختار فعلی همان پوشه‌های `prompts/_universal`، `prompts/tasks`، `prompts/domains`، `prompts/ui` و `prompts/projects` است.
 - `tasks/12-long-response.md` عملاً تکرار `13-final-summary.md` است و `id` اشتباه `13-final-summary` دارد.
-- frontmatter در `ui/04-ui-design-system.md`، `domains/framework/02-react-anti-slop.md` و `domains/concern/02-accessibility-critical-anti-slop.md` با opener صحیح `---` شروع نشده است.
+- فایل‌های قدیمی `domains/framework/02-react-anti-slop.md` و `domains/concern/02-accessibility-critical-anti-slop.md` همچنان خارج از مجموعهٔ ۵۴ فایل بازتولیدشده‌اند و opener صحیح `---` ندارند؛ آن‌ها فقط پس از بازبینی کامل و جداگانه استاندارد کن.
 - هر دو project فایل `id: 00-anti-slop-core` دارند؛ این id فقط در محدودهٔ project معنا دارد و نباید سراسری فرض شود.
 - metadataهای `depends_on` راهنمای declarative هستند و تا زمانی که resolver خودکاری وجود نداشته باشد، ترتیب واقعی ترکیب بر عهدهٔ کاربر است.
 

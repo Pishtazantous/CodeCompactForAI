@@ -177,18 +177,10 @@ class NameField extends StatefulWidget {
 
 ## 8. Response to Violation
 
-76. Fetch the widget, controller, repository, and platform service before editing.
-77. Move the side effect to the layer that owns the capability.
-78. Preserve the existing state-management and navigation patterns.
-79. Replace broad channel dispatch with a typed contract.
-80. Add focused widget and service tests for changed behavior.
-81. Check disposal, cancellation, and error rendering.
-82. Profile only after a concrete performance symptom is identified.
-83. State changed files, unchanged files, and unresolved platform risk.
-84. Never claim device or release verification without running it.
-85. Do not refactor unrelated widgets while fixing one flow.
-86. Report missing generated files or package versions instead of guessing.
-87. Keep the change small enough to review and reverse.
-88. Make unsupported platforms visible in the product contract.
-89. Use the repository's lint, analyzer, and test commands before completion.
-90. Leave no incomplete examples or omitted implementation markers.
+- Correction — `Widget lifecycle / ProfileController.load`: move network work out of `build`, guard results after disposal, and route the side effect through the existing controller.
+- Verify — `Widget lifecycle / ProfileController.load`: run `flutter test <profile-widget-test>`; expected result is PASS for loading, error, and late-response cases.
+- Correction — `Platform channel / invokeMethod`: replace dynamic action dispatch with one typed method, named channel, and validated structured result.
+- Verify — `Platform channel / invokeMethod`: run `flutter analyze`; expected result is no static analysis diagnostics for the changed Dart boundary.
+- Correction — `Frame cost / large list`: apply lazy construction or stable item extent only for the measured collection path, not unrelated widgets.
+- Verify — `Frame cost / large list`: run `flutter test <performance-regression-test>`; expected result is bounded item construction and no frame-budget regression.
+- Scope — limit the patch to the cited rule, file, or symbol; record changed and unchanged paths and any untested device or release-mode behavior.

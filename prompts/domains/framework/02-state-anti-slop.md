@@ -2,108 +2,170 @@
 id: 02-state-anti-slop
 title: "State Management Anti-Slop Layer"
 lang: en
-depends_on: [00-master-anti-slop, 02-architecture-anti-slop]
+depends_on: [00-master-anti-slop, 02-architecture-anti-slop, 02-frontend-anti-slop]
 category: domain
 domain_type: framework
-version: 1
+version: 2
 ---
 
 # State Management Anti-Slop Layer
 
-Layered under `_universal/00-master-anti-slop.md` and
-`domains/framework/02-architecture-anti-slop.md`. Universal rules
-(fabrication, fake completion, over-engineering, silent assumptions,
-security anti-patterns, output format) and architectural rules
-(layering, dependency direction, folder structure, naming) are NOT
-repeated here.
+Layered under `_universal/00-master-anti-slop.md`,
+`domains/framework/02-architecture-anti-slop.md`, and
+`domains/delivery/02-frontend-anti-slop.md`. Rules already covered
+in those files are NOT repeated here.
 
 This file covers rules specific to client-side state management:
-classifying state, choosing the right tool, and avoiding the patterns
-that produce stale data, duplicate sources of truth, and unnecessary
-re-renders. It is framework-agnostic within the frontend ecosystem:
-it applies to React, Vue, Svelte, Solid, and Angular, though examples
-use React syntax. React-specific rules live in
-`domains/framework/02-react-anti-slop.md`. Data-fetching rules live in
-`domains/framework/02-api-data-anti-slop.md`.
+classifying state, choosing the right tool, avoiding duplicate
+sources of truth, and preventing unnecessary re-renders. It is
+framework-agnostic within the frontend ecosystem. It does NOT cover
+data fetching (see `02-api-data-anti-slop.md`), framework-specific
+state patterns (React `useState`, Vue `ref`, Svelte runes — see the
+framework files), or the UI layer (see `04-ui-design-system.md`).
+
+State is the most common source of frontend bugs. A value stored in
+the wrong place, duplicated across two locations, or updated without
+the UI knowing is a class of bug that no type system catches. The
+rules below enforce a single source of truth for every value.
 
 ## 1. Stack Assumptions
 
-This layer assumes:
+This file assumes:
 
-- A single-page application or a server-rendered application with
-  client-side interactivity.
-- At least one state tool in the project: component state (`useState`,
-  `ref`, signals), a global store (Zustand, Redux Toolkit, Pinia,
-  Jotai, NgRx, Svelte stores), and a data-fetching library (TanStack
-  Query, SWR, Apollo, Vue Query).
-- The project has an established pattern for each category. This file
-  does not prescribe a specific library.
+- A frontend application (React, Vue, Svelte, Angular, Solid).
+- At least one state tool: component state, a global store
+  (Zustand, Redux Toolkit, Pinia, Jotai, NgRx, Svelte stores), and
+  a data-fetching library (TanStack Query, SWR, Apollo).
+- A router that owns URL state.
 
-If the project uses only one tool (for example, only React Query and
-`useState`), the rules still apply: the classification is about the
-*kind* of state, not the number of libraries.
+The examples use React syntax. The principles are framework-
+agnostic. Framework-specific hooks and primitives live in the
+framework files. The data-fetching library's caching rules live in
+`02-api-data-anti-slop.md`.
 
-## 2. State Classification
+## 2. Framework Lifecycle Contracts
+
+State management enforces six contracts. Every section below
+enforces one or more of these.
+
+### Contract 1: Single Source of Truth
+
+Every piece of state has exactly one owner. A value stored in two
+places drifts. The drift is silent and produces bugs that are hard
+to reproduce.
+
+### Contract 2: Explicit Ownership
+
+The location of state is a deliberate decision: local, URL, store,
+or server cache. A value that is "somewhere" is a value that no one
+understands.
+
+### Contract 3: Unidirectional Updates
+
+State updates flow through defined actions, setters, or mutations.
+No component mutates another component's state directly.
+
+### Contract 4: Derived, Not Duplicated
+
+A value that can be computed from other state is computed, not
+stored. Stored derived values drift from their source.
+
+### Contract 5: Minimal Subscription
+
+A component subscribes to the smallest slice of state it needs.
+Subscribing to more than necessary causes unnecessary re-renders.
+
+### Contract 6: Bounded Lifetime
+
+Every store, cache, and context has a defined lifecycle. State that
+persists beyond its useful life is a leak.
+
+## 3. State Classification
+
+### 3.1 The Six Categories
 
 Every piece of state belongs to exactly one category. The category
 determines the tool.
 
-### 2.1 The Six Categories
-
-| Category | Description | Typical tool |
+| Category | Description | Tool |
 |---|---|---|
-| Local UI | State used by one component or its children | Component state |
+| Local UI | Used by one component and its children | Component state |
 | Form | Values and validation of a form | Form library |
 | Server | Data fetched from a backend | Data-fetching library |
 | Global UI | Cross-route UI state (theme, sidebar) | Global store |
 | Session | Authenticated user, permissions | Global store + persistence |
-| URL | State that must be shareable or bookmarkable | Router / search params |
+| URL | State that must be shareable | Router / search params |
 
-### 2.2 The Cardinal Rule
+### 3.2 Classify Before Coding
 
-Server state and client state are not the same. Never store server data
-in a global client store. The data-fetching library owns its cache,
-its revalidation, and its invalidation. A global store that duplicates
-it will drift.
+Before adding state, answer: which category is this? If the answer
+is "it depends", the state is doing two things. Split it.
 
-### 2.3 Classification Is Explicit
+Rationale: the wrong category produces the wrong tool, and the wrong
+tool produces a bug the type system cannot catch.
 
-Before adding state, answer: which category is this? If the answer is
-"it depends", the state is doing two things. Split it.
+### 3.3 Global Is Not a Safe Default
 
 If the answer is "I will put it in the global store to be safe", the
-answer is wrong. Global is not a safe default; it is a coupling
-decision.
+answer is wrong. Global is a coupling decision, not a safety net.
 
-## 3. Choosing the Tool
+Rationale: a value in the global store is visible everywhere and
+mutable from everywhere. That is a liability, not a feature.
 
-### 3.1 Component State for Component State
+### 3.4 Server State Is Not Client State
 
-A value used by one component and its direct children belongs in the
-component. `useState`, `useReducer`, `ref`, or the framework's
-equivalent.
+Server data belongs in the data-fetching library. It has its own
+cache, its own lifecycle, and its own revalidation rules. A global
+store that duplicates it will drift.
 
-### 3.2 Form Library for Forms
+BAD:
+```typescript
+const useUserStore = create(() => ({ user: null, setUser: ... }));
+
+// And also:
+const { data: user } = useQuery({ queryKey: ["user"], queryFn: fetchUser });
+```
+
+Two sources of truth. One is stale.
+
+GOOD: One source. The query owns the server data. The store owns
+client-only state.
+
+## 4. Choosing the Tool
+
+### 4.1 Component State for Component State
+
+A value used by one component and its direct children belongs in
+the component.
+
+Rationale: moving a single-component value to a store adds coupling
+without benefit.
+
+### 4.2 Form Library for Forms
 
 A form with more than two fields uses the project's form library
-(`react-hook-form`, `formik`, `vee-validate`, or equivalent). Do not
-reimplement form state with `useState` per field. Do not reimplement
-validation.
+(`react-hook-form`, `formik`, `vee-validate`). Do not reimplement
+form state with `useState` per field.
 
-### 3.3 Data-Fetching Library for Server Data
+Rationale: form libraries handle validation, dirty tracking,
+field-level re-renders, and submission state. Reimplementing them
+is a large amount of code for no benefit.
 
-Everything that comes from the backend goes through the data-fetching
-library. This includes:
+### 4.3 Data-Fetching Library for Server Data
 
-- REST calls
-- GraphQL queries
-- WebSocket messages that represent data
-- Local storage that mirrors server state
+Everything that comes from the backend goes through the
+data-fetching library. This includes:
 
-The library handles caching, revalidation, refetching, and error
-states. Do not duplicate this in the store.
+- REST calls.
+- GraphQL queries.
+- WebSocket messages that represent data.
+- Local storage that mirrors server state.
 
-### 3.4 Global Store for Cross-Route Client State
+Rationale: the library handles caching, revalidation, refetching,
+and error states. Duplicating this in the store reimplements a
+solved problem poorly.
+
+### 4.4 Global Store for Cross-Route Client State
 
 A store is justified when the state is:
 
@@ -114,314 +176,550 @@ A store is justified when the state is:
 Typical examples: theme, sidebar collapse, current workspace, a
 multi-step wizard in progress.
 
-### 3.5 URL for Shareable State
+### 4.5 URL for Shareable State
 
-State that another user should see when they open the same URL belongs
-in the URL: filters, pagination, selected tab, search query, sort order.
+State that another user should see when they open the same URL
+belongs in the URL: filters, pagination, selected tab, search query,
+sort order.
 
-BAD: Storing the current page number in a global store.
-GOOD: Storing it in `?page=2` so the URL is shareable.
+BAD: The current page number in a global store.
 
-### 3.6 Server as the Source of Truth
+GOOD: The current page number in `?page=2`, so the URL is
+shareable.
+
+### 4.6 Server as the Source of Truth
 
 If the state can be recomputed from the server, do not store it
 locally. Recompute, or let the data-fetching library cache it.
 
-## 4. Store Discipline
+## 5. Store Discipline
 
-### 4.1 One Store With Slices, or a Few Stores
+### 5.1 One Store With Slices
 
 BAD: Ten separate stores, one per feature.
+
 GOOD: One store with topic-based slices, or two or three stores for
 genuinely distinct concerns (auth, UI, workspace).
 
-The number of stores should not grow with the number of features. If it
-does, the store is being used as a global variable bag.
+Rationale: a store per feature produces a graph of stores that must
+be coordinated. Fewer, larger stores with clear slices are simpler.
 
-### 4.2 No Redux Pattern in Zustand (or Its Equivalent)
+### 5.2 No Redux Ceremony in a Lighter Library
 
 BAD: Actions, reducers, dispatchers replicated in a Zustand store.
+
 GOOD: Simple functions that call `set`.
 
-Copying Redux's ceremony into a lighter library discards the library's
-advantage.
+Rationale: copying Redux's ceremony into a lighter library discards
+the library's advantage.
 
-### 4.3 No `useStore` Without a Selector
+### 5.3 Selectors Return Only What Is Needed
 
 BAD:
-tsx
+```typescript
 const store = useStore();
 const user = store.user;
+```
+
 GOOD:
-
-tsx
+```typescript
 const user = useStore(s => s.user);
-Subscribing to the whole store re-renders on every change, even
-unrelated ones.
+```
 
-4.4 Actions Mutate the Store, Nothing Else
+Rationale: subscribing to the whole store re-renders on every
+change, even changes the component does not read.
+
+### 5.4 Actions Mutate the Store, Nothing Else
+
 Components dispatch actions. Actions update the store. Nothing else
 mutates the store.
 
-A component that writes directly to store.user = x bypasses the
-action and the invariants it enforces.
+BAD: A component that writes directly to `store.user = x`.
 
-4.5 Store Shape Is Flat
+Rationale: a direct write bypasses the action and the invariants it
+enforces.
+
+### 5.5 Flat Store Shape
+
 A store with nested objects three levels deep is hard to update and
-hard to type. Flatten the shape, or use IDs and separate maps.
+hard to type. Flatten the shape or use IDs and separate maps.
 
 BAD:
-
-tsx
+```typescript
 { workspace: { project: { board: { columns: { ... } } } } }
-GOOD:
+```
 
-tsx
+GOOD:
+```typescript
 { workspaceId, projectId, boardId, columns: Record<string, Column> }
-4.6 No Derived State in the Store
-If a value can be computed from other store values, compute it in the
-selector, not in the store.
+```
+
+### 5.6 No Derived State in the Store
+
+If a value can be computed from other store values, compute it in
+the selector, not in the store.
 
 BAD:
+```typescript
+{ items: [], total: 0, updateTotal() { /* ... */ } }
+```
 
-tsx
-{ items: [], total: 0, updateTotal() { ... } }
 GOOD:
-
-tsx
+```typescript
 { items: [] }
 // Selector: const total = useStore(s => s.items.length);
-5. Server vs Client State
-5.1 Never Duplicate Server Data in a Store
-BAD:
+```
 
-tsx
+### 5.7 No Event Bus in a Store
+
+A store with an `events` array or a `notify` method is a message
+bus pretending to be a store. Use the framework's event system.
+
+## 6. Server State
+
+### 6.1 Never Duplicate Server Data in a Store
+
+BAD:
+```typescript
 const useUserStore = create(() => ({ user: null, setUser: ... }));
-// And also:
 const { data: user } = useQuery(...);
-Now two sources of truth exist. When one updates, the other is stale.
+```
 
-GOOD: One source. If the data is server data, the query owns it. If it
-is client data, the store owns it. They do not share.
+Two sources of truth. When one updates, the other is stale.
 
-5.2 Invalidate, Do Not Sync
-When a mutation changes server data, invalidate the affected queries.
-Do not manually update the store to match.
+### 6.2 Invalidate, Do Not Sync
+
+When a mutation changes server data, invalidate the affected
+queries. Do not manually update a duplicate store.
 
 BAD:
-
-tsx
+```typescript
 await updateUser(data);
 userStore.setState({ user: data });
-GOOD:
+```
 
-tsx
+GOOD:
+```typescript
 await updateUser(data);
 queryClient.invalidateQueries({ queryKey: ["user", id] });
-5.3 Optimistic Updates
+```
+
+### 6.3 Optimistic Updates in the Query Cache
+
 When an optimistic update is justified, apply it to the query cache,
 not to a duplicate store. The data-fetching library provides
-onMutate, onError, and onSettled for this.
+`onMutate`, `onError`, and `onSettled` for this.
 
-5.4 Server State in URL
+### 6.4 Server State in URL
+
 State that identifies which server resource is being viewed belongs
-in the URL: /users/42, ?filter=active. The data-fetching library
-reads the URL, not a store.
+in the URL: `/users/42`, `?filter=active`. The data-fetching
+library reads the URL, not a store.
 
-6. Persistence
-6.1 Persist Only What Must Survive Reload
-Persistence is a feature, not a default. Persist:
+### 6.5 Cache Keys Are Query Keys
 
-Auth tokens (in secure storage, never localStorage for sensitive
-tokens; see the security layer).
+If the project uses a data-fetching library, the cache key is the
+query key. Do not invent a second caching scheme in a store.
 
-User preferences (theme, language).
+## 7. Derived State
 
-Draft form data that the user expects to recover.
+### 7.1 Compute in Render
+
+If a value can be computed from props or state during render,
+compute it there. Do not store it, do not update it in an effect.
+
+BAD:
+```typescript
+const [count, setCount] = useState(0);
+const [double, setDouble] = useState(0);
+useEffect(() => { setDouble(count * 2); }, [count]);
+```
+
+GOOD:
+```typescript
+const [count, setCount] = useState(0);
+const double = count * 2;
+```
+
+Rationale: the effect runs after render, so the component renders
+twice: once with a stale `double`, once with the new value. The
+extra render is visible to the user as a flash.
+
+### 7.2 Memoize Expensive Derivations Only
+
+For a genuinely expensive computation (large sort, complex
+grouping), memoize with `useMemo` or the framework's equivalent.
+For arithmetic and small filters, no memoization.
+
+### 7.3 No Derived State in the Store
+
+Covered in 5.6.
+
+### 7.4 No Duplicate State
+
+If two pieces of state must stay in sync, one is derived.
+
+BAD:
+```typescript
+{ user: null, isAuthenticated: false }
+```
+
+GOOD:
+```typescript
+{ user: null }
+// const isAuthenticated = !!user;
+```
+
+### 7.5 No Storing What Props Can Compute
+
+BAD:
+```typescript
+function Component({ items }: Props) {
+  const [count, setCount] = useState(items.length);
+  // setCount must be kept in sync with items
+}
+```
+
+GOOD:
+```typescript
+function Component({ items }: Props) {
+  const count = items.length;
+}
+```
+
+## 8. Persistence
+
+### 8.1 Persist Only What Must Survive Reload
+
+Persistence is a feature, not a default.
+
+Persist:
+
+- Auth tokens (in secure storage).
+- User preferences (theme, language).
+- Draft form data the user expects to recover.
 
 Do not persist:
 
-Server data (the cache handles its own lifecycle).
+- Server data (the cache handles its own lifecycle).
+- Ephemeral UI state (sidebar open, current tab).
+- Anything derived.
 
-Ephemeral UI state (sidebar open, current tab).
-
-Anything derived.
-
-6.2 Explicit Allowlist for Persistence
-Persist specific keys, not the whole store.
+### 8.2 Explicit Allowlist
 
 BAD:
-
-tsx
+```typescript
 persist(store, { name: "app" });
-GOOD:
+```
 
-tsx
+GOOD:
+```typescript
 persist(store, {
   name: "app",
   partialize: (state) => ({ theme: state.theme, locale: state.locale }),
 });
-6.3 Persistence Schema Is Versioned
-When the persisted shape changes, old data in the user's browser must
-migrate or be discarded. Use the library's version and migrate
-options.
+```
 
-6.4 Never Persist Secrets
+Rationale: the default persist writes the whole store. Adding a
+field to the store silently adds it to storage.
+
+### 8.3 Versioned Persistence Schema
+
+When the persisted shape changes, old data in the user's browser
+must migrate or be discarded.
+
+Rationale: a browser that loads the new app with old persisted data
+crashes on the first read.
+
+### 8.4 Never Persist Secrets
+
 Tokens, passwords, and personal data belong in secure HTTP-only
-cookies, not in localStorage or IndexedDB. If the project uses
-localStorage for tokens, report it as a security issue and let the
-user decide.
+cookies, not in `localStorage` or `IndexedDB`.
 
-7. Derived State
-7.1 Compute in Render
-If a value can be computed from props or state during render, compute
-it there. Do not store it, do not update it in an effect.
+Exception: mobile apps use Keychain/Keystore, not the general
+storage API.
 
-BAD:
+### 8.5 Clear on Logout
 
-tsx
-const [count, setCount] = useState(0);
-const [double, setDouble] = useState(0);
-useEffect(() => { setDouble(count * 2); }, [count]);
-GOOD:
+On logout, clear user-specific persisted state. The next user should
+not see the previous user's data.
 
-tsx
-const [count, setCount] = useState(0);
-const double = count * 2;
-7.2 Memoize Expensive Derivations Only
-For a genuinely expensive computation (large sort, complex grouping),
-useMemo or the framework's equivalent. For arithmetic and small
-filters, no memoization.
+## 9. Re-render Discipline
 
-7.3 No Derived State in the Store
-Covered in 4.6.
+### 9.1 Smallest Subscription
 
-7.4 No Duplicate State
-If two pieces of state must stay in sync, one of them is derived.
-Remove it or derive it.
+Covered in 5.3.
+
+### 9.2 Selector Returns a Stable Shape
 
 BAD:
-
-tsx
-{ user: null, isAuthenticated: false }
-GOOD:
-
-tsx
-{ user: null }
-// const isAuthenticated = !!user;
-8. Re-render Discipline
-8.1 Subscribe to the Smallest Slice
-Selectors return only what the component needs. Do not select the
-whole store.
-
-BAD:
-
-tsx
-const { user, theme, sidebar } = useStore();
-GOOD:
-
-tsx
-const theme = useStore(s => s.theme);
-8.2 Selector Returns a Stable Shape
-BAD:
-
-tsx
+```typescript
 const user = useStore(s => ({ name: s.name, email: s.email }));
-The object is new every call. The selector re-renders on every store
-change.
+```
+
+The object is new every call. The selector re-renders on every
+store change.
 
 GOOD:
-
-tsx
+```typescript
 const name = useStore(s => s.name);
 const email = useStore(s => s.email);
+```
+
 Or use the library's shallow-equality option if it provides one.
 
-8.3 Context Value Is Memoized
-Covered in 02-react-anti-slop.md section 5.3. Repeating because it
-is the single most common cause of store-adjacent performance issues.
+### 9.3 Context Value Is Memoized
 
-8.4 Split Context by Change Frequency
+BAD:
+```typescript
+<AuthContext.Provider value={{ user, login, logout }}>
+```
+
+The object literal creates a new value every render, re-rendering
+all consumers.
+
+GOOD:
+```typescript
+const value = useMemo(() => ({ user, login, logout }), [user, login, logout]);
+<AuthContext.Provider value={value}>
+```
+
+### 9.4 Split Context by Change Frequency
+
 Theme changes rarely. Auth changes occasionally. UI state changes
-often. Three contexts with three change frequencies. One context forces
-every consumer to re-render on any change.
+often. Three contexts with three change frequencies.
 
-9. State Management Anti-Patterns
-9.1 The Global Store as a Dumping Ground
-Every new piece of state is added to the store "in case it is needed
-elsewhere". The store grows to hundreds of keys, and no one knows what
-owns what.
+Rationale: one context forces every consumer to re-render on any
+change, including changes the consumer does not read.
 
-Start with component state. Promote to the store when a second
-unrelated consumer appears.
+### 9.5 `React.memo` Only After Measurement
 
-9.2 The Store as a Cache
-Storing fetched data in the store because "the store is faster". The
-data-fetching library already caches. The store duplicates and drifts.
+Covered in the React framework file. Repeating: memoization has a
+cost. Add it only when a profile shows the problem.
 
-9.3 The Store as an Event Bus
-A store with an events array, a notify method, or pub/sub
-semantics. This is a message bus pretending to be a store.
+## 10. State Transitions
 
-If components need to react to events, use the framework's event
-system (React state + effects, Vue watchers, Svelte stores with
-subscriptions). Do not build an event bus.
+### 10.1 Explicit State Machine for Complex Flows
 
-9.4 The Store Mirroring the Server
-Every server field has a corresponding store field. Mutations update
-the store, then call the server, or vice versa. The two drift
-constantly.
+A multi-step flow (checkout, onboarding, wizard) has a state
+machine, explicit or implicit. Make it explicit.
 
-The data-fetching library owns server data. The store owns client
-state. They do not mirror each other.
-
-9.5 The Store With Reducers and Actions in a Non-Redux Library
-Covered in 4.2. Copying Redux ceremony into Zustand, Pinia, or Jotai
-defeats their purpose.
-
-9.6 Manual Cross-Store Synchronization
-Two stores subscribe to each other to keep values in sync. This is a
-merge waiting to happen. Either merge them or remove the duplication.
-
-9.7 useState in a List
-BAD: A parent component holds an array of children, each child has
-useState for its own data, and the parent needs to read the
-children's state.
-
-State lives at the lowest common ancestor. If the parent needs it,
-the parent owns it. If the parent does not need it, children own it
-and the parent reads on demand.
-
-9.8 Effect-Synchronized State
-Two states synchronized by an effect. Every synchronization is a bug
-waiting for an edge case. Derive one from the other.
-
-9.9 Server Data in Component State
 BAD:
+```typescript
+const [step, setStep] = useState(0);
+const [isLoading, setIsLoading] = useState(false);
+const [error, setError] = useState<string | null>(null);
+// twelve combinations, most invalid
+```
 
-tsx
-const [users, setUsers] = useState([]);
-useEffect(() => { fetchUsers().then(setUsers); }, []);
-This reimplements a cache with no revalidation, no error handling, and
-no deduplication. Use the project's data-fetching library.
+GOOD:
+```typescript
+type State =
+  | { kind: "idle" }
+  | { kind: "submitting" }
+  | { kind: "success"; data: Result }
+  | { kind: "error"; message: string };
+```
 
-9.10 Mutable Store Without Notification
-A store that is mutated directly (not through a setter) does not
-notify subscribers. Components read stale data and never re-render.
-Always go through the library's set API.
+Rationale: a discriminated union makes invalid combinations
+impossible.
 
-9.11 Form State in a Global Store
-Form state is local by definition. It belongs to the form, not to the
-application. Putting it in the store creates coupling between forms
-and unrelated pages.
+### 10.2 No Boolean Soup
 
-Exception: multi-step wizards that span routes. Even then, isolate the
-wizard state in its own store slice.
-
-9.12 Deeply Nested Store Updates
 BAD:
+```typescript
+const [isLoading, setIsLoading] = useState(false);
+const [isError, setIsError] = useState(false);
+const [isSuccess, setIsSuccess] = useState(false);
+// all three can be true
+```
 
-tsx
+GOOD: A single status field or a discriminated union.
+
+### 10.3 Reset State on Route Change
+
+A wizard whose state persists after the user leaves the route
+surprises them on return. Reset on route change unless persistence
+is intentional.
+
+### 10.4 No Global Loading Flags
+
+A single `isLoading` in the global store for every network call.
+Two concurrent calls produce wrong loading states.
+
+GOOD: Loading state per query or per operation.
+
+### 10.5 No Global Error Flags
+
+Same as 10.4 for errors. A single `error` in the store cannot
+distinguish which operation failed.
+
+## 11. Store Design
+
+### 11.1 Actions Have Meaningful Names
+
+BAD: `setState`, `update`, `handle`.
+
+GOOD: `login`, `logout`, `addToCart`, `clearCart`.
+
+### 11.2 Actions Are Atomic
+
+An action does one thing. An action that logs in, fetches the user
+profile, and navigates to the dashboard is three actions.
+
+### 11.3 No Side Effects in Actions Without a Plan
+
+An action that calls the API has a defined error path and a defined
+loading state. Without them, the UI cannot show what is happening.
+
+### 11.4 Async Actions Have Explicit States
+
+BAD:
+```typescript
+async function login(credentials: Credentials) {
+  const user = await api.login(credentials);
+  set({ user });
+}
+```
+
+GOOD:
+```typescript
+async function login(credentials: Credentials) {
+  set({ status: "loading" });
+  try {
+    const user = await api.login(credentials);
+    set({ user, status: "success" });
+  } catch (error) {
+    set({ error: normalizeError(error), status: "error" });
+  }
+}
+```
+
+### 11.5 No Two Stores Owning the Same Thing
+
+If two stores share a concept (a `user` in an auth store and a
+`currentUser` in a profile store), one is derived or they must be
+merged.
+
+### 11.6 Store Slices Have Clear Boundaries
+
+A slice's state and actions belong together. A slice that imports
+from another slice's state is a sign the slices should be one or
+the concept should move.
+
+## 12. Anti-Patterns
+
+### 12.1 `useEffect` to Sync Two States
+
+Covered in 7.1.
+
+### 12.2 Server Data in the Store
+
+Covered in 6.1.
+
+### 12.3 Derived State in the Store
+
+Covered in 5.6.
+
+### 12.4 Duplicate State Across Layers
+
+The same value in a component, a store, and the URL.
+
+### 12.5 Store as a Cache
+
+Covered in 6.5.
+
+### 12.6 Store as an Event Bus
+
+Covered in 5.7.
+
+### 12.7 Global Store for Local UI
+
+A dropdown's open state in the global store.
+
+### 12.8 Global Store for Form State
+
+Covered in the frontend delivery file. Repeating: form state is
+local.
+
+### 12.9 Context for Frequently Changing Values
+
+A context value that changes on every keystroke re-renders every
+consumer.
+
+### 12.10 Context as Prop Drilling Fix
+
+Covered in the React framework file.
+
+### 12.11 Whole-Store Subscription
+
+Covered in 5.3.
+
+### 12.12 Selector Returning a New Object Every Call
+
+Covered in 9.2.
+
+### 12.13 Context Value Not Memoized
+
+Covered in 9.3.
+
+### 12.14 Persisting the Whole Store
+
+Covered in 8.2.
+
+### 12.15 No Versioned Persistence
+
+Covered in 8.3.
+
+### 12.16 Persisting Secrets
+
+Covered in 8.4.
+
+### 12.17 Not Clearing on Logout
+
+Covered in 8.5.
+
+### 12.18 Boolean Soup
+
+Covered in 10.2.
+
+### 12.19 Loading State in the Global Store
+
+Covered in 10.4.
+
+### 12.20 Error State in the Global Store
+
+Covered in 10.5.
+
+### 12.21 Actions With Side Effects and No Error Path
+
+Covered in 11.3.
+
+### 12.22 Async Action Without Loading State
+
+Covered in 11.4.
+
+### 12.23 Two Stores Owning the Same Concept
+
+Covered in 11.5.
+
+### 12.24 Store Slices That Import Each Other
+
+Covered in 11.6.
+
+### 12.25 Manual Cross-Store Synchronization
+
+Two stores subscribe to each other to keep values in sync. Either
+merge them or remove the duplication.
+
+### 12.26 Redux Pattern in Zustand
+
+Covered in 5.2.
+
+### 12.27 Deeply Nested Store Updates
+
+BAD:
+```typescript
 set(state => ({
   ...state,
   workspace: {
@@ -432,31 +730,113 @@ set(state => ({
     },
   },
 }));
-Flatten the shape, or use a library with immutable-update helpers
-(Immer, the store's own helpers).
+```
 
-9.13 Persisting Derived or Server Data
-Covered in 6. Persisting user from the store means the next session
-starts with stale user data until the fetch completes.
+Flatten the shape or use immutable-update helpers.
 
-9.14 State That Belongs in the URL
-Filters, pagination, and search terms in a store rather than the URL.
-The user cannot share the view, the back button breaks, and a refresh
-loses the state.
+### 12.28 Store Without Actions
 
-9.15 Two Sources of Truth
-Any two pieces of state that represent the same thing. This is not one
-anti-pattern; it is the category that all the above belong to. When
-you see duplication, delete one.
+A store with public fields and a `set` method that accepts anything.
+The store has no invariants.
 
-10. Response to Violation
+BAD:
+```typescript
+const useStore = create((set) => ({
+  user: null,
+  set: (patch) => set(patch),
+}));
+// useStore.getState().set({ user: "not a user object" });
+```
+
+GOOD: Named actions that enforce the shape.
+
+### 12.29 `useState` for Values That Never Change
+
+A constant stored in state. Move it outside the component.
+
+### 12.30 Recomputing Expensive Derived Values Every Render
+
+A filter over 10,000 items computed during every render without
+memoization.
+
+### 12.31 Store Without a Version
+
+When the store shape changes, persisted data breaks. Version the
+store and migrate.
+
+### 12.32 Zustand Store With `persist` and No `partialize`
+
+Covered in 8.2.
+
+### 12.33 Redux Store Without Slices
+
+A single reducer with 50 action types. Split into slices.
+
+### 12.34 Redux Actions That Do I/O
+
+Redux actions are pure. I/O goes in thunks or middleware.
+
+### 12.35 Jotai Atom for Global Server State
+
+An atom that fetches from the API and stores the result. Use the
+data-fetching library instead.
+
+### 12.36 Pinia Store With Mutable Public State
+
+A Pinia store whose `state` is mutated directly by components.
+
+### 12.37 Svelte Store Without a Setter
+
+A `writable` store whose value is mutated directly:
+```typescript
+storeValue.set(newValue);  // OK
+storeValue.subscribe(v => { v.items.push(...); });  // mutation, no notify
+```
+
+### 12.38 NgRx Effect Without Error Handling
+
+An effect that calls an API without a `catchError` and a failure
+action.
+
+### 12.39 Signals for Event Streams
+
+Signals are for state. Streams of events (typing, scroll, WebSocket
+messages) belong in an observable or a subscription.
+
+### 12.40 State That Belongs in the URL
+
+Covered in 4.5.
+
+### 12.41 Store Provider Rerender
+
+A store provider that re-renders every consumer because its value
+is a new object every render.
+
+### 12.42 State Duplication Between Tabs
+
+The same state stored in two browser tabs. Use `BroadcastChannel` or
+accept that tabs are independent.
+
+### 12.43 Global `isAuthenticated` Boolean
+
+A boolean duplicated from `user`. Use `!!user`.
+
+### 12.44 Store Without a Type
+
+A JS store whose shape is documented only in a comment.
+
+### 12.45 Manual Garbage Collection of Store State
+
+A timer that clears store state after N minutes. The store has no
+defined lifecycle.
+
+## 13. Response to Violation
+
 If a previous response violated a rule here:
 
-text
+```
 In the previous response, [specific rule] was violated. Correction:
 [corrected code]
+```
+
 No justification. No apology paragraph. Fix and move on.
-
-text
-
----

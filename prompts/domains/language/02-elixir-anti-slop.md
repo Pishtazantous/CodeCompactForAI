@@ -7,161 +7,418 @@ category: domain
 domain_type: language
 version: 1
 ---
+
 # Elixir Anti-Slop Layer
 
-Layered under `_universal/00-master-anti-slop.md`. This layer covers OTP
-process design, supervision, message contracts, and immutable data. Phoenix
-or other framework rules remain in their own files.
+Layered under `_universal/00-master-anti-slop.md`. Universal rules
+(fabrication, fake completion, over-engineering, silent assumptions,
+security anti-patterns, output format) are NOT repeated here.
 
-## 1. Scope and Assumptions
-1. Read `mix.exs`, the Elixir and OTP release targets, and existing child
-   specifications before selecting a process or library.
-2. Match the project's supervision strategy and telemetry conventions.
-3. Do not add a dependency, child process, or GenServer when a plain
-   function, immutable data structure, or existing process is sufficient.
+This file covers rules specific to Elixir: OTP patterns, process
+design, immutability, pattern matching, and the patterns that produce
+supervisor crashes or message leaks. Framework rules (Phoenix) live
+in `domains/framework/`.
 
-## 2. OTP Process Design
-4. Give each long-lived process one responsibility and an owner. A process
-   that owns unrelated caches, sockets, and business rules is difficult to
-   reason about and test.
-5. Use a GenServer for serialized mutable state, not as a substitute for
-   pure functions. Keep `handle_*` clauses small and explicit.
-6. Define the process message protocol with concrete structs or a shared
-   module. Do not send undocumented tuples to arbitrary processes.
-7. Return explicit results for commands. A cast is fire-and-forget; do not use
-   it when the caller needs success, failure, or a reply.
-8. Set process names only when ownership is unique and intentional. Avoid
-   global names that make test isolation and multi-tenant operation fragile.
+## 1. Stack Assumptions
 
-## 3. Supervision
-9. Put supervised processes under the appropriate supervisor with a restart
-   intensity that matches their failure behavior.
-10. Use `one_for_one` only when children are independent; use `one_for_all`
-    when a shared invariant genuinely requires coordinated restart.
-11. Make child startup explicit and bounded. Do not start an unbounded
-    supervisor from a process or request handler.
-12. A supervisor's job is restart strategy, not application business logic.
-13. Do not trap exits or link manual processes when an OTP lifecycle is the
-    intended ownership model.
+This layer assumes:
 
-## 4. Pattern Matching
-14. Match on the smallest structure that makes invalid states unrepresentable.
-    Prefer structs and maps with required keys over tuple position access.
-15. Use multiple clauses to handle distinct outcomes; do not collapse errors,
-    timeouts, and cancellation into `:ok`.
-16. Match external input at the boundary and convert it to an internal type.
-    Do not pass unvalidated maps through every function.
-17. Use pin operators when a value is already bound and must be compared, not
-    rebound accidentally.
+- Elixir 1.15 or later.
+- Erlang/OTP 26 or later.
+- Mix for builds.
 
-## 5. Processes, Mailboxes, and Timeouts
-18. Keep the mailbox small. A process doing unbounded work can receive faster
-    than it can reply; apply backpressure at the caller or redesign the queue.
-19. Use `Task.Supervisor` for bounded concurrent work and await the task. Do
-    not leave unlinked tasks running after their request ends.
-20. Propagate cancellation and use `Task.shutdown` or an application-specific
-    stop signal for cooperative workers.
-21. Use timeouts intentionally and handle `:exit` and `:timeout` separately
-    when they require different recovery.
-22. Do not use `Process.sleep` as a synchronization primitive. Use messages,
-    monitors, or a supervisor-aware mechanism.
+## 2. Functional Core
 
-## 6. Immutability and Side Effects
-23. Pass immutable data between processes. Do not mutate shared maps, lists, or
-    structs in place; transformations return new values.
-24. Keep `IO`, HTTP, database, and filesystem effects at the edge of a
-    process or service. Pure decision functions should remain testable.
-25. Do not store ETS or process state without an owner, cleanup path, and
-    documented consistency model.
-26. Do not put secrets in process state or logs; use the project's configured
-    secret mechanism.
+### 2.1 Pure Functions First
 
-## 7. Types, Guards, and Error Handling
-27. Use specs for public behavior when the project does so, and validate
-    external values before they enter domain functions.
-28. Guards describe cheap, total conditions. Do not put remote calls, message
-    sends, or complex database work in guards.
-29. Match on `{:ok, value}` and `{:error, reason}` rather than discarding a
-    tagged tuple with an underscore.
-30. Never rescue an exception to hide process failure. Let a supervisor or the
-    caller apply the documented restart and retry policy.
+Business logic is pure. Side effects (I/O, processes, time) are at
+the boundaries.
 
-## 8. Verification Checklist
-31. Test normal operation, invalid messages, timeout, caller timeout, worker
-    failure, and supervisor restart behavior.
-32. Inspect mailbox growth and process count under representative load.
-33. Run `mix format --check-formatted`, the configured compiler checks, and
-    tests when those commands exist in the project.
-34. Report exact commands and results; do not claim unrun checks passed.
-
-35. Inspect supervision trees for children that restart indefinitely without a
-    configured intensity limit.
-36. Verify every call has a timeout and that timeout differs from a normal
-    domain error in handling and telemetry.
-37. Check process names and ETS keys for tenant and node isolation.
-39. Exercise invalid messages and crash-loop limits in supervision tests.
-40. Confirm process names and ETS keys are isolated across tenants and nodes.
-41. Record supervisor restart and timeout behavior.
-
-41. Inspect supervision trees for bounded restart intensity.
-42. Verify every call has a meaningful timeout.
-43. Handle timeout separately from domain failure.
-44. Check process names for node and tenant isolation.
-45. Review ETS ownership and cleanup paths.
-46. Confirm telemetry excludes secrets.
-47. Run the configured formatter, compiler, and tests.
-48. Exercise crash loops and worker failure.
-49. Record supervisor and mailbox observations.
-50. Keep guards free of messages and remote calls.
-51. Review task shutdown for deterministic completion.
-
-## Domain-Specific Anti-Patterns
-
-### 9.1 Hidden Process State
 BAD:
 ```elixir
-defmodule Cache do
-  use GenServer
-  def put(k, v), do: GenServer.cast(__MODULE__, {:put, k, v})
-end
-```
-GOOD:
-```elixir
-defmodule Cache do
-  use GenServer
-  def put(server, key, value), do: GenServer.call(server, {:put, key, value})
+def calculate_total(items) do
+  rate = fetch_tax_rate()  # I/O in business logic
+  Enum.reduce(items, 0, &(&1.price * (1 + rate) + &2))
 end
 ```
 
-### 9.2 Permissive Matching
-BAD:
-```elixir
-def handle({:ok, value}), do: {:reply, value}
-```
 GOOD:
 ```elixir
-def handle({:ok, %Job{status: :ready} = job}), do: {:reply, {:ok, job}, %{}}
+def calculate_total(items, tax_rate) do
+  Enum.reduce(items, 0, &(&1.price * (1 + tax_rate) + &2))
+end
 ```
 
-### 9.3 Unbounded Mailboxes
+### 2.2 Immutability
+
+Elixir data is immutable. Do not try to mutate.
+
+BAD: Expecting `list ++ [x]` to modify `list` in place.
+GOOD: `new_list = list ++ [x]`.
+
+### 2.3 Pipe Operator for Readability
+
 BAD:
 ```elixir
-def handle_info({:job, job}, state), do: {:noreply, queue(job, state)}
+Enum.sum(Enum.map(Enum.filter(items, & &1.active), & &1.price))
 ```
+
 GOOD:
 ```elixir
-def handle_info({:job, job}, state) do
-  case queue(job, state) do
-    {:ok, next} -> {:noreply, next}
-    {:error, :full} -> {:stop, :backpressure}
+items
+|> Enum.filter(& &1.active)
+|> Enum.map(& &1.price)
+|> Enum.sum()
+```
+
+### 2.4 Pattern Matching Over Conditionals
+
+BAD:
+```elixir
+def handle(result) do
+  if is_tuple(result) && elem(result, 0) == :ok do
+    elem(result, 1)
+  else
+    nil
   end
 end
 ```
 
-## 10. Response to Violation
-Identify the process, module, file, and numbered rule that was violated. Explain
-whether the failure is message loss, mailbox growth, restart coupling, or
-invalid data. Make the smallest correction and preserve the process contract.
-Refer to the master layer rather than repeating it. If a supervision strategy
-or dependency changes, state the operational impact before editing.
-Report the exact checks that were run.
+GOOD:
+```elixir
+def handle({:ok, value}), do: value
+def handle({:error, _}), do: nil
+```
+
+### 2.5 Guard Clauses
+
+BAD:
+```elixir
+def process(x) do
+  if is_integer(x) and x > 0 do
+    ...
+  end
+end
+```
+
+GOOD:
+```elixir
+def process(x) when is_integer(x) and x > 0 do
+  ...
+end
+```
+
+### 2.6 No Deeply Nested Cases
+
+A `case` inside a `case` inside a `with` is hard to read. Extract
+functions or use `with`.
+
+### 2.7 `with` for Multi-Step Operations
+
+```elixir
+with {:ok, user} <- fetch_user(id),
+     {:ok, account} <- fetch_account(user.account_id),
+     {:ok, result} <- process(user, account) do
+  {:ok, result}
+else
+  {:error, reason} -> {:error, reason}
+end
+```
+
+## 3. Processes and OTP
+
+### 3.1 Processes Are Cheap, Not Free
+
+A process per user is fine. A process per message is not.
+
+### 3.2 GenServer for State
+
+A GenServer owns state. Direct calls to `:ets` or `Agent` are for
+specific use cases.
+
+### 3.3 Supervisor for Fault Tolerance
+
+Every long-lived process is supervised. The supervisor restarts it
+on crash.
+
+BAD: `spawn_link(fn -> loop() end)` without supervision.
+GOOD: A child spec in a supervisor tree.
+
+### 3.4 Let It Crash
+
+Do not catch every error. Let the supervisor restart the process
+with clean state.
+
+BAD:
+```elixir
+def handle_call(:bad_input, _from, state) do
+  try do
+    ...
+  rescue
+    _ -> {:reply, :error, state}
+  end
+end
+```
+
+GOOD: Match on the expected input; let unexpected input crash.
+
+### 3.5 No Bare `spawn`
+
+BAD: `spawn(fn -> ... end)`.
+GOOD: `Task.start`, `Task.async`, or a supervised process.
+
+### 3.6 `Task.async` Requires `Task.await`
+
+BAD:
+```elixir
+Task.async(fn -> do_work() end)
+# never awaited
+```
+
+The task leaks. Use `Task.start` for fire-and-forget, or await the
+result.
+
+### 3.7 Monitor for Cleanup
+
+A process that links to another for a temporary operation uses
+`Process.monitor` and handles `:DOWN`.
+
+### 3.8 Message Leaks
+
+A process that receives messages it never handles accumulates them.
+Be explicit about the mailbox protocol.
+
+## 4. Processes and State
+
+### 4.1 No Global Mutable State
+
+BAD: A named `Agent` used as a global counter.
+GOOD: A supervised GenServer with a clear API.
+
+### 4.2 ETS for Shared Read-Heavy Data
+
+`:ets` is fast for reads. Writes are serialized. Use it when the
+access pattern fits.
+
+### 4.3 No Process Dictionary
+
+`Process.put/get` is global mutable state per process. It hides
+dependencies and complicates testing.
+
+### 4.4 No `:global` Registry
+
+`:global` is slow and has known issues. Use `Registry` or
+`Phoenix.PubSub`.
+
+## 5. Pattern Matching
+
+### 5.1 Match in Function Heads
+
+Covered in 2.4.
+
+### 5.2 No `case` for Single-Pattern Match
+
+BAD:
+```elixir
+case result do
+  {:ok, value} -> value
+end
+```
+
+GOOD: `{:ok, value} = result; value`.
+
+### 5.3 Tagged Tuples
+
+Use `{:ok, value}` and `{:error, reason}` consistently.
+
+BAD: Returning a bare value on success and `nil` on failure.
+GOOD: Tagged tuples.
+
+### 5.4 `=~` for Regex Match
+
+`=~` matches a string against a regex. It is not equality.
+
+### 5.5 No Pattern Matching on Structs Without `%`
+
+BAD: `def f(user) when user.name == "Alice"` (accesses the struct
+without a match).
+GOOD: `def f(%User{name: "Alice"} = user)`.
+
+## 6. Error Handling
+
+### 6.1 Tagged Tuples for Recoverable Errors
+
+`{:ok, value}` / `{:error, reason}`.
+
+### 6.2 Exceptions for Exceptional Cases
+
+Raise for programmer errors (missing config, invalid state) and let
+them crash the process.
+
+### 6.3 Custom Exceptions
+
+```elixir
+defmodule AppError do
+  defexception [:message]
+end
+```
+
+### 6.4 `try`/`rescue` Sparingly
+
+Prefer pattern matching. `rescue` is for library boundaries and
+external calls.
+
+### 6.5 Never `rescue _` Blindly
+
+BAD: `rescue _ -> nil`.
+GOOD: `rescue e in [SpecificError] -> handle(e)`.
+
+### 6.6 `after` for Cleanup
+
+`try`/`after` releases resources even when an exception occurs.
+
+## 7. Elixir-Specific Anti-Patterns
+
+### 7.1 Bare `spawn`
+
+Covered in 3.5.
+
+### 7.2 Unsupervised Process
+
+Covered in 3.3.
+
+### 7.3 `Process.sleep` in Tests
+
+BAD: `Process.sleep(100)` to wait for async work.
+GOOD: Use `assert_receive` with a timeout, or a synchronization
+primitive.
+
+### 7.4 `Task.await` With Default Timeout
+
+The default timeout is 5 seconds. Long-running tasks need an
+explicit timeout.
+
+### 7.5 Blocking in a GenServer
+
+BAD: A GenServer that does a long computation in `handle_call`,
+blocking all other messages.
+
+GOOD: Offload to a `Task` and reply asynchronously with
+`GenServer.reply/2`.
+
+### 7.6 State Accumulation Without Bound
+
+A GenServer that keeps a growing list of events. Memory grows
+forever.
+
+### 7.7 Atoms From User Input
+
+BAD: `String.to_atom(user_input)`.
+GOOD: `String.to_existing_atom(user_input)`.
+
+Atoms are not garbage-collected. Creating atoms from user input
+exhausts the atom table.
+
+### 7.8 `String.to_integer` on Untrusted Input
+
+Raises on invalid input. Use `Integer.parse/1` and handle `:error`.
+
+### 7.9 `Enum` on Large Streams
+
+`Enum.map` materializes the entire list. Use `Stream.map` for lazy
+evaluation.
+
+BAD: `File.stream!("huge.log") |> Enum.map(&parse/1)`.
+GOOD: `File.stream!("huge.log") |> Stream.map(&parse/1) |> Enum.take(100)`.
+
+### 7.10 Nested `Enum.reduce`
+
+A `reduce` inside a `reduce` is usually a sign the data should be
+grouped first with `Enum.group_by`.
+
+### 7.11 `if`/`else` Over Pattern Matching
+
+Covered in 2.4.
+
+### 7.12 Long Function Chains Without `|>`
+
+Covered in 2.3.
+
+### 7.13 Ignoring Compiler Warnings
+
+Elixir's compiler warnings are precise. A project with warnings is a
+project with latent bugs.
+
+### 7.14 No Dialyzer
+
+`dialyzer` catches type mismatches the compiler misses. Run it in
+CI.
+
+### 7.15 `Application.get_env` Everywhere
+
+Reading config through `Application.get_env` in business logic
+couples the code to the application environment. Pass
+configuration as arguments.
+
+### 7.16 `Module.concat` From User Input
+
+BAD: `Module.concat([user_input])`.
+GOOD: A lookup map with known modules.
+
+### 7.17 `Code.eval_string`
+
+Never. Executes arbitrary code.
+
+### 7.18 `String.to_charlist` on User Input
+
+`to_charlist` creates a list of integers. `String.to_atom` from a
+charlist recreates the atom problem.
+
+### 7.19 `Poison`/`Jason` Without a Schema
+
+Decoding JSON into a map without validation. Use `Ecto` changesets
+or a schema library.
+
+### 7.20 Mixing `Task` and `GenServer`
+
+A GenServer that spawns `Task.async` and awaits in the callback
+blocks the server. Use `Task.Supervisor` and reply later.
+
+### 7.21 Unbounded `Registry` Names
+
+A `Registry` with keys generated per request grows forever. Cap or
+clean up.
+
+### 7.22 No Telemetry
+
+Elixir has first-class telemetry. A production app without metrics
+is a black box.
+
+### 7.23 `Logger.debug` in Hot Paths
+
+Logging has a cost. A debug log in a per-message path floods the
+log.
+
+### 7.24 `Enum.sort` on Unsorted Data
+
+`Enum.sort` is O(n log n). For "is this sorted?" checks, use
+`Enum.sort?`.
+
+### 7.25 `Kernel.apply` Without a Reason
+
+BAD: `apply(module, :function, args)` when the module is statically
+known.
+GOOD: `module.function(args)`.
+
+`apply` hides the call from the analyzer.
+
+## 8. Response to Violation
+
+If a previous response violated a rule here:
+
+```
+In the previous response, [specific rule] was violated. Correction:
+[corrected code]
+```
+
+No justification. No apology paragraph. Fix and move on.

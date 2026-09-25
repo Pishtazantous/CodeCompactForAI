@@ -7,159 +7,444 @@ category: domain
 domain_type: language
 version: 1
 ---
+
 # Java & Kotlin Anti-Slop Layer
 
-Layered under `_universal/00-master-anti-slop.md`. This layer covers Java
-and Kotlin contracts; framework and delivery rules remain in their own files.
+Layered under `_universal/00-master-anti-slop.md`. Universal rules
+(fabrication, fake completion, over-engineering, silent assumptions,
+security anti-patterns, output format) are NOT repeated here.
 
-## 1. Scope and Assumptions
-1. Read `pom.xml`, Gradle files, or the project manifest before choosing a
-   language feature, library, or runtime. Do not assume a dependency exists.
-2. Match the module's Java and Kotlin versions, formatting, null-safety mode,
-   and annotation processor settings.
-3. Keep public APIs compatible with the configured binary and source level.
+This file covers rules specific to Java and Kotlin: type system,
+nullability, dependency injection, exceptions, concurrency, and the
+patterns that produce bloated or fragile code. Framework rules
+(Spring Boot, Android) live in `domains/framework/`.
 
-## 2. Nullability and Boundary Validation
-4. In Java, make nullability explicit at APIs where practical. Never dereference
-   a value whose provider did not establish non-null behavior.
-5. In Kotlin, do not force an unsafe call to silence a platform type. Check the
-   boundary or isolate the platform call behind a typed adapter.
-6. Validate configuration, JSON, database rows, and user input at the edge.
-   Do not let malformed values reach business logic.
-7. Prefer early returns for null, invalid state, and unsupported operations.
+## 1. Stack Assumptions
 
-## 3. Dependency Injection
-8. Constructor-inject required dependencies. Do not reach through a global
-   service locator or call a static factory from business logic.
-9. Depend on the narrowest interface that expresses the required behavior.
-   Do not inject an entire framework context for one small operation.
-10. Keep scopes explicit: singleton, request, or feature scope is a lifecycle
-    decision, not a convenience annotation.
-11. In Kotlin, use a primary constructor with stable, immutable dependencies;
-    do not mutate injected fields after initialization.
+This layer assumes:
 
-## 4. Exceptions and Error Types
-12. Catch the narrowest exception that can be handled. Never use
-    `catch (Exception)` as a substitute for a design decision.
-13. Do not catch, log, and rethrow the same exception. Add context or let the
-    boundary translate it once.
-14. Never use checked exceptions for routine control flow across layers. A
-    Java method should either declare a meaningful recovery contract or return
-    a domain result appropriate to the language.
-15. Preserve causes when wrapping an exception; do not replace a useful cause
-    with a generic message.
+- Java 17 or later, or Kotlin 1.9 or later.
+- Maven or Gradle for builds.
+- The project uses a standard formatter (Spotless, ktlint).
 
-## 5. Coroutines and Concurrency
-16. Every coroutine scope has an owner and a cancellation reason. Do not create
-    a scope in a class without a lifecycle or use `GlobalScope` in production.
-17. Use structured concurrency: launch child work in the caller's scope and
-    let failures cancel the operation.
-18. Make dispatcher injection explicit at boundaries. Do not perform blocking
-    I/O on a constrained UI dispatcher.
-19. Use `withContext` for a bounded dispatcher change, not to hide blocking
-    work in a supposedly non-blocking function.
-20. Do not launch fire-and-forget work whose result or exception nobody owns.
+## 2. Type System
 
-## 6. Kotlin Idiom
-21. Use `val` by default; use `var` only when reassignment is part of the
-    state machine.
-22. Prefer data classes for value objects, sealed interfaces for closed
-    hierarchies, and exhaustive `when` expressions.
-23. Use safe calls, elvis, and scope functions only when they preserve the
-    intended null semantics. Do not hide a missing value in a default.
-24. Keep extension functions focused and place them in the package that owns
-    the concept; do not add broad `Any` extensions.
-25. Name extension functions as operations, not as generic property accessors.
+### 2.1 Prefer Immutability
 
-## 7. Collections and Concurrency
-26. Prefer immutable collection types at API boundaries. Return a defensive
-    copy when a Java or Kotlin API exposes mutable storage.
-27. Do not use a synchronized collection to hide a multi-step invariant. State
-    which lock or single-owner actor protects the invariant.
-28. Keep transaction boundaries in the service layer and keep them short. Do
-    not hold a transaction across remote calls.
-29. Treat `ConcurrentHashMap` as a concurrent container, not as a solution to
-    races involving multiple keys or related updates.
+BAD: A mutable class with setters for every field.
+GOOD: A `record` (Java) or a `data class` (Kotlin) with `val` fields.
 
-## 8. Java Interoperability
-30. Do not expose platform types to Kotlin without an adapter and a test.
-31. Mark nullable parameters explicitly in Java when the Kotlin boundary can
-    return null; never rely on a non-null Java annotation that is not enforced.
-32. Keep Java default methods and Kotlin interface defaults from creating
-    ambiguous calls. Resolve overloads explicitly at the boundary.
-
-40. Review collection ownership across the Java and Kotlin boundary so a
-    mutable Java list is not exposed as an immutable Kotlin contract.
-41. Check that every platform-type adapter has a test for null and absent data.
-42. Keep coroutine exception handling at an ownership boundary rather than
-    catching cancellation in every layer.
-44. Review dependency scopes against request and process lifetimes.
-45. Keep checked-exception translation in Java adapters, not domain rules.
-46. Prefer exhaustive Kotlin `when` for closed state machines.
-47. Exercise cancellation and failure propagation in coroutine tests.
-48. Check resource closing under both Java and Kotlin ownership models.
-49. Review public signatures for binary and source compatibility.
-50. Keep suppression annotations specific and explain their reason.
-
-## Domain-Specific Anti-Patterns
-
-### 9.1 Implicit Null Contracts
-BAD:
-```kotlin
-val name = user.getName().trim()
-return name
-```
-GOOD:
-```kotlin
-val rawName = user.name ?: return Result.failure(InvalidUser)
-return Result.success(rawName.trim())
-```
-
-### 9.2 Swallowed Failures
-BAD:
+Java:
 ```java
-try { repository.save(order); }
-catch (Exception ignored) { status = "saved"; }
-```
-GOOD:
-```java
-try { repository.save(order); }
-catch (DataAccessException error) { throw new OrderWriteException(order.id(), error); }
+public record User(String id, String email, Role role) {}
 ```
 
-### 9.3 Orphaned Coroutines
-BAD:
+Kotlin:
 ```kotlin
-fun start() { CoroutineScope(Dispatchers.IO).launch { send() } }
+data class User(val id: String, val email: String, val role: Role)
 ```
-GOOD:
+
+### 2.2 `final` by Default (Java)
+
+In Java, mark classes `final`, methods `final`, and fields `final`
+unless extension or mutation is intended.
+
+BAD: A public non-final class with public non-final fields.
+GOOD: `public final class User { private final String id; ... }`
+
+### 2.3 Kotlin `val` Over `var`
+
+BAD: `var name = "Alice"` when `name` is never reassigned.
+GOOD: `val name = "Alice"`.
+
+### 2.4 Sealed Hierarchies Over Enums With Data
+
+BAD: An enum where some values carry data and others do not.
+GOOD: A sealed interface/class with subtypes.
+
+Kotlin:
 ```kotlin
-class Sender(private val scope: CoroutineScope) {
-    fun start() = scope.launch { send() }
+sealed interface Result<out T> {
+    data class Ok<T>(val value: T) : Result<T>
+    data class Err(val error: Throwable) : Result<Nothing>
 }
 ```
 
-## 9. Resource and API Hygiene
-33. Use try-with-resources or `use` for closeable resources. Close resources
-    on every success and failure path.
-34. Do not add a dependency or plugin without permission. Match the repository's
-    dependency injection and logging conventions.
-35. Use records for immutable Java data carriers and Kotlin data classes for
-    Kotlin code, but do not make mutable domain entities records casually.
+### 2.5 Generics Are Not `Object`
 
-## 10. Verification Checklist
-36. Compile with the configured Java and Kotlin toolchains and run existing
-    static analysis and tests.
-37. Review nullability, coroutine cancellation, transaction boundaries,
-    and checked-exception translation.
-38. Report exact commands and results. Do not claim a build passed unless it
-    was actually run.
-39. Check that no new dependency, coroutine scope, or exception suppression
-    was introduced without a documented reason and test coverage.
+BAD: `List<Object> items`.
+GOOD: `List<Item> items` or `List<? extends Item> items`.
 
-## 11. Response to Violation
-Identify the file, symbol, and violated numbered rule. Explain the runtime or
-maintenance failure, then make the narrowest correction. Do not repeat the
-master layer. If a nullability, DI, or API correction changes a public
-contract, call that out before editing. Never hide a compiler, coroutine, or
-static-analysis signal to make the change appear clean.
+### 2.6 Wildcards Only When Necessary
+
+Java: `List<? extends Number>` for read-only. `List<? super Integer>`
+for write-only. Otherwise, use the exact type.
+
+### 2.7 No Raw Types
+
+BAD: `List items = new ArrayList();`.
+GOOD: `List<Item> items = new ArrayList<>();`.
+
+## 3. Nullability
+
+### 3.1 Java: `Optional` at API Boundaries
+
+BAD: `public User findUser(String id) { return null; }`.
+GOOD: `public Optional<User> findUser(String id) { ... }`.
+
+`Optional` is for return types. Do not use it for fields or method
+parameters.
+
+### 3.2 Java: `@Nullable` and `@NonNull`
+
+Use JSR-305 or the project's nullability annotations consistently.
+
+BAD: A method that sometimes returns `null` and is not annotated.
+GOOD: `@Nullable User findUser(...)` or `Optional<User> findUser(...)`.
+
+### 3.3 Kotlin: No `!!` Except When Proven
+
+BAD: `val id = user.id!!`.
+GOOD: `val id = user.id ?: throw IllegalStateException("user id missing")`
+or `requireNotNull(user.id) { "user id missing" }`.
+
+`!!` throws `NullPointerException` with no context.
+
+### 3.4 Kotlin: Platform Types
+
+Calling Java from Kotlin produces platform types (`String!`). They
+can be `null` at runtime. Treat them as nullable and handle
+explicitly.
+
+### 3.5 Kotlin: Smart Casts
+
+Use `val` and pattern matching to enable smart casts.
+
+BAD:
+```kotlin
+if (x is String) {
+    println(x.length)  // works only if x is a val
+}
+```
+
+GOOD:
+```kotlin
+val x: Any = ...
+if (x is String) {
+    println(x.length)  // smart cast to String
+}
+```
+
+## 4. Dependency Injection
+
+### 4.1 Constructor Injection Only
+
+BAD:
+```java
+public class UserService {
+    @Autowired private UserRepository repo;
+}
+```
+
+GOOD:
+```java
+public class UserService {
+    private final UserRepository repo;
+    public UserService(UserRepository repo) { this.repo = repo; }
+}
+```
+
+Field injection hides dependencies, prevents immutability, and
+complicates testing.
+
+### 4.2 No Service Locator
+
+BAD: `ServiceLocator.get(UserService.class)`.
+GOOD: Constructor injection.
+
+### 4.3 One Constructor Per Bean
+
+If a class has multiple constructors, mark one with `@Autowired`
+(Spring) or the framework's annotation.
+
+### 4.4 No Circular Dependencies
+
+BAD: `A` depends on `B`, `B` depends on `A`.
+GOOD: Extract a third class, or restructure.
+
+Circular dependencies are a design smell, not a framework limitation.
+
+## 5. Exceptions
+
+### 5.1 Unchecked Over Checked (Modern Java)
+
+Checked exceptions clutter signatures. Modern Java projects prefer
+unchecked exceptions for all but recoverable cases.
+
+BAD: `throws IOException, SQLException, ParseException` on every
+method.
+GOOD: Wrap in an unchecked domain exception at the boundary.
+
+### 5.2 Never Catch `Exception` Blindly
+
+BAD: `try { ... } catch (Exception e) { log(e); }`.
+GOOD: Catch specific exceptions, or let the framework handle them.
+
+### 5.3 Never Swallow
+
+BAD: `catch (IOException e) { }`.
+GOOD: Log and rethrow, or convert and rethrow.
+
+### 5.4 Never `printStackTrace`
+
+BAD: `e.printStackTrace();`.
+GOOD: `log.error("...", e);` through the project's logger.
+
+### 5.5 Custom Exception Hierarchies
+
+```java
+public class AppException extends RuntimeException { ... }
+public class NotFoundException extends AppException { ... }
+public class ValidationException extends AppException { ... }
+```
+
+Consistent hierarchy allows centralized handling.
+
+### 5.6 Kotlin: No Checked Exceptions
+
+Kotlin does not have checked exceptions. Do not pretend it does.
+
+### 5.7 Kotlin: `runCatching` With Care
+
+`runCatching` catches `Throwable`, including `Error` subtypes. Do
+not use it for control flow or to swallow programming errors.
+
+## 6. Concurrency
+
+### 6.1 Prefer Executors Over Raw Threads
+
+BAD: `new Thread(() -> ...).start();`.
+GOOD: `executor.submit(() -> ...);`.
+
+### 6.2 Bounded Thread Pools
+
+BAD: `Executors.newCachedThreadPool()` (unbounded).
+GOOD: `new ThreadPoolExecutor(core, max, ...)` with a queue.
+
+### 6.3 Shut Down Executors
+
+An executor that is never shut down prevents JVM exit. Call
+`shutdown()` and `awaitTermination()`.
+
+### 6.4 `CompletableFuture` Over `Future.get`
+
+BAD: `future.get()` blocks.
+GOOD: `future.thenApply(...).thenAccept(...)`.
+
+### 6.5 Kotlin Coroutines
+
+- Structured concurrency: use `coroutineScope` or `supervisorScope`.
+- Never `GlobalScope.launch` in application code.
+- Pass the `CoroutineContext` explicitly.
+- Cancellation is cooperative: check `isActive` or use cancellable
+  operations.
+
+BAD: `GlobalScope.launch { ... }`.
+GOOD: `viewModelScope.launch { ... }` or a scoped coroutine.
+
+### 6.6 Thread-Safe Collections
+
+`HashMap` is not thread-safe. Use `ConcurrentHashMap` or synchronize
+access.
+
+### 6.7 `volatile` When Visibility Matters
+
+A field read by multiple threads without synchronization requires
+`volatile` or an `Atomic*` type.
+
+## 7. Collections and Streams
+
+### 7.1 Streams Over Loops for Transformations
+
+BAD:
+```java
+List<String> names = new ArrayList<>();
+for (User u : users) {
+    if (u.active()) names.add(u.name());
+}
+```
+
+GOOD:
+```java
+List<String> names = users.stream()
+    .filter(User::active)
+    .map(User::name)
+    .toList();
+```
+
+### 7.2 Streams Are Not for Side Effects
+
+BAD: `users.stream().forEach(this::sendEmail);`.
+GOOD: A `for` loop.
+
+`forEach` in a stream is a smell unless the stream is a terminal
+operation that is genuinely terminal.
+
+### 7.3 Avoid `Collectors.toList()` (Java 16+)
+
+Use `.toList()` when an unmodifiable list is acceptable. Use
+`Collectors.toCollection(ArrayList::new)` when mutability is needed.
+
+### 7.4 Kotlin Collections
+
+Use the standard operators (`filter`, `map`, `flatMap`, `associate`)
+over manual loops. Use sequences (`asSequence()`) for chains over
+large collections.
+
+### 7.5 No `null` Elements in Collections
+
+A `List<String>` that sometimes contains `null` forces every caller
+to check. Use an empty list or a sentinel value.
+
+## 8. Java & Kotlin Anti-Patterns
+
+### 8.1 `null` Return for "Not Found"
+
+Covered in 3.1.
+
+### 8.2 Field Injection
+
+Covered in 4.1.
+
+### 8.3 Catching `Exception`
+
+Covered in 5.2.
+
+### 8.4 `printStackTrace`
+
+Covered in 5.4.
+
+### 8.5 `newCachedThreadPool`
+
+Covered in 6.2.
+
+### 8.6 `GlobalScope.launch` in Kotlin
+
+Covered in 6.5.
+
+### 8.7 `!!` in Kotlin
+
+Covered in 3.3.
+
+### 8.8 Mutable Static State
+
+BAD: `public static final Map<String, User> CACHE = new HashMap<>();`.
+GOOD: An injected cache with explicit lifecycle, or a
+`ConcurrentHashMap` with synchronization.
+
+### 8.9 Deep Inheritance Hierarchies
+
+BAD: `AbstractBaseServiceImpl` → `AbstractServiceImpl` → `UserServiceImpl`.
+GOOD: Composition and small interfaces.
+
+### 8.10 `interface` With a Single Implementation
+
+A single-implementation interface is a design smell unless the
+interface is part of a public API.
+
+### 8.11 `equals`/`hashCode` Mismatch
+
+BAD: Overriding `equals` without `hashCode`.
+GOOD: Both, or neither (use `record` / `data class`).
+
+### 8.12 Mutable Fields in `record` / `data class`
+
+BAD: A `record` with a `List` field that is mutated by callers.
+GOOD: Defensive copies in the constructor, or immutable collections.
+
+### 8.13 `Optional` as a Field
+
+BAD: `private Optional<String> name;`.
+GOOD: `private String name;` with a nullable-aware accessor.
+
+### 8.14 `Optional.get()` Without Check
+
+BAD: `optional.get()` (throws if empty).
+GOOD: `optional.orElseThrow(() -> new NotFoundException(...))`.
+
+### 8.15 Overly Broad Imports
+
+BAD: `import com.example.*;`.
+GOOD: Explicit imports.
+
+### 8.16 Multiple `@Autowired` on One Class
+
+If a class has more than one `@Autowired` field or setter, refactor
+to constructor injection.
+
+### 8.17 Ignoring `@Override`
+
+BAD: A method that overrides a superclass method without
+`@Override`.
+GOOD: Always annotate.
+
+### 8.18 String Concatenation in Loops
+
+BAD: `String s = ""; for (...) s += x;`.
+GOOD: `StringBuilder sb = new StringBuilder(); sb.append(x);`.
+
+### 8.19 Boxing in Hot Paths
+
+BAD: `List<Integer>` in a loop over primitives.
+GOOD: `int[]` or a primitive stream.
+
+### 8.20 `synchronized` on a Public Object
+
+BAD: `synchronized (this) { ... }` where `this` is exposed.
+GOOD: A private final lock object.
+
+### 8.21 `equals` Without Type Check
+
+BAD: `public boolean equals(Object o) { return ((User) o).id.equals(id); }` (ClassCastException).
+GOOD: `if (!(o instanceof User u)) return false; return u.id.equals(id);`.
+
+### 8.22 Kotlin `lateinit` Without a Reason
+
+BAD: `lateinit var user: User` when the value could be a
+constructor parameter.
+GOOD: Constructor parameter, or `by lazy`, or a nullable with an
+explicit check.
+
+### 8.23 Kotlin `apply`/`also`/`let`/`run` Overuse
+
+A chain of `apply { also { let { run { ... } } } }` is unreadable.
+Use them for short, idiomatic expressions, not for long flows.
+
+### 8.24 Kotlin `when` Without `else` on a Non-Sealed Type
+
+BAD:
+```kotlin
+when (x) {
+    is A -> ...
+    is B -> ...
+}
+```
+where `x` is not sealed.
+
+GOOD: Add `else`, or make the type sealed.
+
+### 8.25 Java Records for Mutable Types
+
+A `record` is immutable by design. If the type must be mutable, use
+a class.
+
+## 9. Response to Violation
+
+If a previous response violated a rule here:
+
+```
+In the previous response, [specific rule] was violated. Correction:
+[corrected code]
+```
+
+No justification. No apology paragraph. Fix and move on.

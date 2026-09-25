@@ -84,6 +84,13 @@ shutdown behavior.
 53. Keep query pagination and filtering bounded.
 54. Use a stable error code for each expected validation failure.
 55. Test malformed, oversized, and unexpected fields.
+56. Store request IDs in typed context values and preserve them through logging.
+57. Convert validated DTOs before calling application services.
+58. Use the request context for cancellation instead of package globals.
+59. Reject unsupported content types before body parsing.
+60. Map Fiber errors through the project's stable error envelope.
+61. Exercise direct, grouped, nested, and parameterized route registration.
+62. Verify graceful shutdown with active requests and streaming responses.
 
 ## 6. Domain-Specific Anti-Patterns
 
@@ -135,36 +142,9 @@ return list(c, limit)
 
 ## 7. Response to Violation
 
-56. Fetch the app setup, route, middleware, and schema definitions first.
-57. Locate the first incorrect middleware or route boundary.
-58. Move logic to the layer that owns the responsibility.
-59. Add strict validation and bounded resource limits.
-60. Test success, rejection, error mapping, and cleanup paths.
-61. Verify graceful shutdown with an active request.
-62. State changed files, unchanged files, and remaining assumptions.
-63. Do not invent Fiber APIs or compatibility guarantees.
-64. Do not add a new framework or validator silently.
-65. Run the repository's Go format, lint, typecheck, and test commands.
-66. Record actual command results and unresolved integration risks.
-67. Keep the change limited to the requested route or middleware behavior.
-68. Do not commit unless explicitly requested.
-69. Keep route registration order visible in app setup.
-70. Test middleware behavior with rejected and aborted requests.
-71. Make shutdown wait for active handlers and background work.
-72. Keep request IDs consistent across logs and responses.
-73. Bound all collection, upload, and pagination inputs.
-74. Verify the existing recovery middleware does not expose internals.
-75. Keep graceful shutdown independent from request termination.
-76. Test malformed JSON, query, headers, and oversized bodies.
-77. Report Fiber or Go version assumptions before upgrading.
-78. Do not use context as a global mutable registry.
-79. Keep transaction ownership in the service or repository layer.
-80. Test websocket and streaming routes separately from ordinary handlers.
-81. Remove obsolete routes and middleware together.
-82. Keep response envelopes consistent across every route group.
-83. Record the exact format, lint, and test commands used.
-84. State files changed, files unchanged, and untested paths.
-85. Do not claim runtime behavior without a matching test.
-86. Do not add a second validator or logger.
-87. Keep the route contract documented beside its schema.
-88. Keep route ownership and public exports explicit.
+- Correction — name the cited Fiber rule, file, and symbol; apply only that
+  middleware, schema, context, or service-boundary correction.
+- Verify — run the focused route test plus the repository's Go checks; report
+  the actual command output and any untested streaming or shutdown path.
+- Scope — preserve unrelated handlers and contracts, and record changed and
+  unchanged files without claiming an unrun check passed.

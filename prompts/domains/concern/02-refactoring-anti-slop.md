@@ -225,7 +225,7 @@ Two writers create conflicting sources of truth during migration.
 GOOD:
 ```python
 writer = new_writer if order.use_new_path else legacy_writer
-  writer.save(order)
+writer.save(order)
 ```
 One authoritative write path keeps the migration reversible.
 

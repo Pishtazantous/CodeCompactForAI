@@ -7,159 +7,439 @@ category: domain
 domain_type: language
 version: 1
 ---
+
 # C++ Anti-Slop Layer
 
-Layered under `_universal/00-master-anti-slop.md`. This layer covers C++
-ownership, undefined behavior, resource lifetime, and modern C++ design.
-Build, framework, and platform rules remain elsewhere.
+Layered under `_universal/00-master-anti-slop.md`. Universal rules
+(fabrication, fake completion, over-engineering, silent assumptions,
+security anti-patterns, output format) are NOT repeated here.
 
-## 1. Scope and Assumptions
-1. Read `CMakeLists.txt`, compiler settings, warnings, standard version, and
-   dependency files before selecting a language feature or library.
-2. Match the project's supported standard, ABI, allocator, and exception
-   model. Do not assume C++20 or a compiler extension is available.
-3. Preserve public headers, ownership conventions, and compilation settings.
+This file covers rules specific to C++: memory safety, modern C++
+idioms, undefined behavior, and the patterns that produce crashes or
+subtle corruption. Embedded C++ rules live in
+`domains/delivery/02-embedded-anti-slop.md`.
 
-## 2. Ownership and RAII
-4. Represent every resource owner with a class that acquires in its constructor
-   and releases in its destructor. Prefer `std::unique_ptr` for exclusive
-   dynamic ownership.
-5. Use `std::shared_ptr` only when shared lifetime is required; prefer weak
-   observation and make cycles impossible by design.
-6. Do not write a raw `new` and `delete` pair in application code. Use a
-   container or smart pointer unless a custom lifetime contract is essential.
-7. Prefer values and `std::span` for non-owning views. Make the referenced
-   lifetime clear in the parameter type and documentation.
+## 1. Stack Assumptions
+
+This layer assumes:
+
+- C++17 or later. C++20 or C++23 preferred.
+- A modern compiler (GCC 11+, Clang 14+, MSVC 19.30+).
+- The project compiles with `-Wall -Wextra` (or equivalent) and
+  treats warnings as errors in CI.
+
+## 2. Memory Safety
+
+### 2.1 RAII Everywhere
+
+Every resource (memory, file, socket, lock) is owned by an object
+whose destructor releases it.
+
+BAD:
+```cpp
+auto* buf = new char[1024];
+// ... may throw or return early
+delete[] buf;
+```
+
+GOOD:
+```cpp
+auto buf = std::make_unique&lt;char[]&gt;(1024);
+// released automatically
+```
+
+### 2.2 Smart Pointers Over Raw
+
+- `std::unique_ptr&lt;T&gt;` for exclusive ownership.
+- `std::shared_ptr&lt;T&gt;` for shared ownership.
+- `std::weak_ptr&lt;T&gt;` to break cycles.
+- Raw pointers only as non-owning observers.
+
+### 2.3 `std::make_unique` and `std::make_shared`
+
+BAD: `std::unique_ptr&lt;T&gt;(new T(...))`.
+GOOD: `std::make_unique&lt;T&gt;(...)`.
+
+`make_shared` allocates control block and object together.
+
+### 2.4 No `delete`
+
+If you write `delete`, something is wrong. Smart pointers call it for
+you.
+
+### 2.5 No `malloc`/`free` in C++
+
+Use `new`/`delete` only inside smart pointer construction, or
+containers. For raw memory, use `std::vector` or `std::array`.
+
+### 2.6 `std::span` for Non-Owning Views
+
+`std::span&lt;T&gt;` (C++20) replaces `(T* ptr, size_t len)` parameters.
+
+### 2.7 No Naked `new`
+
+Covered in 2.3.
+
+### 2.8 Rule of Zero/Five
+
+- **Rule of Zero**: if the class does not manage a resource, declare
+  no special members.
+- **Rule of Five**: if it does, declare destructor, copy constructor,
+  copy assignment, move constructor, move assignment.
+
+Do not declare one and forget the others.
 
 ## 3. Undefined Behavior
-8. Do not dereference null, dangling, uninitialized, or out-of-range pointers.
-   Check preconditions or use a safe abstraction.
-9. Do not overflow signed arithmetic, shift by an invalid amount, or cast a
-   large value into a smaller type without checking the range.
-10. Do not modify an object while another thread reads or writes it without a
-    defined synchronization mechanism.
-11. Do not form a reference to a temporary, bind a reference beyond the
-    referenced object's lifetime, or return a view to a local container.
-12. Do not rely on unspecified evaluation order, unsequenced accesses, or
-    implementation-defined layout for portable behavior.
 
-## 4. Move Semantics
-13. Use `std::move` only when the value is immediately transferred; it is a
-    cast, not a copy elision command.
-14. Use `std::forward` when preserving a template parameter's value category.
-    Do not use `std::forward` on a local that will be used again.
-15. A move constructor or assignment may leave the source valid but unspecified.
-    Do not read a moved-from object unless its type documents a stronger rule.
-16. Mark or delete copy operations when a type cannot support them. Do not let
-    accidental shallow copies duplicate an owning pointer.
-17. Prefer `std::move` over copying large values, but measure performance before
-    introducing complexity solely for micro-optimization.
+### 3.1 No Out-of-Bounds Access
 
-## 5. Exceptions and Error Handling
-18. Use exceptions for exceptional failures only when the project does. For
-    expected errors, prefer a status, expected type, or error code that the
-    caller must handle.
-19. Use RAII so cleanup occurs during stack unwinding. Never skip a resource
-    destructor by managing ownership with a raw pointer.
-20. Do not catch an unknown exception handler to continue. Catch the specific
-    exception that recovery handles and preserve a useful cause.
-21. Do not throw from a destructor or a `noexcept` function. Translate failures
-    at the API boundary.
+- Use `.at()` for checked access, `operator[]` only when bounds are
+  proven.
+- `std::vector::at` throws; `operator[]` is UB on overflow.
 
-## 6. Modern Idiom
-22. Prefer `auto` for long iterator and expression types, but use explicit types
-    at public boundaries and where inference hides a conversion.
-23. Prefer range-based `for`, `std::span`, `std::string_view`, and standard
-    containers over hand-written index loops when ownership permits.
-24. Use `const` to express non-mutation. Do not return a mutable reference to
-    private state merely to avoid a getter.
-25. Prefer `enum class`, scoped enums, and strong types when values from
-    different domains can otherwise be confused.
-26. Use structured bindings when they improve readability; do not use them to
-    obscure a deep nested expression.
+### 3.2 No Use-After-Free
 
-## 7. Templates and Concurrency
-27. Constrain templates at the point of use and keep the requirement visible in
-    the declaration. Do not rely on an accidental implementation type.
-28. Instantiate templates in a translation unit when this reduces build cost
-    or controls symbol visibility, following project convention.
-29. Do not start a thread without a defined join, detach policy, and exception
-    strategy. Capture required values explicitly and avoid shared mutable state.
-30. Protect invariants, not individual assignments. Choose atomics only when
-    they express the actual synchronization requirement.
+A pointer or reference to a destroyed object is UB.
 
-## 8. Headers, Build, and Dependencies
-31. Include what you use and keep public headers self-contained. Avoid including
-    heavy implementation headers in a public interface.
-32. Do not add a package or enable a language standard without permission. Keep
-    build warnings treated according to project policy.
-33. Do not use a macro to hide a type or ownership rule. If a macro is required
-    by the platform, isolate it and document the invariant.
-34. Preserve ABI and source compatibility unless the task authorizes a break.
-
-## 9. Verification Checklist
-35. Build with the configured compiler, warnings, and standard. Run sanitizers
-    or static analysis when the project has commands for them.
-36. Search for raw `new`, `delete`, casts, `goto`, C arrays, unchecked indexes,
-    detached threads, and manual lock/unlock.
-37. Test copy, move, destruction, allocation failure where practical, and
-    ownership under early return or exception.
-38. Report commands and results precisely; never claim an unrun sanitizer
-    passed.
-
-## 10. Additional Review Gates
-39. Review every pointer and reference for a written owner and a clear order of
-    destruction when a container or object graph is involved.
-40. Check integer conversions and container index operations at trust
-    boundaries, not only in the happy path.
-41. Verify that a move does not leave a lock, file, or network resource owned
-    by the moved-from object.
-42. Inspect thread shutdown for joins, condition-variable wakeups, and exception
-    paths; detached work is not a cleanup strategy.
-43. Confirm that headers expose only declarations and that implementation
-    details do not become accidental ABI dependencies.
-44. Run compiler warnings, sanitizers, and tests with the project's configured
-    flags and report the actual output.
-
-## Domain-Specific Anti-Patterns
-
-### 10.1.1 Manual Ownership
 BAD:
 ```cpp
-Widget* make() { return new Widget(); }
-int size(Widget* p) { return p->rows; }
-```
-GOOD:
-```cpp
-std::unique_ptr<Widget> make();
-std::size_t size(const std::span<const std::byte> data);
+auto&amp; ref = get_vector()[0];  // ref dangles if vector reallocates
 ```
 
-### 10.1.2 Dangling Views
-BAD:
-```cpp
-std::string_view label() { std::string value = make(); return value; }
-```
-GOOD:
-```cpp
-std::string make_label() { return make(); }
-```
+### 3.3 No Dangling References
 
-### 10.1.3 Raw Ownership Transfer
+Returning a reference to a local is UB.
+
 BAD:
 ```cpp
-Buffer* copy() { return new Buffer(data_, size_); }
-```
-GOOD:
-```cpp
-std::unique_ptr<Buffer> copy() const {
-    return std::make_unique<Buffer>(data_, size_);
+const std::string&amp; getName() {
+    std::string name = "Alice";
+    return name;  // dangling
 }
 ```
 
-## 11. Response to Violation
-Name the file, symbol, and numbered rule, then explain the lifetime,
-undefined-behavior, or maintenance failure. Apply the smallest RAII or type
-correction and preserve the public contract. Refer to the master layer instead
-of repeating it. If the fix changes ownership, ABI, exceptions, or the
-compiler standard, state that impact before editing.
+GOOD: Return by value, or a reference to a member.
+
+### 3.4 No Signed Overflow
+
+Signed integer overflow is UB. Use unsigned for bit operations, or
+check bounds.
+
+### 3.5 No Null Dereference
+
+A raw pointer may be null. Check before dereferencing.
+
+### 3.6 No Uninitialized Reads
+
+Every variable is initialized:
+
+BAD: `int x; std::cout &lt;&lt; x;`.
+GOOD: `int x = 0;` or `int x{};`.
+
+### 3.7 No `reinterpret_cast` Without a Reason
+
+`reinterpret_cast` bypasses the type system. Use it only for FFI or
+serialization with documented layout.
+
+### 3.8 `const_cast` Only at API Boundaries
+
+Modifying a `const` object through `const_cast` is UB. Use it only
+when a legacy API requires non-const but does not modify.
+
+## 4. Modern C++ Idioms
+
+### 4.1 `auto` When the Type Is Obvious
+
+BAD: `auto x = 5;` is fine; `auto y = compute();` may hide the type.
+GOOD: Explicit type when the type matters for readability.
+
+### 4.2 Range-Based `for`
+
+BAD:
+```cpp
+for (size_t i = 0; i &lt; vec.size(); ++i) {
+    process(vec[i]);
+}
+```
+
+GOOD:
+```cpp
+for (const auto&amp; item : vec) {
+    process(item);
+}
+```
+
+### 4.3 `const` by Default
+
+Every variable, parameter, and method that does not mutate is
+`const`.
+
+### 4.4 `constexpr` Over `#define`
+
+BAD: `#define MAX 100`.
+GOOD: `constexpr int kMax = 100;`.
+
+### 4.5 `enum class`
+
+BAD: `enum Status { Active, Inactive };` (pollutes namespace).
+GOOD: `enum class Status { Active, Inactive };`.
+
+### 4.6 `nullptr` Over `NULL`/`0`
+
+`nullptr` is type-safe.
+
+### 4.7 `override` and `final`
+
+Every overriding method is marked `override`. Classes not meant for
+inheritance are `final`.
+
+### 4.8 Move Semantics
+
+A move constructor/assignment is `noexcept` when possible. Use
+`std::move` to indicate the source is no longer needed.
+
+BAD: `return std::move(local);` (prevents RVO).
+GOOD: `return local;` (RVO applies).
+
+### 4.9 No `using namespace std;` in Headers
+
+In a header, `using namespace` pollutes every consumer's namespace.
+Use explicit `std::` in headers. In `.cpp`, sparingly.
+
+### 4.10 Structured Bindings
+
+```cpp
+for (const auto&amp; [key, value] : map) { ... }
+```
+
+## 5. Standard Library
+
+### 5.1 Containers Over Raw Arrays
+
+`std::vector` for dynamic, `std::array` for fixed, `std::string` for
+text.
+
+### 5.2 `std::string_view` for Non-Owning Strings
+
+A function that reads a string takes `std::string_view` (C++17).
+Beware of lifetime: a `string_view` does not own.
+
+### 5.3 Algorithms Over Manual Loops
+
+`std::sort`, `std::find_if`, `std::transform`, `std::accumulate`.
+They are tested and often faster.
+
+### 5.4 `std::optional` for Maybe-Values
+
+BAD: `T* find(...)` returning `nullptr`.
+GOOD: `std::optional&lt;T&gt; find(...)`.
+
+### 5.5 `std::variant` for Sum Types
+
+BAD: A struct with a tag and a union.
+GOOD: `std::variant&lt;A, B, C&gt;` with `std::visit`.
+
+### 5.6 `std::function` Has a Cost
+
+`std::function` allocates for captures larger than a pointer. For
+hot paths, use a template parameter.
+
+### 5.7 No Raw `new` in Containers
+
+`std::vector&lt;T*&gt;` with manual deletes is a leak waiting to happen.
+Use `std::vector&lt;std::unique_ptr&lt;T&gt;&gt;`.
+
+## 6. Concurrency
+
+### 6.1 `std::thread` With RAII
+
+A `std::thread` must be joined or detached before destruction.
+Otherwise `std::terminate`.
+
+Use `std::jthread` (C++20) for automatic join.
+
+### 6.2 `std::mutex` With `std::lock_guard`
+
+BAD:
+```cpp
+mutex.lock();
+// ... may throw
+mutex.unlock();
+```
+
+GOOD:
+```cpp
+std::lock_guard lock(mutex);
+```
+
+### 6.3 `std::atomic` for Simple Shared State
+
+For counters and flags, `std::atomic` is faster than a mutex.
+
+### 6.4 No Data Races
+
+Any shared mutable state accessed by multiple threads without
+synchronization is UB.
+
+### 6.5 Memory Order
+
+`std::memory_order_relaxed` is rarely correct. Use the default
+(`seq_cst`) unless you have proven a weaker order is safe.
+
+### 6.6 No Busy-Wait
+
+A busy-wait loop burns CPU. Use condition variables or futures.
+
+## 7. Build and Tooling
+
+### 7.1 CMake Modern Style
+
+- `target_link_libraries` with `PUBLIC`/`PRIVATE`/`INTERFACE`.
+- `target_include_directories` per target, not global.
+- No `include_directories` at the top.
+
+### 7.2 Sanitizers
+
+- `-fsanitize=address,undefined` in development.
+- `-fsanitize=thread` for concurrency.
+- Run tests under sanitizers.
+
+### 7.3 No Warnings
+
+`-Wall -Wextra -Werror`. Every warning is a bug.
+
+### 7.4 Static Analysis
+
+Clang-Tidy, cppcheck. Run in CI.
+
+### 7.5 Formatter
+
+`clang-format` with a project `.clang-format`.
+
+## 8. C++-Specific Anti-Patterns
+
+### 8.1 Raw `new`/`delete`
+
+Covered in 2.1-2.4.
+
+### 8.2 Manual Memory Management
+
+Covered in 2.
+
+### 8.3 Out-of-Bounds
+
+Covered in 3.1.
+
+### 8.4 Dangling References
+
+Covered in 3.3.
+
+### 8.5 `using namespace std;` in Headers
+
+Covered in 4.9.
+
+### 8.6 `NULL` Over `nullptr`
+
+Covered in 4.6.
+
+### 8.7 Missing `override`
+
+A method that intends to override but is not marked `override` may
+silently not override. Always mark.
+
+### 8.8 Slicing
+
+Passing a derived object by value to a base-typed parameter slices
+it. Use references or pointers.
+
+### 8.9 `std::endl` in Loops
+
+`std::endl` flushes the stream. Use `'\n'` unless flushing is
+required.
+
+### 8.10 `#include` in Headers
+
+Forward declarations where possible. Reduce compile times.
+
+### 8.11 `#pragma once` vs Include Guards
+
+`#pragma once` is widely supported. Use it, or an include guard. Do
+not mix.
+
+### 8.12 Macros for Constants
+
+Covered in 4.4.
+
+### 8.13 Magic Numbers
+
+BAD: `if (x &gt; 86400)`.
+GOOD: `constexpr int kSecondsPerDay = 86400;`.
+
+### 8.14 C-Style Casts
+
+BAD: `(int)x`.
+GOOD: `static_cast&lt;int&gt;(x)`, `dynamic_cast`, `reinterpret_cast`,
+`const_cast`.
+
+### 8.15 `malloc`/`free` in C++
+
+Covered in 2.5.
+
+### 8.16 Copying Large Objects
+
+BAD: `void process(std::vector&lt;int&gt; v)`.
+GOOD: `void process(const std::vector&lt;int&gt;&amp; v)` or `std::span`.
+
+### 8.17 Returning `const` by Value
+
+BAD: `const std::string getName()`.
+GOOD: `std::string getName()`.
+
+`const` on return by value prevents moves.
+
+### 8.18 `virtual` Without a Virtual Destructor
+
+A base class with virtual methods needs a virtual destructor.
+Otherwise deleting through a base pointer is UB.
+
+### 8.19 `std::shared_ptr` Cycles
+
+Two `shared_ptr`s pointing to each other leak. Use `weak_ptr`.
+
+### 8.20 Exceptions Across `noexcept`
+
+Throwing from a `noexcept` function calls `std::terminate`.
+
+### 8.21 Ignoring `[[nodiscard]]`
+
+A function marked `[[nodiscard]]` returns a value that matters.
+Ignoring it is a bug.
+
+### 8.22 `std::move` on Returned Locals
+
+Covered in 4.8.
+
+### 8.23 `const` Methods That Mutate
+
+A `mutable` member allows mutation in a `const` method. Use it only
+for caches and instrumentation.
+
+### 8.24 Uninitialized Members
+
+Every member is initialized in the constructor or via a default
+member initializer.
+
+### 8.25 `size_t` vs `int` Warnings
+
+Mixing signed and unsigned produces warnings and bugs. Be consistent.
+
+## 9. Response to Violation
+
+If a previous response violated a rule here:
+
+```
+In the previous response, [specific rule] was violated. Correction:
+[corrected code]
+```
+
+No justification. No apology paragraph. Fix and move on.

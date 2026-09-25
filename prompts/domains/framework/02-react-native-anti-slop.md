@@ -175,13 +175,10 @@ GOOD:
 
 ## 9. Response to Violation
 
-81. Stop before adding a workaround when the bridge contract is unclear.
-82. Fetch the native module, manifest, and existing adapter definitions.
-83. Identify the owning layer and keep the change at that boundary.
-84. Replace broad dynamic calls with typed, validated operations.
-85. Add a focused test for success, expected failure, and cancellation.
-86. Verify persistence with a process restart and a release build.
-87. Report incompatible platform behavior instead of hiding it.
-88. Keep the diff limited to the requested capability and its contract.
-89. State the files changed, files unchanged, and remaining uncertainty.
-90. Do not claim native verification until the relevant command was run.
+- Correction — `Bridge contract / document bridge`: replace dynamic native dispatch with a typed operation and validate arguments again in native code.
+- Verify — `Bridge contract / document bridge`: run `npm test -- <native-adapter-test>`; expected result is PASS for success, invalid input, and cancellation.
+- Correction — `Persistence / documentRepository.saveDraft`: route durable writes through the existing repository with an operation ID and recoverable storage semantics.
+- Verify — `Persistence / documentRepository.saveDraft`: run `npx tsc --noEmit`; expected result is no type errors, with the restart integration test reported separately.
+- Correction — `Event ownership / nativeEvents.subscribe`: return cleanup from the effect and cancel or invalidate stale work when dependencies change.
+- Verify — `Event ownership / nativeEvents.subscribe`: run the focused unmount and dependency-change test; expected result is PASS with no listener leak or stale update.
+- Scope — limit the patch to the cited rule, file, or symbol; record changed and unchanged paths and any untested iOS, Android, or release behavior.

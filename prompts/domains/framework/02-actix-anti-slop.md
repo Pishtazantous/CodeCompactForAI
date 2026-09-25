@@ -153,31 +153,10 @@ impl FromRequest for Identity {
 
 ## 7. Response to Violation
 
-63. Fetch the app factory, route, actor, extractor, and error definitions first.
-64. Determine whether the defect belongs in routing, concurrency, or data flow.
-65. Narrow actor messages and extractor contracts before changing behavior.
-66. Move business rules and I/O to their existing owning layers.
-67. Test concurrent messages, shutdown, limits, and error mapping.
-68. Report unsafe or unbounded behavior instead of masking it.
-69. State changed files, unchanged files, and remaining assumptions.
-70. Run formatting, clippy, tests, and the repository typecheck.
-71. Record actual command output and unresolved runtime risks.
-72. Do not add dependencies or refactor unrelated modules.
-73. Do not commit unless explicitly requested.
-74. Keep route nesting and fallback order in app setup.
-75. Test actor startup, message processing, and shutdown explicitly.
-76. Bound mailbox input and handler payload sizes.
-77. Make cancellation visible for long-running messages.
-78. Keep request IDs out of shared actor state.
-79. Verify middleware order with unauthorized requests.
-80. Test extraction failures without exposing internal details.
-81. Keep blocking work behind the project's async boundary.
-82. Remove actors and messages together when their feature ends.
-83. Report actor failures with safe contextual identifiers.
-84. Test concurrent state mutation and lock contention.
-85. Keep response envelopes consistent across route groups.
-86. Record format, clippy, test, and typecheck results.
-87. State changed files, unchanged files, and remaining uncertainty.
-88. Do not claim runtime success without running checks.
-89. Do not add dependencies without explicit permission.
-90. Do not commit unless explicitly requested.
+- Correction — `Extractor rejection / Identity::from_request`: make parsing return the project's typed error instead of `default()`, and keep request data out of shared actor state.
+- Verify — `Extractor rejection / Identity::from_request`: run the focused extractor test; expected result is a safe rejection with no default identity.
+- Correction — `Actor mailbox / typed message`: narrow the message to the domain operation, bound accepted input, and preserve explicit actor shutdown and cancellation.
+- Verify — `Actor mailbox / typed message`: run `cargo test --all-features <actor-test>`; expected result is PASS for concurrent processing and shutdown.
+- Correction — `Handler boundary / blocking I/O`: move blocking work behind the established async boundary and keep database transactions in the owning adapter.
+- Verify — `Handler boundary / blocking I/O`: run `cargo clippy --all-targets --all-features -- -D warnings`; expected result is no blocking or async-policy diagnostics.
+- Scope — limit the patch to the cited rule, file, or symbol; record changed and unchanged paths and any unverified runtime assumption.

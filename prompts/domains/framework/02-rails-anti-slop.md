@@ -207,12 +207,28 @@ end
 
 BAD:
 ```ruby
-def deliver; HTTParty.post(payment_url, body: amount); end
+def deliver
+  HTTParty.post(payment_url, body: amount)
+end
 ```
 
 GOOD:
 ```ruby
-def deliver; PaymentGateway.new.charge(self); end
+class Orders::Deliver < ApplicationService
+  def call
+    result = PaymentGateway.new.charge(order)
+    order.update!(payment_state: result.state)
+  end
+end
+
+class DeliverOrderJob < ApplicationJob
+  queue_as :payments
+
+  def perform(order_id)
+    order = Order.find(order_id)
+    Orders::Deliver.new(order).call
+  end
+end
 ```
 
 ## 6. Response to Violation

@@ -2,268 +2,187 @@
 id: 04-ui-design-system
 title: "UI & Design System Anti-Slop Layer"
 lang: en
-depends_on: [00-master-anti-slop]
+depends_on: ["_universal/00-style-guide.md", "_universal/00-master-anti-slop.md", "ui/05-ui-rtl-persian.md"]
 category: ui
-version: 1
+version: 4
 ---
 
 # UI & Design System Anti-Slop Layer
 
-Layered under `_universal/00-master-anti-slop.md`. Universal rules
-(fabrication, fake completion, over-engineering, silent assumptions,
-security anti-patterns, output format) are NOT repeated here.
+This file defines universal visual and interaction contracts for projects with a user interface. It sits in the UI layer, below the universal anti-slop rules and above framework-specific patterns. It covers design tokens, component primitives, variants, composition, visual anti-slop, and animation. It does not cover component logic (see framework files), data fetching and state (see `domains/delivery/02-frontend-anti-slop.md`), detailed accessibility (see `domains/concern/02-accessibility-critical-anti-slop.md`), project-specific branding (see project files), or detailed RTL/Persian typography (see `ui/05-ui-rtl-persian.md`).
 
-This file is sent only for projects that have a user interface. It
-covers design tokens, component primitives, variants, composition,
-visual anti-slop, animation, and bidirectional layouts. It does NOT
-cover state, data fetching, or architectural patterns; those live in
-`domains/delivery/02-frontend-anti-slop.md` and
-`domains/framework/`.
+Visual consistency is a contract with the user, not an aesthetic preference.
 
-When the project has a design system, this file enforces it. When the
-project does not have one, this file prevents inventing one
-mid-task.
+## Scope
 
-## 1. Scope
+This file applies to SaaS, consumer, marketing, admin, mobile, and desktop applications with a UI, as well as shared component libraries. The principles are framework-agnostic. This file is the single source of visual truth.
 
-This layer applies to:
+## Rule Severity
 
-- SaaS and consumer web applications.
-- Marketing sites with interactive elements.
-- Admin dashboards and internal tools.
-- Mobile and desktop application UIs.
+Severity follows `_universal/00-style-guide.md`.
 
-The principles are framework-agnostic. Framework-specific UI rules
-(React, Vue, Svelte component patterns) live in the respective
-framework layer. Accessibility rules live in
-`domains/concern/02-accessibility-critical-anti-slop.md` when that
-file is sent; the baseline is repeated here.
+## Contracts
 
-## 2. Reference the Existing Design System First
+A design system commits to seven contracts. The table below maps each contract to the rules that enforce it.
 
-### 2.1 Find the Tokens Before Writing Any Style
+| Contract | Description | Enforced By |
+|---|---|---|
+| Token Coverage | Every visual property resolves to a token. | UI-004, UI-005, UI-008 |
+| Primitive Availability | Every generic UI element has a single primitive. Duplicate implementations are not permitted. | UI-002, UI-011 |
+| Variant Consistency | Variants are enumerated and applied consistently. | UI-015, UI-016 |
+| Composition Over Configuration | Components compose via slots or children, not configuration flags. | UI-018 |
+| Accessibility Baseline | Every primitive meets keyboard, focus, label, and contrast baseline. | UI-021 to UI-025 |
+| Visual Restraint | Limited palette, effects with reason, no clichés. | UI-026 to UI-048 |
+| Direction Awareness | UI supports LTR and RTL with logical properties. | UI-056 |
 
-Before writing a color, a spacing value, a font size, or a border
-radius:
+## Design Tokens
 
-1. Fetch the project's token source (`tailwind.config`, `theme.ts`,
-   CSS custom properties, a design tokens package).
-2. Identify the semantic name for what you need (`--color-danger`,
-   `--space-4`, `text-lg`).
-3. Use that name. Not a raw value.
+### UI-001 — Token Discovery
 
-If a token for the needed value does not exist, report it. Do not add
-a new token without permission; the design system is a shared
-contract.
+**MUST**
 
-### 2.2 Find the Primitive Before Writing Any Component
+Before writing a color, spacing value, font size, or border radius, the assistant MUST fetch the project's token source (e.g., `tailwind.config.ts`, `theme.ts`, CSS custom properties) and use the semantic token name.
 
-Before writing a new `Button`, `Input`, `Card`, `Dialog`, `Badge`,
-`Tooltip`, or any generic primitive:
+Inventing raw values produces visual drift and breaks theming.
 
-1. Search the component directory (`components/ui/`,
-   `components/primitives/`, or the project's equivalent).
-2. If a primitive exists, use it, even if it is imperfect.
-3. If it is close but missing a variant, report the gap before
-   extending it.
-4. Only create a new primitive when nothing close exists.
+### UI-002 — Primitive Discovery
 
-### 2.3 Follow the Existing Pattern, Not a Better One You Know
+**MUST**
 
-If the project uses `class-variance-authority` for variants, do not
-introduce a `styled-components` variant pattern. If the project uses
-Tailwind utility classes, do not add a CSS module. Consistency beats
-preference.
+Before writing a new generic UI element (Button, Input, Card, Dialog), the assistant MUST search the component library. If a primitive exists, it MUST be used. If it is close but missing a variant, the gap MUST be reported before extending it. New primitives are only created when nothing close exists.
 
-## 3. Design Tokens
+Duplicate primitives fragment the design system.
 
-### 3.1 Semantic Tokens Over Raw Values
+### UI-003 — Pattern Consistency
+
+**MUST**
+
+The assistant MUST follow the project's existing styling and composition patterns. Introducing a new styling paradigm without explicit permission is prohibited.
+
+Consistency beats individual preference.
+
+### UI-004 — Semantic Token Usage
+
+**MUST**
+
+Every visual property in the codebase MUST resolve to a semantic token. Raw values are not allowed in component code.
+
+Example (illustrative, JSX-style):
 
 BAD:
-tsx
+```tsx
 <div className="bg-red-500 text-white p-4 rounded-lg" />
-GOOD:
+```
 
-tsx
+GOOD:
+```tsx
 <div className="bg-danger text-on-danger p-md rounded-md" />
-The semantic name communicates intent and can be re-themed. The raw
-value cannot.
+```
 
-3.2 Token Categories
-A well-formed design system has tokens for:
+### UI-005 — Raw Value Prohibition
 
-Color: background, surface, border, text, primary, danger,
-warning, success, info, and their "on-" counterparts for text on
-those backgrounds.
+**MUST NOT**
 
-Spacing: a scale, typically 4px-based (0, 1, 2, 3, 4, 6, 8, 12, 16, ...).
+Raw hex, RGB, HSL, or arbitrary pixel values MUST NOT be used in component code. Raw color values appear only in the token definition file.
 
-Typography: font family, size scale, weight scale, line height.
+### UI-006 — Framework Palette Prohibition
 
-Radius: typically none, sm, md, lg, full.
+**MUST NOT**
 
-Shadow: elevation levels, not arbitrary box-shadows.
+Using framework palette names directly (e.g., `red-500`, `blue-600`, `gray-300`) couples the component to the framework's default theme. Semantic tokens MUST be used instead.
 
-Motion: duration scale, easing curves.
+### UI-007 — Documented Color Roles
 
-Every visual property in the project resolves to a token in one of
-these categories.
+**MUST**
 
-3.3 No Raw Hex, RGB, or HSL in Components
-BAD: <div style={{ color: "#3b82f6" }} />
-GOOD: <div className="text-primary" />
+Every color in the system MUST have a documented role. Inventing new color roles (e.g., "accent-2", "brand-purple") without review is prohibited.
 
-The only place raw color values appear is in the token definition
-file.
+### UI-008 — Arbitrary Value Prohibition
 
-3.4 No Magic Spacing Values
-BAD: <div className="p-[13px] mt-[7px]" />
-GOOD: <div className="p-md mt-sm" />
+**MUST NOT**
 
-Arbitrary values break the scale and produce visual drift.
+Arbitrary values (e.g., `p-[13px]`, `mt-[7px]`, `w-[347px]`) MUST NOT be used. They break the design scale and produce visual drift. The nearest token MUST be used, or a missing token MUST be reported.
 
-3.5 No Named Colors From the Framework Default
-Using red-500, blue-600, gray-300 directly couples the
-component to a framework palette. Use the semantic token instead. If
-the project has not defined semantic tokens, report the gap.
+### UI-009 — Token Addition Review
 
-3.6 No Color Without a Semantic Role
-Every color in the system has a role:
+**MUST**
 
-primary -- main action color.
+If a value is missing from the token set, the assistant MUST report it. Adding a new token without review is prohibited. The design system is a shared resource.
 
-danger -- destructive actions and errors.
+### UI-010 — Semantic Token Naming
 
-warning -- caution.
+**MUST**
 
-success -- confirmation.
+Token names MUST be semantic (e.g., `--color-primary`, `--space-md`), not visual (e.g., `--color-blue-500`, `--space-13px`). Semantic names survive re-theming.
 
-info -- neutral information.
+## Component Primitives
 
-background, surface, elevated -- containers.
+### UI-011 — Primitive Uniqueness
 
-border, divider -- separators.
+**MUST**
 
-text, text-muted, text-inverse -- typography.
+There MUST be exactly one primitive per concept. Duplicate implementations (e.g., two `Button` components in different directories) MUST be deleted.
 
-Do not invent a new role ("accent-2", "brand-purple"). If the design
-requires one, ask.
+### UI-012 — Minimal Component Props
 
-4. Component Primitives
-4.1 The Primitive Set
-A typical design system has:
+**MUST**
 
-Button
+Component props MUST describe visual variation (e.g., `variant`, `size`), not the caller's intent or boolean explosions.
 
-Input, Textarea, Select, Checkbox, Radio, Switch
-
-Label, FieldError, FieldHint
-
-Card, Panel, Surface
-
-Dialog, Drawer, Sheet, Popover
-
-Tooltip
-
-Tabs, Accordion
-
-Table, List
-
-Badge, Tag, Chip
-
-Avatar
-
-Toast, Alert
-
-Spinner, Skeleton
-
-Progress
-
-Not every project needs all of these. Every project needs whichever
-ones it has to be used consistently.
-
-4.2 One Primitive Per Concept
-Two Button components (one in ui/, one in features/) is a sign
-that the design system is not authoritative. Delete the duplicate and
-fix the usage.
-
-4.3 Props Are Minimal and Typed
-A primitive exposes the smallest prop surface that covers its use
-cases:
+Example (illustrative, JSX-style):
 
 BAD:
+```tsx
+<Button isPrimary isLarge hasIcon iconPosition="left" />
+```
 
-tsx
-<Button
-  isPrimary
-  isLarge
-  hasIcon
-  iconPosition="left"
-  iconName="save"
-  isFullWidth
-/>
 GOOD:
+```tsx
+<Button variant="primary" size="lg" leadingIcon={<SaveIcon />} />
+```
 
-tsx
-<Button variant="primary" size="lg" leadingIcon={<SaveIcon />} fullWidth />
-Props describe the visual variation, not the caller's intent.
+### UI-013 — Primitive Logic Separation
 
-4.4 No Business Logic in Primitives
-A Button does not fetch data. A Card does not navigate. A Dialog
-does not know about the domain. Primitives are visual and
-interactive; everything else lives above them.
+**MUST NOT**
 
-4.5 Forward the Underlying Element's Attributes
-Every primitive that wraps a native element forwards ref, onClick,
-aria-*, data-*, className, and the element's remaining
-attributes. This is what allows consumers to compose without
-forking.
+Primitives MUST NOT contain business logic, data fetching, or navigation logic. A `Button` does not fetch data; a `Card` does not navigate. Primitives are visual and interactive only.
 
-5. Variants
-5.1 Enumerated Variants, Not Boolean Explosions
+### UI-014 — Attribute Forwarding
+
+**MUST**
+
+Every primitive that wraps a native element MUST forward `ref`, `onClick`, `aria-*`, `data-*`, and `className` to allow consumers to compose without forking.
+
+## Variants and Composition
+
+### UI-015 — Enumerated Variants
+
+**MUST**
+
+Variants MUST be enumerated (e.g., `primary`, `secondary`, `ghost`, `danger`). Boolean flags for combinations (e.g., `isPrimary isGhost`) MUST NOT be used.
+
+### UI-016 — Orthogonal Sizing
+
+**MUST**
+
+Size MUST be an orthogonal prop (e.g., `size="lg"`). Combined variant-size props (e.g., `primaryLarge`) MUST NOT be created.
+
+### UI-017 — State and Variant Separation
+
+**MUST**
+
+`disabled`, `loading`, `pressed`, and `focused` are states, not variants. A variant describes what the component is; a state describes what it is doing now.
+
+### UI-018 — Composition Over Configuration
+
+**MUST**
+
+Components MUST compose via slots or children rather than growing boolean flags or complex configuration objects for every layout combination.
+
+Example (illustrative, JSX-style):
+
 BAD:
-
-tsx
-<Button isPrimary isGhost isDanger />
-GOOD:
-
-tsx
-<Button variant="primary" />
-<Button variant="ghost" />
-<Button variant="danger" />
-The variant prop is a discriminated union. Boolean flags for each
-variant are unmaintainable and allow impossible combinations.
-
-5.2 The Standard Variant Set
-Most projects converge on:
-
-primary -- the main action.
-
-secondary -- a supporting action.
-
-ghost -- a low-emphasis action.
-
-danger -- a destructive action.
-
-link -- a text-only action.
-
-Not all projects need all five. The set is smaller than developers
-think.
-
-5.3 Size Is Its Own Prop
-size is orthogonal to variant. Do not create primaryLarge and
-primarySmall.
-
-5.4 State Is Not a Variant
-disabled, loading, pressed, and focused are states, not
-variants. A variant describes what the component is; a state
-describes what it is doing now.
-
-6. Composition
-6.1 Composition Over Configuration
-BAD:
-
-tsx
+```tsx
 <Card
   title="User"
   subtitle="Details"
@@ -271,9 +190,10 @@ tsx
   actions={[...]}
   footer={<Button>Save</Button>}
 />
-GOOD:
+```
 
-tsx
+GOOD:
+```tsx
 <Card>
   <Card.Header>
     <Card.Title>User</Card.Title>
@@ -284,306 +204,294 @@ tsx
     <Button>Save</Button>
   </Card.Footer>
 </Card>
-Composition lets the caller arrange what they need. Configuration
-makes the primitive predict every combination.
+```
 
-6.2 Slots Where Composition Is Awkward
-When composition is genuinely awkward (dialogs with many regions,
-tables with fixed structure), use named slots:
+### UI-019 — Polymorphic Rendering
 
-tsx
-<Dialog
-  trigger={<Button>Open</Button>}
-  title="Confirm"
-  body={<p>...</p>}
-  footer={<Button>OK</Button>}
-/>
-Both patterns are valid. Pick the one that fits the component's real
-usage.
+**MUST**
 
-6.3 asChild or render for Polymorphism
-A primitive that must render as different elements uses a
-asChild/render prop, not a tag string that changes the props
-type:
+A primitive that must render as different elements MUST use `asChild` or `render` props, not a `tag` string that changes the props type unsafely.
+
+### UI-020 — Primitive Single Responsibility
+
+**MUST**
+
+A primitive MUST have one responsibility. A `Card` that also handles selection, expansion, and navigation is three components merged and MUST be split.
+
+## Accessibility Baseline
+
+Detailed accessibility rules live in `domains/concern/02-accessibility-critical-anti-slop.md`. The baseline for every UI component:
+
+### UI-021 — Keyboard Accessibility
+
+**MUST**
+
+Every interactive element MUST be reachable by Tab and activatable by Enter or Space. Focus order MUST match reading order.
+
+### UI-022 — Focus Visibility
+
+**MUST**
+
+Focus MUST be visible on every interactive element. `:focus-visible` MUST show the indicator for keyboard users. Modals MUST trap focus and return it on close.
+
+### UI-023 — Semantic Labeling
+
+**MUST**
+
+Every input MUST have an associated `<label>`. Icon-only buttons MUST have an `aria-label`. Errors MUST be associated with the input via `aria-describedby`.
+
+### UI-024 — Contrast Ratios
+
+**MUST**
+
+Text on backgrounds MUST meet 4.5:1 (or 3:1 for large text). UI components MUST meet 3:1 against adjacent colors. Focus indicators MUST meet 3:1.
+
+### UI-025 — Multi-Signal States
+
+**MUST NOT**
+
+Color MUST NOT be the only signal for state. Every state communicated by color MUST also be communicated by an icon, label, or shape.
+
+## Anti-Patterns
+
+The patterns below are forbidden unless the project already uses them and the design explicitly calls for them.
+
+### UI-026 — Visual Cliché Prohibition
+
+**MUST NOT**
+
+The following generated or low-quality UI signals MUST NOT be introduced:
+- Purple-to-blue gradients (the default AI gradient).
+- Rainbow gradient text on headings.
+- Glass morphism (`backdrop-blur-lg` with translucent backgrounds) without explicit design reason.
+- The "AI card" hover (`hover:scale-105` with `hover:shadow-2xl`).
+- Global `animate-pulse` on non-loading elements.
+- Emoji as UI icons (use SVG icons from the project's set).
+
+### UI-027 — Transition Discipline
+
+**MUST NOT**
+
+`transition-all` MUST NOT be used. It transitions layout and paint properties the user did not intend to animate. Specific properties (e.g., `transition-colors`) MUST be used.
+
+### UI-028 — Icon Discipline
+
+**SHOULD NOT**
+
+Icons SHOULD NOT be added to every label, menu item, or card. Icons are for attention or disambiguation.
+
+### UI-029 — Color System Consistency
+
+**MUST NOT**
+
+Conflicting color systems MUST NOT be mixed in the same view (e.g., `slate` and `gray` and `zinc`).
+
+### UI-030 — Dark Mode Strategy
+
+**MUST NOT**
+
+Hardcoded `dark:` classes MUST NOT be added to components in projects without a deliberate dark mode strategy.
+
+### UI-031 — Specificity Discipline
+
+**MUST NOT**
+
+`!important` in Tailwind and inline `style` for properties the styling solution handles MUST NOT be used. They indicate wrong specificity or wrong application context.
+
+### UI-032 — Component Extraction
+
+**MUST**
+
+Repeated long class strings (e.g., `px-4 py-2 rounded-lg bg-primary text-on-primary` in ten places) MUST be extracted into a component.
+
+### UI-033 — Responsive Restraint
+
+**SHOULD**
+
+Excessive responsive classes (`sm: md: lg: xl: 2xl:`) SHOULD be avoided. Mobile-first with two or three breakpoints covers most pages.
+
+### UI-034 — Z-Index Scale
+
+**MUST**
+
+Z-index values MUST come from a defined scale (`z-base`, `z-dropdown`, `z-modal`). Arbitrary `z-[9999]` creates unwinnable conflicts.
+
+### UI-035 — Layout Flow
+
+**MUST NOT**
+
+Absolute positioning MUST NOT be used for layout. Deeply nested flex/grid containers SHOULD be flattened into a single grid with proper areas.
+
+### UI-036 — Content Sizing
+
+**MUST NOT**
+
+Fixed pixel heights on content containers MUST NOT be used. Images MUST have dimensions or an aspect ratio to prevent layout shift.
+
+### UI-037 — Image Contrast
+
+**MUST**
+
+Text over images MUST have a solid or gradient overlay, or be moved into a solid container. White text over light images is unreadable.
+
+### UI-038 — Border Radius Scale
+
+**MUST**
+
+Border radii MUST follow a defined scale. Mixed radii (`rounded-md`, `rounded-lg`, `rounded-full`) in the same view are prohibited.
+
+### UI-039 — Shadow Elevation
+
+**MUST**
+
+Shadows MUST correspond to elevation, not size. Heavy shadows on small elements and multiple shadow layers without reason are prohibited.
+
+### UI-040 — Typography Hierarchy
+
+**MUST NOT**
+
+All-caps body text, center-aligned body text over three lines, more than three font sizes on one screen, and more than two font weights on one screen MUST NOT be used.
+
+### UI-041 — Contrast Verification
+
+**MUST**
+
+Insufficient contrast (gray-on-light-gray, white-on-pastel) MUST be verified with a tool, not by eye.
+
+### UI-042 — Form Labels
+
+**MUST NOT**
+
+Placeholders MUST NOT be used as labels. Forms lose context when the user types.
+
+### UI-043 — Focus Outlines
+
+**MUST NOT**
+
+Removing focus outlines (`*:focus { outline: none; }`) is prohibited. `:focus-visible` with a visible indicator MUST be used.
+
+### UI-044 — Semantic Elements
+
+**MUST NOT**
+
+Clickable `<div>` elements MUST NOT be used instead of `<button>` or `<a>`. They lack keyboard activation and screen reader semantics.
+
+Example (illustrative, JSX-style):
 
 BAD:
+```tsx
+<div onClick={handleClick}>Save</div>
+```
 
-tsx
-<Button tag="a" href="/x">Link</Button>  // href not typed, tag not typed
-GOOD (Radix-style asChild):
+GOOD:
+```tsx
+<button onClick={handleClick}>Save</button>
+```
 
-tsx
-<Button asChild>
-  <a href="/x">Link</a>
-</Button>
-7. Accessibility Baseline
-Detailed accessibility rules live in
-domains/concern/02-accessibility-critical-anti-slop.md when that
-file is sent. The baseline for every UI component:
+### UI-045 — Loading States
 
-7.1 Keyboard
-Every interactive element is reachable by Tab.
+**MUST**
 
-Every interactive element is activatable by Enter or Space (or the
-appropriate key for the element).
+Skeleton loaders MUST be used for content instead of spinners to maintain layout. Layout shift on load MUST be prevented by reserving space.
 
-Focus order matches the reading order.
+### UI-046 — Modal Discipline
 
-7.2 Focus
-Focus is visible on every interactive element.
+**SHOULD NOT**
 
-:focus-visible shows an indicator for keyboard users.
+Modals SHOULD NOT be used for navigation or content that could be inline. Toasts SHOULD NOT be used for every save or info message.
 
-Modals trap focus and return it on close.
+### UI-047 — Touch Interactions
 
-7.3 Labels
-Every input has an associated <label>.
+**MUST NOT**
 
-Icon-only buttons have an aria-label.
+Hover-only interactions and hover tooltips on mobile MUST NOT be used. Tap and focus alternatives MUST be provided.
 
-Errors are associated with the input via aria-describedby.
+### UI-048 — Disabled State Clarity
 
-7.4 Color
-Color is never the only signal of state.
+**MUST**
 
-Text on backgrounds meets 4.5:1 (or 3:1 for large text).
+Disabled buttons MUST show why they are disabled, or be hidden. Unexplained disabled states leave the user stuck.
 
-Focus indicators meet 3:1 against adjacent colors.
+## Animation
 
-7.5 Motion
-prefers-reduced-motion is respected.
+### UI-049 — Animation Purpose
 
-No content flashes more than three times per second.
+**MUST**
 
-8. Visual Anti-Slop
-8.1 No Purple-to-Blue Gradient
-The default purple-to-blue gradient is the most recognizable visual
-cliché of AI-generated interfaces. If the project does not use it,
-do not introduce it.
+Every animation MUST answer "what changed?" or "what is happening?". Decoration-only animation MUST be removed.
 
-8.2 No Glass Morphism Without Reason
-backdrop-blur combined with translucent backgrounds is a stale
-trend. Add it only when the project already uses it and the design
-calls for it.
+### UI-050 — Animation Duration
 
-8.3 No hover:scale + hover:shadow-2xl Everywhere
-A hover effect is a design decision, not a default. Pick one
-interaction and use it consistently. Do not stack scale, shadow,
-translate, and rotate on every card.
+**MUST**
 
-8.4 No transition-all
-BAD: transition-all duration-300
-GOOD: transition-colors duration-150
+Durations MUST follow a scale: 100-150ms for micro-interactions, 200-300ms for transitions, 300-500ms for context changes. Over 500ms feels sluggish; under 100ms is invisible.
 
-transition-all transitions layout, paint, and composite properties
-that the user did not intend to animate. Transition specific
-properties only.
+### UI-051 — Animation Easing
 
-8.5 No Global animate-pulse
-Skeleton loaders are correct for loading content. A pulsing animation
-on every element is visual noise.
+**MUST**
 
-8.6 No Gradient Text
-bg-clip-text text-transparent on headings is a cliché. If the
-project does not use it, do not add it.
+Easing MUST match intent: `ease-out` for entering, `ease-in` for exiting, `ease-in-out` for viewport movement, `linear` for continuous motion.
 
-8.7 No Emoji as UI
-BAD: 🎉, ✅, ❌, ⚠️ as icons.
-GOOD: SVG icons from the project's icon set (lucide-react,
-heroicons, phosphor, or the project's own).
+### UI-052 — GPU Acceleration
 
-Emoji render differently across platforms, do not scale cleanly, and
-are not announced by screen readers as intended.
+**MUST**
 
-8.8 No Icons on Every Label
-An icon is for attention or disambiguation. When every menu item, every
-button, and every card has an icon, none of them stands out.
+Only `transform` and `opacity` SHOULD be animated. Animating `width`, `height`, `top`, `left`, or `margin` triggers layout on every frame.
 
-8.9 No Conflicting Color Systems
-If the project uses slate, do not introduce gray, zinc, or
-neutral in the same view. Pick one and stay there.
+### UI-053 — Reduced Motion
 
-8.10 No Dark Mode Unless the Project Has It
-A hardcoded dark:bg-slate-900 on a component in a project without a
-dark-mode strategy produces inconsistency. If the project has dark
-mode, use its tokens. If it does not, do not add dark styles.
+**MUST**
 
-8.11 No !important in Tailwind
-If a class needs !important, the specificity is wrong or the class
-is being applied in the wrong place. Fix the cause.
+`prefers-reduced-motion` MUST be respected. Animations and transitions MUST be reduced to 0.01ms for users who request it.
 
-8.12 No Inline style for Things the Styling Solution Handles
-BAD: <div style={{ display: "flex", gap: 8 }} />
-GOOD: <div className="flex gap-2" />
+### UI-054 — Entrance Restraint
 
-Inline styles bypass the design system and the responsive variants.
+**SHOULD NOT**
 
-8.13 No Repeating Long Class Strings
-If px-4 py-2 rounded-lg bg-primary text-on-primary appears in ten
-places, it is a Button. Extract it.
+Entrance animations on page load and parallax effects SHOULD NOT be used by default. They delay the user and cause motion sickness.
 
-8.14 No Arbitrary Values
-BAD: w-[347px], text-[13.5px], p-[7px].
-GOOD: The nearest token value, or a new token if the design demands
-it.
+### UI-055 — Skeleton Threshold
 
-Arbitrary values drift. Tokens align.
+**MUST**
 
-8.15 No Excessive Responsive Classes
-Before writing sm: md: lg: xl: 2xl:, ask:
+Skeletons MUST only appear after a threshold (e.g., 200ms). A skeleton that flashes and disappears is visual noise.
 
-What devices does this page target?
+## RTL and Bidirectional Layouts
 
-Is there a real design difference at each breakpoint?
+This file requires direction awareness. When the project targets an RTL language:
 
-Mobile-first with two or three breakpoints covers most pages.
+- Use logical properties (`ms-*`, `me-*`, `ps-*`, `pe-*`) instead of physical (`ml-*`, `mr-*`).
+- Use `text-start` / `text-end` instead of `text-left` / `text-right`.
+- Mirror directional icons (back, forward, next), not object icons.
 
-8.16 No Z-Index Arms Race
-Z-index values should come from a defined scale (z-base, z-dropdown,
-z-modal, z-tooltip). Arbitrary z-[9999] creates unwinnable
-conflicts.
+### UI-056 — RTL Reference
 
-8.17 No Layout Built From Absolute Positioning
-Absolute positioning for layout breaks flow, responsiveness, and
-accessibility. Use it only for elements that genuinely overlay.
+**MUST**
 
-8.18 No Fixed Pixel Heights for Content
-A fixed h-16 on a container with text overflows in another language
-or at larger font sizes. Use min-h-* or padding.
+Detailed RTL, logical properties, bidirectional text, and Persian typography rules are defined in `ui/05-ui-rtl-persian.md`. This file MUST NOT duplicate those rules. General direction awareness and logical properties MUST follow the RTL file when the project targets an RTL language.
 
-8.19 No Images Without Dimensions
-An <img> without width and height causes layout shift when it
-loads. Specify dimensions or an aspect ratio.
+## AI-Specific UI Discipline
 
-8.20 No Text Over Images Without a Contrast Layer
-White text over a light image is unreadable. Add a solid or gradient
-overlay, or move the text into a solid container.
+### UI-057 — Tailwind Class Verification
 
-9. Animation
-9.1 Animation Communicates, It Does Not Decorate
-Every animation answers "what changed?" or "what is happening?".
-Animations that answer neither are decoration and should be removed.
+**MUST**
 
-9.2 Duration Scale
-100–150ms: micro-interactions (hover, focus, active).
+Before using a Tailwind utility class or arbitrary value (e.g., `p-[13px]`), the assistant MUST verify that the class exists in the project's Tailwind configuration. Invented classes produce no visual effect and are invisible at compile time.
 
-200–300ms: transitions (modal open, drawer slide).
+Example (illustrative):
 
-300–500ms: larger context changes (page transition, expand).
+BAD: Using `p-[13px]` when the project uses a token-based spacing scale defined in `tailwind.config.ts`.
 
-Anything longer than 500ms feels sluggish. Anything shorter than
-100ms is invisible.
+GOOD: Using `p-md` after verifying the token exists in the project's configuration.
 
-9.3 Easing
-ease-out for entering elements.
+## Response to Violation
 
-ease-in for exiting elements.
+When a rule in this file is violated, report:
 
-ease-in-out for elements that move within the viewport.
+Violation: UI-{NNN}
+Reason: {one-line reason}
+Correction: {smallest fix}
 
-Linear is for continuous motion (progress bars, spinners), not for
-interface transitions.
+For multiple violations, report each rule ID separately.
 
-9.4 Animate transform and opacity
-These properties are GPU-accelerated. Animating width, height,
-top, left, or margin triggers layout on every frame.
-
-9.5 Respect prefers-reduced-motion
-css
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
-    animation-duration: 0.01ms !important;
-    transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
-  }
-}
-9.6 No Animation on Page Load Without Reason
-A page that fades in every section on load delays the user. Entrance
-animations are for a specific storytelling moment, not a default.
-
-9.7 No Parallax by Default
-Parallax is a design choice. It causes motion sickness in some users
-and is expensive on low-end devices. Add it only when the project
-already uses it.
-
-9.8 No Skeleton for Less Than 200ms
-A skeleton that appears and disappears within 200ms is a flash. Show
-the skeleton only after a threshold, or not at all.
-
-10. RTL and Bidirectional Layouts
-10.1 Logical Properties
-Use logical properties that adapt to direction:
-
-margin-inline-start instead of margin-left.
-
-padding-inline-end instead of padding-right.
-
-border-inline-start instead of border-left.
-
-In Tailwind: ms-* / me-* / ps-* / pe-* instead of ml-* /
-mr-* / pl-* / pr-*.
-
-10.2 Directional Icons Mirror
-Back arrows, chevrons, and progress indicators mirror in RTL.
-Icons that represent an object (a user, a document) do not.
-
-BAD: A back arrow that points right in an RTL layout.
-GOOD: A back arrow that points in the reading-start direction.
-
-Use rtl:rotate-180 or the project's utility for this.
-
-10.3 dir Attribute on the Root
-<html dir="rtl" lang="fa"> for Persian. <html dir="ltr" lang="en">
-for English. Bilingual pages set dir per section where the
-direction changes.
-
-10.4 Do Not Mix Directions Inside a Component
-An LTR input inside an RTL page is intentional only for specific
-content (a phone number, a code, a URL). Otherwise, the whole
-component follows the page direction.
-
-10.5 Numerals
-Persian and Arabic use Eastern Arabic numerals (۰۱۲۳) in some
-contexts and Western numerals (0123) in others. Follow the project's
-convention. Do not mix within a single view.
-
-11. Working With codemerge
-11.1 Discover the Design System
-Before writing any UI code:
-
-codemerge-fetch
-tailwind.config.ts
-src/styles/theme.css
-src/components/ui/Button.tsx
-src/components/ui/Input.tsx
-Or, if the project uses a tokens package:
-
-codemerge-search
-color-primary
-11.2 Fetch Two or Three Similar Components
-To match the project's pattern, fetch:
-
-One form component (to see input + label + error pattern).
-
-One container component (to see card + spacing pattern).
-
-One interactive component (to see hover + focus + disabled states).
-
-11.3 Report Gaps, Do Not Fill Them Silently
-If the design system lacks a token or a primitive, report it in the
-response. Do not invent one inline. The design system is a shared
-resource; changes to it need review.
-
-12. Response to Violation
-If a previous response violated a rule here:
-
-text
-In the previous response, [specific rule] was violated. Correction:
-[corrected code]
-No justification. No apology paragraph. Fix and move on.
-
-If the violation is a visual inconsistency in already-shipped code,
-add a note: "This pattern is likely repeated in other components.
-Consider a project-wide audit."
-
----
+Do not replace a technical correction with a generic explanation.

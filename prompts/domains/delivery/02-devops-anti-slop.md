@@ -7,164 +7,452 @@ category: domain
 domain_type: delivery
 version: 1
 ---
+
 # DevOps Anti-Slop Layer
 
-Layered under `_universal/00-master-anti-slop.md`. Universal safety and scope
-rules are not repeated. Infrastructure definitions are in the related
-infrastructure layer.
+Layered under `_universal/00-master-anti-slop.md`. Universal rules
+(fabrication, fake completion, over-engineering, silent assumptions,
+security anti-patterns, output format) are NOT repeated here.
+
+This file covers rules specific to deployment, containerization,
+infrastructure, and operational concerns: Docker, Kubernetes,
+deployment strategy, secrets, health checks, and rollback. Rules
+specific to infrastructure-as-code tools (Terraform, Pulumi) live in
+`domains/delivery/02-infra-anti-slop.md`. CI/CD pipeline rules live in
+`domains/delivery/02-cicd-anti-slop.md`.
 
 ## 1. Stack Assumptions
 
-**1.1 Establish the delivery target.** Identify the service, artifact registry,
-cluster, environment, Git workflow, and existing release controller.
+This layer applies to:
 
-**1.2 Follow existing manifests.** Reuse the repository's Docker, Kubernetes,
-chart, and deployment conventions before creating new resources.
+- Applications deployed as containers (Docker, Podman).
+- Applications orchestrated with Kubernetes, Docker Swarm, or a
+  managed platform (ECS, Cloud Run, Fly.io).
+- Traditional deployments (systemd, PM2, bare metal).
+- Serverless deployments (Lambda, Cloud Functions).
 
-**1.3 Treat production as stateful.** A deployment changes running systems;
-rollback and data compatibility are part of the change.
+The rules below are the minimum for any deployment. Pick the ones
+that apply to the project's target.
 
-## 2. Domain Contracts
+## 2. Containers
 
-**2.1 Make the artifact immutable.** Tag builds with a reproducible revision
-and deploy the same digest that passed verification.
+### 2.1 One Process Per Container
 
-**2.2 Separate desired and observed state.** Record the intended release and
-verify running pods, services, and configuration against it.
+A container runs one process. Not nginx + app + cron. If multiple
+processes are needed, they are separate containers (or separate
+services).
 
-**2.3 Roll back as a designed path.** Define health gates, compatibility
-limits, and a tested command or controller for restoring the prior release.
+### 2.2 Multi-Stage Builds When Appropriate
 
-**2.4 Protect credentials.** Inject secrets through the existing secret
-manager; never bake them into images, manifests, logs, or CI variables.
+A build stage with the compiler and a runtime stage with the artifact:
 
-## 3. Domain-Specific Rules
+```dockerfile
+FROM node:20 AS build
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
 
-**3.1 Build minimal images.** Use a supported base, a non-root user where
-possible, pinned dependency locks, and no build credentials in layers.
-
-**3.2 Declare resource boundaries.** Set requests, limits, probes, and
-termination behavior for every workload; test under realistic load.
-
-**3.3 Gate deployment on health.** Require readiness, application tests,
-migration checks, and rollout observation before promoting traffic.
-
-**3.4 Make updates safe.** Use rolling or canary strategy according to the
-project. Avoid a delete-and-recreate step without an explicit data plan.
-
-**3.5 Preserve rollback compatibility.** Do not remove old fields, pods,
-routing targets, or environment variables until the new release is proven.
-
-**3.6 Observe each rollout.** Track revision, image digest, replica health,
-latency, errors, and saturation with the existing telemetry system.
-
-**3.7 Keep environments explicit.** Configuration differences are reviewed
-values, not ad hoc edits in a running cluster.
-
-**3.8 Limit privileged access.** Scope service accounts and deploy roles to
-the operations the service needs.
-
-**3.9 Test failure paths.** Cover bad image, readiness timeout, migration
-failure, partial rollout, dependency outage, and rollback.
-
-**3.25 Keep rollout settings reviewed.** Replicas, surge, limits, probes, and traffic policy have an owner and a capacity rationale.
-
-**3.26 Protect release metadata.** Record source, digest, builder, approvals, and health evidence without credentials or customer data.
-
-**3.27 Verify graceful drain.** Stop new traffic before termination and confirm in-flight work has a completion or retry path.
-
-**3.28 Keep rollback reversible.** The prior artifact remains available until the new release meets its observation and recovery window.
-
-**3.29 Test dependency outage.** Deployment and rollback behavior remain safe when registries, clusters, databases, or secret stores are unavailable.
-
-**3.30 Verify artifact identity.** The deployment records and resolves the same immutable image digest.
-
-**3.31 Observe rollout health.** Track readiness, errors, latency, and saturation before and after promotion.
-
-**3.32 Keep recovery owned.** The rollback identity, target, and decision maker are documented and tested.
-
-**3.33 Keep release records safe.** Store only revision, digest, health, and rollback evidence without credentials or customer data.
-
-## 4. Domain-Specific Anti-Patterns
-
-### 4.1 Mutable Image Tag
-
-BAD:
-```yaml
-image: registry.example/app:latest
+FROM node:20-slim
+WORKDIR /app
+COPY --from=build /app/dist ./dist
+COPY --from=build /app/node_modules ./node_modules
+CMD ["node", "dist/main.js"]
 ```
 
+For a 10-line script, a single stage is fine. Do not over-engineer.
+
+### 2.3 Pin Base Image Versions
+
+BAD: `FROM node:latest`.
+GOOD: `FROM node:20.11.1-alpine`.
+
+`latest` moves under your feet. Pin to a specific version and update
+deliberately.
+
+### 2.4 Non-Root User
+
+BAD: `USER root` (or no `USER` directive, which defaults to root).
 GOOD:
-```yaml
-image: registry.example/app@sha256:7f2c1b2d
+```dockerfile
+RUN addgroup --system app && adduser --system app --ingroup app
+USER app
 ```
 
-Rollback identifies an exact artifact.
+Running as root inside a container is a privilege escalation risk.
 
-### 4.2 Secret in Environment Manifest
+### 2.5 `.dockerignore`
 
-BAD:
-```yaml
-env:
-  - name: DATABASE_PASSWORD
-    value: "production-password"
+Every project has a `.dockerignore` that excludes:
+
+- `.git`
+- `node_modules`
+- `dist` (if built inside)
+- `.env`
+- Test files
+- Local data
+
+Copying the entire working directory into the image is a slow build
+and a leak risk.
+
+### 2.6 Layer Caching
+
+Order Dockerfile instructions from least-frequently-changed to
+most-frequently-changed:
+
+```dockerfile
+COPY package*.json ./    # rarely changes
+RUN npm ci               # cached if package.json unchanged
+COPY . .                 # changes often
 ```
 
-GOOD:
-```yaml
-envFrom:
-  - secretRef:
-      name: app-runtime
+Reversing this invalidates the install cache on every code change.
+
+### 2.7 No Secrets in the Image
+
+Never `COPY .env` or `ARG SECRET=...`. Secrets come from the runtime
+environment or a secret manager. See section 5.
+
+### 2.8 Health Check
+
+Add a `HEALTHCHECK` directive (or the platform's equivalent). The
+health check verifies the process is alive, not that every dependency
+is healthy.
+
+### 2.9 Log to stdout/stderr
+
+Containers do not have a reliable filesystem. Logs go to stdout and
+stderr. The orchestrator collects them.
+
+## 3. Kubernetes
+
+### 3.1 Do Not Use Kubernetes for One Container
+
+A single container on a single server does not need Kubernetes. Docker
+Compose, a systemd unit, or a managed platform is simpler and
+sufficient.
+
+Kubernetes is for orchestration at scale: multiple services,
+horizontal scaling, self-healing, and rolling deployments.
+
+### 3.2 Resource Requests and Limits
+
+Every container has:
+
+- `resources.requests.cpu` and `.memory`: the minimum needed.
+- `resources.limits.cpu` and `.memory`: the maximum allowed.
+
+Without requests, the scheduler overcommits. Without limits, one pod
+can starve the node.
+
+### 3.3 Liveness, Readiness, Startup Probes
+
+- **Startup**: has the process finished initializing?
+- **Readiness**: is the process ready to receive traffic?
+- **Liveness**: is the process still healthy?
+
+Do not use the same check for all three. Liveness failures restart
+the pod; readiness failures remove it from the load balancer.
+
+### 3.4 No `latest` Tags
+
+BAD: `image: myapp:latest`.
+GOOD: `image: myapp:1.4.2`.
+
+The `latest` tag in Kubernetes with `imagePullPolicy: Always` causes
+unpredictable rollouts.
+
+### 3.5 Graceful Shutdown
+
+Set `terminationGracePeriodSeconds`. The app handles `SIGTERM` and
+finishes in-flight requests before exiting.
+
+### 3.6 ConfigMaps and Secrets
+
+- ConfigMaps for non-sensitive configuration.
+- Secrets for sensitive values. Prefer an external secret manager
+  (Vault, AWS Secrets Manager) integrated via an operator or CSI
+  driver over Kubernetes `Secret` objects.
+- Do not commit Secrets to Git.
+
+### 3.7 Pod Disruption Budget
+
+For any service with more than one replica, define a
+`PodDisruptionBudget`. This prevents the cluster from taking down
+all replicas at once during a node drain.
+
+## 4. Deployments
+
+### 4.1 Immutable Deployments
+
+Every deployment is a new artifact. Never patch a running container.
+
+### 4.2 Rolling Deployments
+
+For stateless services, roll out one instance at a time. `maxSurge`
+and `maxUnavailable` control the pace.
+
+### 4.3 Blue-Green or Canary
+
+For critical services, deploy alongside the current version, shift
+traffic gradually (canary), or switch entirely (blue-green).
+
+### 4.4 Rollback Plan
+
+Every deployment has a documented rollback:
+
+- How to revert to the previous version.
+- How long it takes.
+- Whether a database migration is reversible.
+- Who to notify.
+
+A deployment without a rollback plan is a bet.
+
+### 4.5 Database Migrations Before Code
+
+The safe order:
+
+1. Deploy the migration (add column, add index).
+2. Deploy the code that uses it.
+3. Remove the old column in a later migration.
+
+Reversing this order causes runtime errors when new code hits an old
+schema.
+
+### 4.6 Feature Flags
+
+A feature flag decouples deployment from release. The code ships
+disabled, and the flag enables it. Use them for:
+
+- Large features that ship in increments.
+- Behavior changes that need a kill switch.
+- A/B tests.
+
+Do not leave flags forever. Remove them when the feature is stable.
+
+## 5. Secrets Management
+
+### 5.1 Never in the Repository
+
+Covered in `00-master-anti-slop.md` section 2.4. Repeating: secrets
+in Git history are secrets forever. Rotate on exposure.
+
+### 5.2 Environment Variables at Runtime
+
+- Local: `.env` file, gitignored, loaded by the shell or the app.
+- CI/CD: secret store provided by the platform.
+- Production: a secret manager (Vault, AWS Secrets Manager, GCP
+  Secret Manager).
+
+### 5.3 Secret Rotation
+
+Every secret has a rotation policy:
+
+- API keys: rotate every 90 days or per policy.
+- Database passwords: rotate on a schedule.
+- Certificates: rotate before expiry, automatically where possible.
+
+### 5.4 Least Privilege
+
+- A service account has only the permissions it needs.
+- Database users have only the tables and operations they use.
+- Cloud IAM roles are scoped to specific resources.
+
+## 6. Logging and Monitoring
+
+### 6.1 Structured Logs
+
+Logs are JSON. Fields include `timestamp`, `level`, `service`,
+`requestId`, `userId`, `message`, and context-specific fields.
+
+BAD: `console.log("user " + userId + " did " + action)`.
+GOOD: `logger.info({ userId, action }, "user action")`.
+
+### 6.2 Log Levels
+
+- `error`: something failed that needs attention.
+- `warn`: something unexpected happened but the system recovered.
+- `info`: normal operations (startup, shutdown, key events).
+- `debug`: details for development.
+
+Production runs at `info` or `warn`. `debug` is for local.
+
+### 6.3 Never Log Secrets
+
+Covered in `00-master-anti-slop.md` section 2.4. Repeating: tokens,
+passwords, and PII never appear in logs. Log redaction is
+configured at the logger level, not trusted to every call site.
+
+### 6.4 Metrics
+
+Collect:
+
+- Request rate, error rate, duration (RED).
+- Saturation, utilization, errors (USE).
+- Business metrics (signups, orders, revenue).
+
+Export to Prometheus, StatsD, CloudWatch, or the project's chosen
+system.
+
+### 6.5 Tracing
+
+For multi-service systems, distributed tracing (OpenTelemetry) shows
+the path of a request across services. Instrument at the boundaries.
+
+### 6.6 Alerts
+
+An alert is a signal to a human. Rules:
+
+- Every alert has a runbook.
+- Every alert is actionable. If it cannot be acted on, it is noise.
+- Alert on symptoms (error rate, latency), not causes (CPU usage).
+- Alert fatigue kills response. Fewer, better alerts.
+
+## 7. Backups and Recovery
+
+### 7.1 Backups Are Mandatory
+
+For any data that cannot be recreated, there is a backup. No
+exceptions.
+
+### 7.2 Backups Are Tested
+
+A backup that has never been restored is not a backup. Test the
+restore path regularly.
+
+### 7.3 Backups Are Off-Site
+
+A backup in the same region as the primary is not a backup against
+regional failure. Store in a different region or a different provider.
+
+### 7.4 Retention Policy
+
+Define how long backups are kept:
+
+- Daily: 7 to 30 days.
+- Weekly: 3 months.
+- Monthly: 1 year.
+- Yearly: 7 years (if required by compliance).
+
+Match the policy to the business requirement.
+
+### 7.5 Disaster Recovery Plan
+
+Document:
+
+- What to do when the primary region fails.
+- Who has the authority to declare a disaster.
+- How long recovery takes (RTO).
+- How much data can be lost (RPO).
+
+## 8. DevOps-Specific Anti-Patterns
+
+### 8.1 Deploying Without Testing
+
+BAD: `git push` to main triggers a deploy with no CI.
+GOOD: CI runs tests; deploy only on green.
+
+### 8.2 Manual Deployments
+
+BAD: SSH into the server and `git pull`.
+GOOD: A deployment pipeline that is reproducible.
+
+### 8.3 Config Drift
+
+The server was set up manually, and now nobody knows what is on it.
+Infrastructure-as-code prevents this (see `02-infra-anti-slop.md`).
+
+### 8.4 No Health Check
+
+BAD: A container without a health check.
+GOOD: A `/health` endpoint or a `HEALTHCHECK` directive.
+
+### 8.5 No Graceful Shutdown
+
+BAD: `kill -9` on deploy.
+GOOD: `SIGTERM`, wait for in-flight requests, then exit.
+
+### 8.6 Running as Root in Container
+
+Covered in 2.4.
+
+### 8.7 Secrets in Environment Variables on Shared Hosts
+
+BAD: `SECRET=...` in a shared CI variable visible to all jobs.
+GOOD: Scoped secrets per environment, per job.
+
+### 8.8 Long-Lived `latest` Tags
+
+Covered in 3.4.
+
+### 8.9 No Resource Limits
+
+Covered in 3.2.
+
+### 8.10 Single Point of Failure
+
+BAD: One replica of the critical service.
+GOOD: At least two replicas, behind a load balancer.
+
+### 8.11 Unbounded Log Retention
+
+BAD: Logs kept forever with no rotation.
+GOOD: A retention policy (30 days hot, 90 days cold, archive after).
+
+### 8.12 Over-Monitoring for a Small Service
+
+BAD: Five tools (Prometheus, Grafana, Loki, Sentry, UptimeRobot) for
+a 100-user app.
+GOOD: Two appropriate tools.
+
+### 8.13 Alert on Every Error
+
+BAD: A page for every 500 response.
+GOOD: Alert on error rate above a threshold, for a sustained period.
+
+### 8.14 Snowflake Servers
+
+A server configured by hand and never rebuilt. When it dies, nobody
+knows how to recreate it. Everything is code.
+
+### 8.15 `sudo` in Entrypoint
+
+BAD: `ENTRYPOINT ["sudo", "node", "app.js"]`.
+GOOD: The container runs as a non-root user; no sudo needed.
+
+### 8.16 No Rollback Strategy
+
+Covered in 4.4.
+
+### 8.17 Deploying on Friday
+
+Not a technical rule, but a cultural one: deploy when people are
+available to respond to failures. If the deployment process is safe,
+any day works. If not, fix the process.
+
+### 8.18 Docker Image Over 1 GB
+
+A bloated image has slow pulls, slow deploys, and a large attack
+surface. Review layers and remove unused tools.
+
+### 8.19 Copying Source Without `.dockerignore`
+
+Covered in 2.5.
+
+### 8.20 No Logs From a Container
+
+BAD: The app writes to a file inside the container.
+GOOD: The app writes to stdout/stderr. The container runtime captures
+it.
+
+## 9. Response to Violation
+
+If a previous response violated a rule here:
+
+```
+In the previous response, [specific rule] was violated. Correction:
+[corrected code]
 ```
 
-Credentials are managed outside the image and manifest history.
-
-### 4.3 Rollback by Deleting State
-
-BAD:
-```bash
-kubectl delete deployment app
-```
-
-GOOD:
-```bash
-kubectl rollout undo deployment/app --to-revision=41
-```
-
-The controller restores the prior compatible release.
-
-**3.10 Define migration ownership.** A schema or configuration migration names the operator, compatibility window, verification query, and recovery action.
-
-**3.11 Check pod security.** Run as the least-privileged identity, mount only required filesystems, and prohibit privilege escalation in workload settings.
-
-**3.12 Bound rollout exposure.** Use replica surge, partition, or traffic controls appropriate to capacity; never remove healthy capacity without a stated budget.
-
-**3.13 Verify configuration drift.** Compare rendered configuration and feature flags with the intended release before declaring rollout complete.
-
-**3.14 Exercise graceful shutdown.** Confirm active requests finish or cancel within the termination grace period and dependencies are not left with half-closed connections.
-
-**3.15 Record deployment evidence.** Keep revision, digest, start time, health result, and rollback reference in the release record without secrets.
-
-**3.16 Separate build and runtime secrets.** Build credentials are short-lived and unavailable to the final image or runtime process.
-
-**3.17 Keep deployment declarative.** A rollout command may act on reviewed state, but the resulting configuration must remain represented in version control.
-
-**3.18 Define health semantics.** Liveness, readiness, and startup checks answer different questions and must not use the same fragile signal.
-
-**3.19 Respect capacity during termination.** Drain traffic before removing replicas and verify dependent jobs can finish or retry.
-
-**3.20 Verify post-rollback state.** Check application health, database compatibility, queue depth, and cache behavior after restoring the prior release.
-
-**3.21 Exercise incident rollback.** Run the rollback under a representative load and record elapsed time, data effects, and owner.
-
-**3.22 Verify namespace ownership.** Namespaces, selectors, and service accounts match the owning service and do not collide with another environment.
-
-**3.23 Keep images reproducible.** A rebuild from the same source and locked inputs produces the same tested content or a reviewed equivalent.
-
-**3.24 Record image provenance.** Store source revision, builder, base digest, and scan result in the release evidence.
-
-## 5. Response to Violation
-
-If a prior response violated this layer, identify the deployment risk and
-show the corrected artifact reference, health gate, secret source, or rollback
-command. Do not claim a cluster operation was performed when it was not.
+No justification. No apology paragraph. Fix and move on.

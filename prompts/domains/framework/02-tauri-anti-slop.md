@@ -118,8 +118,23 @@ BAD:
 
 GOOD:
 ```json
-{"permissions": ["fs:read-app-data", "shell:open"]}
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-capability",
+  "description": "Read application data files for the main window",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    {
+      "identifier": "fs:allow-read-text-file",
+      "allow": [{ "path": "$APPDATA/data/**" }]
+    }
+  ]
+}
 ```
+This capability grants one concrete filesystem permission to one window and
+scopes it to the application's data directory. Do not add a shell permission
+unless a reviewed command needs a narrowly scoped operation.
 
 ### 6.3 Global mutable state
 
@@ -149,35 +164,10 @@ window.emit("operation:completed", CompletionPayload::new(id))?;
 
 ## 7. Response to Violation
 
-61. Identify whether the defect is a command, permission, state, or frontend
-    contract problem before changing code.
-62. Fetch the relevant command, capability, state, and caller files.
-63. Narrow the command surface and move logic to its owning layer.
-64. Add argument validation and stable error results.
-65. Verify the permission scope in development and packaged builds.
-66. Test concurrent state access and shutdown behavior where relevant.
-67. Report a denied capability as a product decision, not a crash.
-68. State changed files, unchanged files, and untested platform paths.
-69. Do not weaken permissions or bypass the invoke boundary.
-70. Run lint, typecheck, Rust checks, and relevant tests.
-71. Record commands and results without claiming unexecuted verification.
-72. Leave no incomplete command or unspecified permission behavior.
-
-73. Keep a command inventory with its required capability.
-74. Reject unknown frontend origins for privileged operations.
-75. Test denied, restricted, and unavailable capability states.
-76. Make shutdown wait for owned resources and active commands.
-77. Keep event payloads free of account secrets and raw records.
-78. Test concurrent state access without holding locks across awaits.
-79. Report cancellation separately from command failure.
-80. Keep filesystem paths canonical and workspace-scoped where possible.
-81. Do not infer permission from a frontend feature flag.
-82. Keep production and development configuration distinct.
-83. Verify generated bindings match the Rust command signatures.
-84. Test packaging on each supported desktop target.
-85. Keep update and migration behavior outside feature handlers.
-86. Remove commands and capabilities when their feature is removed.
-87. Log command failure with request context and safe identifiers.
-88. Do not expose database records directly through command results.
-89. Review every new event consumer and unsubscribe path.
-90. Report unsupported platform behavior as a compatibility limitation.
+- Correction — `Command boundary / open_document`: replace arbitrary shell execution with structured arguments, validation, and delegation to the existing service.
+- Verify — `Command boundary / open_document`: run `cargo test <command-test>`; expected result is PASS for valid, invalid, denied, and cancelled inputs.
+- Correction — `Permission scope / capability configuration`: grant only the filesystem or shell capability required by this command and preserve the invoke boundary.
+- Verify — `Permission scope / capability configuration`: inspect the packaged artifact; expected result is the focused permission set with no wildcard capability.
+- Correction — `Shared state / AppState`: keep the repository behind the explicit state owner and keep locks short rather than across awaits.
+- Verify — `Shared state / AppState`: run `cargo clippy --all-targets -- -D warnings`; expected result is no lock, serialization, or async diagnostics.
+- Scope — limit the patch to the cited rule, file, or symbol; record changed and unchanged paths and any untested target OS or packaged build.

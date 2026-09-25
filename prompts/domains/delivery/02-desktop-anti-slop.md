@@ -7,165 +7,335 @@ category: domain
 domain_type: delivery
 version: 1
 ---
+
 # Desktop App Anti-Slop Layer
 
-Layered under `_universal/00-master-anti-slop.md`. Universal rules are not
-repeated. Framework-specific Electron or Tauri rules remain separate.
+Layered under `_universal/00-master-anti-slop.md`. Universal rules
+(fabrication, fake completion, over-engineering, silent assumptions,
+security anti-patterns, output format) are NOT repeated here.
+
+This file covers rules specific to desktop applications: Electron,
+Tauri, and native toolkits (Qt, GTK, WinUI, SwiftUI/AppKit). Framework-
+specific rules for Electron and Tauri live in
+`domains/framework/`. This file covers the platform-agnostic
+discipline.
 
 ## 1. Stack Assumptions
 
-**1.1 Confirm the desktop matrix.** Identify supported operating systems,
-architectures, update channels, signing requirements, and packaging mode.
+This layer applies to:
 
-**1.2 Separate trust zones.** Main process, preload, renderer, native modules,
-and local files have different privileges and data exposure.
+- Electron (Chromium + Node.js)
+- Tauri (Rust + system webview)
+- Qt (C++ / Python)
+- GTK (C / Python / Rust)
+- WinUI / WPF (.NET)
+- AppKit / SwiftUI (macOS)
+- Cross-platform (Flutter desktop, .NET MAUI)
 
-**1.3 Use the existing shell.** Reuse the repository's window, menu, tray,
-notification, protocol, and update abstractions.
+## 2. Process Architecture
 
-## 2. Domain Contracts
+### 2.1 Separation of Concerns
 
-**2.1 Main owns privileged operations.** Renderer requests capability through
-a narrow, validated IPC contract; it does not access Node or OS secrets by
-default.
+Desktop apps separate:
 
-**2.2 Renderer data is untrusted.** Validate IPC input, navigation targets,
-deep links, file paths, and external content.
+- **UI process** (renderer, webview): displays content, handles user
+  input.
+- **Main process** (or native core): file system, OS integration,
+  networking, privileged operations.
 
-**2.3 Updates are staged and reversible.** Verify signatures and metadata,
-use the platform updater, and retain a recovery path.
+The UI process has no direct access to the OS. It requests via IPC.
 
-**2.4 Local persistence is explicit.** Classify data, protect it with the
-platform store, and handle migration and deletion.
+### 2.2 Never Trust the UI Process
 
-## 3. Domain-Specific Rules
+The UI process may be compromised by a cross-site scripting bug in a
+loaded page. The main process validates every IPC request.
 
-**3.1 Minimize preload API.** Expose named operations with serializable,
-versioned messages; do not bridge the entire process object.
+### 2.3 Minimal IPC Surface
 
-**3.2 Validate every IPC request.** Check sender, channel, schema, size,
-authorization, and operation-specific resource bounds.
+Every IPC channel exposes the smallest possible functionality:
 
-**3.3 Disable unnecessary navigation.** Block unexpected navigation, new
-windows, and external protocol launches unless explicitly allowlisted.
+- No `runCommand(cmd)` with arbitrary strings.
+- No `readFile(path)` without a path allowlist.
+- No `openUrl(url)` without a scheme and host allowlist.
 
-**3.4 Apply CSP.** Keep renderer content security policy strict; do not use
-remote code or unsafe evaluation to make a feature work.
+## 3. Security
 
-**3.5 Design menus declaratively.** Match platform accelerator and shortcut
-behavior; keep actions idempotent and route them through the same owner.
+### 3.1 Context Isolation
 
-**3.6 Handle lifecycle events.** Save durable state before close, release
-resources on suspend, and resume from explicit persisted state.
+Electron: `contextIsolation: true` is the default in modern versions.
+Never disable it.
 
-**3.7 Make updates atomic.** Do not replace a running binary while it can
-corrupt state; stage, verify, and restart at a defined point.
+### 3.2 Node Integration Off in Renderer
 
-**3.8 Recover from crashes.** Keep a last-known-good state and avoid writing
-partial application data during shutdown.
+Electron: `nodeIntegration: false`. The renderer does not have access
+to Node.js APIs directly.
 
-**3.9 Test packaged application.** Development mode does not prove signing,
-paths, auto-update, menus, permissions, or OS integration.
+### 3.3 Preload Script With `contextBridge`
 
-**3.22 Version the IPC contract.** Include a protocol version and reject incompatible messages before invoking a handler.
+Expose a minimal API via `contextBridge.exposeInMainWorld`:
 
-**3.23 Bound local files.** Validate path, owner, extension, size, and destination before opening or writing a user-selected file.
-
-**3.24 Constrain navigation.** External links, deep links, new windows, and protocol launches follow explicit allowlists and authentication checks.
-
-**3.25 Preserve update trust.** Verify the exact signed artifact, stage it atomically, and keep the previous version recoverable.
-
-**3.26 Test package lifecycle.** Verify first launch, supported upgrade, interrupted installation, crash restart, signing, and platform menus.
-
-**3.30 Isolate privileged work.** Main owns native operations and renderer receives only validated IPC operations.
-
-**3.31 Protect navigation and files.** Allowlists, path checks, CSP, and update verification are enforced at their boundaries.
-
-**3.32 Test package recovery.** Verify clean install, upgrade, interrupted update, crash restart, signing, and platform integration.
-
-**3.33 Keep package evidence safe.** Record signed artifact, update result, crash state, and recovery target without secrets.
-
-## 4. Domain-Specific Anti-Patterns
-
-### 4.1 Full Node Bridge to Renderer
-
-BAD:
-```typescript
-contextBridge.exposeInMainWorld("desktop", { ipcRenderer });
-```
-
-GOOD:
-```typescript
-contextBridge.exposeInMainWorld("desktop", {
-  openDocument: (id: string) => ipcRenderer.invoke("open-document", id)
+```javascript
+contextBridge.exposeInMainWorld("api", {
+  saveFile: (content) => ipcRenderer.invoke("save-file", content),
 });
 ```
 
-The renderer receives a narrow contract, not arbitrary IPC.
+Never expose `ipcRenderer` directly.
 
-### 4.2 Unvalidated External Navigation
+### 3.4 No `remote` Module
 
-BAD:
-```typescript
-win.webContents.on("will-navigate", () => {});
-```
+Electron's `remote` module allows the renderer to call main-process
+modules directly. It is deprecated and dangerous. Do not use it.
 
-GOOD:
-```typescript
-win.webContents.on("will-navigate", (event, url) => {
-  if (!allowedNavigation(url)) event.preventDefault();
+### 3.5 Content Security Policy
+
+A strict CSP in every HTML file. No `unsafe-eval`. No remote scripts.
+
+### 3.6 Navigation and `window.open` Restrictions
+
+Block navigation to untrusted origins:
+
+```javascript
+webContents.on("will-navigate", (event, url) => {
+  if (!isAllowed(url)) event.preventDefault();
+});
+
+webContents.setWindowOpenHandler(({ url }) => {
+  shell.openExternal(url);
+  return { action: "deny" };
 });
 ```
 
-External destinations do not silently become application pages.
+### 3.7 Updates Are Signed
 
-### 4.3 Update Overwrite Without Verification
+Auto-updates are signed by the publisher. The app verifies the
+signature before applying.
 
-BAD:
-```typescript
-fs.copyFileSync(downloadPath, appBinaryPath);
+## 4. File System
+
+### 4.1 Path Validation
+
+Every path from the UI is validated:
+
+- Normalize the path.
+- Resolve to an absolute path.
+- Check it is inside an allowed directory.
+
+BAD: `fs.readFile(userProvidedPath)` in the main process.
+GOOD: Validate the path against a sandbox root.
+
+### 4.2 No Arbitrary Write Locations
+
+The app writes to:
+
+- User data directory (OS-specific).
+- Temporary directory.
+- Locations the user explicitly chooses via a file dialog.
+
+Never write to the installation directory.
+
+### 4.3 Symlink Handling
+
+Symlinks can escape a sandbox. Resolve them and re-check.
+
+### 4.4 Large Files
+
+Reading a 2 GB file into memory crashes the app. Stream.
+
+## 5. Native Integration
+
+### 5.1 Menus
+
+- macOS: app menu, Edit menu, Window menu.
+- Windows/Linux: File, Edit, View, Help.
+
+Match the platform's conventions. Do not invent menus.
+
+### 5.2 Keyboard Shortcuts
+
+- Copy, Cut, Paste, Undo, Redo: platform defaults.
+- Cmd on macOS, Ctrl elsewhere.
+- Never override OS shortcuts (Cmd+Tab, Alt+Tab).
+
+### 5.3 File Associations
+
+If the app opens files of a specific type, it registers as a handler
+and handles the "open with" event. The path comes from the OS, not
+from user input.
+
+### 5.4 System Tray
+
+Use sparingly. A tray icon that adds no value is noise.
+
+### 5.5 Notifications
+
+Use the OS notification system, not a custom popup. Respect the
+user's Do Not Disturb settings.
+
+## 6. State and Persistence
+
+### 6.1 User Data Directory
+
+Persist to the OS-specific user data directory:
+
+- macOS: `~/Library/Application Support/<AppName>`
+- Windows: `%APPDATA%/<AppName>`
+- Linux: `~/.config/<AppName>` or `~/.local/share/<AppName>`
+
+Never to the app's installation directory.
+
+### 6.2 Schema Migration
+
+Data persisted by v1 must be readable by v2. Provide migrations.
+
+### 6.3 Encrypted Storage for Secrets
+
+OS keychains:
+
+- macOS: Keychain
+- Windows: Credential Manager
+- Linux: libsecret / gnome-keyring
+
+Never store tokens in plain JSON in the user data directory.
+
+## 7. Updates
+
+### 7.1 Auto-Update
+
+Use the platform's mechanism (Squirrel on macOS/Windows, AppImage
+update, MSIX). The user is notified and can defer.
+
+### 7.2 Never Update Without Consent
+
+Forced updates are hostile. Offer a "remind me later" path.
+
+### 7.3 Rollback
+
+A bad update must be revertible. Keep the previous version.
+
+### 7.4 Channel Support
+
+Beta and stable channels. Beta users accept instability.
+
+## 8. Performance
+
+### 8.1 Cold Start Time
+
+Under 3 seconds for a simple app. Under 5 for a complex one. Profile
+startup.
+
+### 8.2 Bundle Size
+
+Electron apps bundle Chromium (100+ MB). Tauri uses the system
+webview (much smaller). Weigh the trade-off.
+
+### 8.3 Memory
+
+Desktop users notice memory growth. Monitor and cap.
+
+### 8.4 Background Work
+
+Offload heavy tasks to worker threads or the main process, not the
+UI thread.
+
+## 9. Desktop-Specific Anti-Patterns
+
+### 9.1 `nodeIntegration: true` in Renderer
+
+Covered in 3.2. A single XSS in the app is RCE.
+
+### 9.2 `contextIsolation: false`
+
+Covered in 3.1.
+
+### 9.3 Arbitrary IPC
+
+Covered in 2.3.
+
+### 9.4 Remote Content Loaded in the App
+
+Loading `https://example.com` inside the app gives that page full
+access to the preload API. Only load content the app controls.
+
+### 9.5 No CSP
+
+Covered in 3.5.
+
+### 9.6 Storing Secrets in JSON
+
+Covered in 6.3.
+
+### 9.7 No Update Signature
+
+Covered in 3.7. A compromised update server owns every user's machine.
+
+### 9.8 Platform-Specific Code Without Guards
+
+BAD: `if (process.platform === "darwin")` scattered everywhere.
+GOOD: An abstraction with platform-specific implementations.
+
+### 9.9 Custom Titlebar Without Platform Support
+
+A custom titlebar that works on macOS and breaks on Windows. Test on
+each platform.
+
+### 9.10 Missing Menus on macOS
+
+A macOS app with no app menu cannot be quit normally. Provide the
+standard menus.
+
+### 9.11 No Keyboard Shortcuts
+
+Users expect Cmd+C to copy. Without it, the app feels broken.
+
+### 9.12 Badge Count Without a Notification Center
+
+A badge without a corresponding OS notification is confusing.
+
+### 9.13 Blocking the Main Process
+
+A synchronous operation in the main process freezes every window.
+
+### 9.14 App Doesn't Quit
+
+Closing all windows does not quit on macOS (expected) but does on
+Windows/Linux. Handle both.
+
+### 9.15 No Single Instance Lock
+
+Multiple instances of the app compete for files and locks. Use the
+platform's single-instance mechanism.
+
+### 9.16 Auto-Update Without Release Notes
+
+The user sees an update with no information. Provide a changelog.
+
+### 9.17 Silent Crash
+
+A crash without a log or a crash reporter. Users see a closed window
+and no explanation.
+
+### 9.18 Native Dialogs for Everything
+
+Every save, every confirm is a native dialog. Too many dialogs fatigue
+the user.
+
+### 9.19 Cross-Platform Assumptions
+
+A path like `C:\Users\...` hardcoded. Use the platform's path APIs.
+
+### 9.20 No Code Signing
+
+An unsigned app triggers SmartScreen and Gatekeeper warnings. Sign
+for production.
+
+## 10. Response to Violation
+
+If a previous response violated a rule here:
+
+```
+In the previous response, [specific rule] was violated. Correction:
+[corrected code]
 ```
 
-GOOD:
-```typescript
-verifySignatureAndDigest(downloadPath);
-installWithPlatformUpdater(downloadPath);
-```
-
-The application installs only a verified staged artifact.
-
-**3.10 Version IPC contracts.** Include a protocol version and reject incompatible messages with a safe error rather than guessing fields.
-
-**3.11 Bound file operations.** Validate paths, ownership, size, and extension before opening user-selected files or writing downloads.
-
-**3.12 Handle single-instance behavior.** Define what a second launch does, which window is focused, and how its arguments are validated.
-
-**3.13 Protect window state.** Persist only user-approved preferences and recover from corrupt state without blocking startup.
-
-**3.14 Observe lifecycle failures.** Log safe context for renderer crash, update failure, and protocol disconnect while preserving user data.
-
-**3.15 Test platform integration.** Verify keyboard shortcuts, tray or menu visibility, signing, installation paths, and update restart on supported systems.
-
-**3.16 Keep renderer updates serializable.** IPC payloads use stable schemas and do not send native handles, functions, or unbounded buffers.
-
-**3.17 Separate user data paths.** Use the OS-approved application data location and do not assume the executable directory is writable.
-
-**3.18 Handle display and locale changes.** Recompute layout, shortcuts, and menus without losing unsaved state.
-
-**3.19 Constrain deep links.** Validate scheme, host, route, parameters, and authentication before dispatching an external launch.
-
-**3.20 Review code signing inputs.** Sign only the exact packaged artifact and preserve the updater's trust relationship.
-
-**3.21 Test crash recovery.** Verify restart after renderer failure, interrupted save, blocked update, and unavailable network.
-
-**3.22 Make protocol errors actionable.** Return a stable error category and retry policy without exposing native paths or credentials.
-
-**3.23 Keep updates observable.** Expose update availability, verification failure, installation result, and restart state to the product owner.
-
-**3.24 Test clean and upgrade installs.** Verify first launch, upgrade from the supported prior version, and recovery from an interrupted installation.
-
-## 5. Response to Violation
-
-If a prior response violated this layer, name the IPC, renderer, update,
-menu, lifecycle, or packaging risk and show the corrected boundary. Do not
-claim a signed installer or update was verified without evidence.
+No justification. No apology paragraph. Fix and move on.
