@@ -2,681 +2,654 @@
 id: 02-javascript-anti-slop
 title: "JavaScript Anti-Slop Layer"
 lang: en
-depends_on: [00-master-anti-slop]
+depends_on: ["_universal/00-style-guide.md", "_universal/00-master-anti-slop.md"]
 category: domain
 domain_type: language
-version: 1
+version: 2
 ---
 
 # JavaScript Anti-Slop Layer
 
-Layered under `_universal/00-master-anti-slop.md`. Universal rules
-(fabrication, fake completion, over-engineering, silent assumptions,
-security anti-patterns, output format) are NOT repeated here.
+This file defines behavioral contracts specific to the JavaScript language. It sits in the language layer, below the universal rules and above framework-specific rules. It covers language semantics, equality, coercions, scope, async, modules, and the common dynamic patterns that produce silent bugs. It does not cover framework rules (React, Vue, Node runtime — see `domains/framework/`), TypeScript rules (see `02-typescript-anti-slop.md`, which takes precedence when both apply), or delivery-specific rules (see `domains/delivery/`).
 
-This file covers rules specific to JavaScript: language semantics,
-equality, coercions, scope, async, modules, and the common dynamic
-patterns that produce silent bugs. Framework rules (React, Vue, Node
-runtime) live in `domains/framework/`. Rules for TypeScript live in
-`02-typescript-anti-slop.md` and take precedence when both apply.
+JavaScript's value is its ubiquity and flexibility; its danger is its implicit coercions, dynamic typing, and historical quirks. Every rule below either prevents a class of silent bug or documents a modern idiom that replaces a legacy trap.
 
-## 1. Stack Assumptions
+## Scope
 
-This layer assumes:
+This file applies to JavaScript code running in any modern runtime (Node.js, browsers, Deno, Bun, workers) targeting ES2020 or later, as configured by the project's `package.json`, `tsconfig.json`, or bundler.
 
-- Modern ECMAScript (ES2020 or later), as configured by the project's
-  `package.json`, `tsconfig.json`, or bundler.
-- Modules (ESM `import` / `export`) unless the project explicitly uses
-  CommonJS.
-- Async/await is available and preferred over raw Promises for control
-  flow.
-- The runtime may be Node.js, a browser, Deno, Bun, or a worker. Rules
-  that depend on the host environment are noted.
+### Version Applicability
 
-## 2. Strict Mode and Modern Syntax
+- **Minimum version**: ES2020.
+- **Features assumed available**: `async/await`, optional chaining (`?.`), nullish coalescing (`??`), `Promise.allSettled`, `globalThis`, `import.meta`, dynamic `import()`, `structuredClone` (ES2022+).
+- **Module system**: ES Modules (`import`/`export`) by default. CommonJS rules apply only when the project explicitly uses it.
+- **If the project targets an older version**: features above their introduction year are unavailable; the remaining rules still apply.
 
-### 2.1 Strict Mode Is On
+For TypeScript projects, `02-typescript-anti-slop.md` takes precedence on any rule that overlaps (e.g., `any`, type assertions). This file governs runtime JavaScript behavior and idioms that persist even when TypeScript is layered on top.
 
-ES modules are always strict. CommonJS files must have `"use strict"`
-at the top, or the project's pattern must enforce it. Never rely on
-sloppy mode behavior.
+## Rule Severity
 
-### 2.2 `var` Is Forbidden
+Severity follows `_universal/00-style-guide.md`.
 
-Use `const` by default. Use `let` only when the binding is reassigned.
-Never use `var`: it is function-scoped, hoisted in confusing ways, and
-has no place in modern code.
+## Contracts
+
+A JavaScript codebase commits to six contracts. The table below maps each contract to the rules that enforce it.
+
+| Contract | Description | Enforced By |
+|---|---|---|
+| Modern Idioms | Strict mode, `const`/`let`, arrow functions, and modern syntax are the default. | JS-001 to JS-004 |
+| Equality and Coercion Discipline | `===` is universal; coercions are explicit; truthiness is not relied upon. | JS-005 to JS-013 |
+| Scope and Binding Safety | Block scoping, no implicit globals, and TDZ are respected. | JS-014 to JS-017 |
+| Immutable Data Flow | Functions do not mutate arguments or shared state without explicit naming. | JS-018 to JS-026 |
+| Async Correctness | Promises are awaited, errors are handled, and timeouts are bounded. | JS-032 to JS-043 |
+| Module and Runtime Discipline | ESM is preferred, side effects are isolated, and runtime-specific APIs are used correctly. | JS-044 to JS-056 |
+
+## Strict Mode and Modern Syntax
+
+### JS-001 — Strict Mode Enforcement
+
+**MUST**
+
+ES modules are always strict. CommonJS files MUST have `"use strict"` at the top, or the project's pattern MUST enforce it. Sloppy mode behavior MUST NOT be relied upon. Strict mode catches implicit globals, invalid assignments, and other silent bugs.
+
+### JS-002 — `var` Prohibition
+
+**MUST NOT**
+
+`var` MUST NOT be used. It is function-scoped, hoisted in confusing ways, and has no place in modern code. `let` MUST be used for reassignable bindings; `const` MUST be used for non-reassignable bindings.
+
+Example (illustrative, JavaScript):
 
 BAD:
-javascript
+```javascript
 var count = 0;
 for (var i = 0; i < 10; i++) { /* ... */ }
-GOOD:
+```
 
-javascript
+GOOD:
+```javascript
 let count = 0;
 for (let i = 0; i < 10; i++) { /* ... */ }
-2.3 const by Default
-A binding that is never reassigned is const. The presence of let
-should be a signal that reassignment happens in this scope.
+```
 
-const does not make objects immutable; it prevents rebinding. Do not
-confuse the two.
+### JS-003 — `const` by Default
 
-2.4 Arrow Functions
-Use arrow functions when the lexical this is intended. Use function
-declarations for named top-level functions, especially when hoisting is
-desired or when the function is used as a constructor.
+**MUST**
 
-Do not use arrow functions for methods on objects that need this.
+A binding that is never reassigned MUST be declared `const`. The presence of `let` is a signal that reassignment happens in that scope. `const` prevents rebinding, not mutation; this distinction MUST NOT be confused.
 
-3. Equality
-3.1 === and !== Only
-== and != perform type coercion with rules that are widely
-misunderstood. Use === and !== everywhere.
+### JS-004 — Arrow Function Discipline
 
-The only accepted exception is value == null, which is true for both
-null and undefined. Even this is a project-specific convention;
-match what the project uses.
+**SHOULD**
+
+Arrow functions SHOULD be used when the lexical `this` is intended. Function declarations SHOULD be used for named top-level functions, especially when hoisting is desired or when the function is used as a constructor. Arrow functions MUST NOT be used for methods on objects that need a dynamic `this`.
+
+## Equality
+
+### JS-005 — Strict Equality Only
+
+**MUST**
+
+`===` and `!==` MUST be used everywhere. `==` and `!=` perform type coercion with widely misunderstood rules and MUST NOT be used. The only accepted exception is `value == null`, which matches both `null` and `undefined`; even this MUST match the project's convention.
+
+Example (illustrative, JavaScript):
 
 BAD:
-
-javascript
+```javascript
 if (x == 0) { /* true for "", [], "0" */ }
-GOOD:
+```
 
-javascript
+GOOD:
+```javascript
 if (x === 0) { /* true only for the number 0 */ }
-3.2 Object.is for Edge Cases
-For NaN and -0 distinctions, use Object.is:
+```
 
-javascript
-Object.is(NaN, NaN); // true
-Object.is(-0, 0);    // false
-3.3 Comparing Objects by Reference
-Two object literals with the same content are not equal. Never use ===
-to compare objects. Use a deep-equal utility from the project (or
-compare fields explicitly).
+### JS-006 — `Object.is` for Edge Cases
 
-4. Coercion and Truthiness
-4.1 Explicit Coercion
-Never rely on implicit coercion in a branch or a comparison.
+**SHOULD**
+
+For `NaN` and `-0` distinctions, `Object.is` SHOULD be used. It is the only reliable way to compare these values.
+
+### JS-007 — Object Comparison Discipline
+
+**MUST NOT**
+
+Two object literals with the same content are not `===` equal. `===` MUST NOT be used to compare objects structurally. A deep-equal utility from the project or explicit field comparison MUST be used.
+
+## Coercion and Truthiness
+
+### JS-008 — Explicit Coercion
+
+**MUST NOT**
+
+Implicit coercion in a branch or comparison MUST NOT be relied upon. Coercion MUST be made explicit.
+
+Example (illustrative, JavaScript):
 
 BAD:
-
-javascript
+```javascript
 if (userInput) { /* true for "0", false for "" */ }
-GOOD:
+```
 
-javascript
+GOOD:
+```javascript
 if (userInput.length > 0) { /* explicit */ }
-4.2 Boolean(x) vs !!x
-Both are explicit. Pick one and be consistent. !!x is shorter and
-conventional; Boolean(x) is clearer.
+```
 
-4.3 Numeric Conversion
-Number(x) and parseInt(x, 10) do different things. Number("") is
-0. parseInt("") is NaN. Match the intent.
+### JS-009 — Boolean Conversion Consistency
 
-Always pass the radix to parseInt. Without it, leading-zero strings
-may be parsed as octal in older engines, and linters flag it anyway.
+**MUST**
 
-4.4 + Overloads
-+ concatenates strings and adds numbers. When both operands are not
-the same type, the result is a string. Convert explicitly before
-addition:
+When explicit boolean conversion is needed, either `Boolean(x)` or `!!x` MUST be picked and applied consistently. `!!x` is shorter and conventional; `Boolean(x)` is clearer.
+
+### JS-010 — Numeric Conversion Intent
+
+**MUST**
+
+`Number(x)` and `parseInt(x, 10)` do different things (`Number("") === 0`; `parseInt("") === NaN`). The conversion MUST match the intent. The radix MUST always be passed to `parseInt`; without it, leading-zero strings may be parsed as octal in older engines and linters flag it.
+
+### JS-011 — `+` Overload Discipline
+
+**MUST**
+
+`+` concatenates strings and adds numbers; when operands differ in type, the result is a string. Operands MUST be explicitly converted before addition when types may differ.
+
+Example (illustrative, JavaScript):
+
+BAD: `const total = "5" + 3; // "53"`
+GOOD: `const total = Number("5") + 3; // 8`
+
+### JS-012 — Template Literals for Interpolation
+
+**MUST**
+
+Template literals MUST be used for string interpolation. String concatenation with `+` for interpolation is prohibited.
+
+### JS-013 — `null` vs `undefined` Consistency
+
+**MUST**
+
+One value MUST be picked for "no value" and used consistently. In most modern projects, `undefined` represents "missing" and `null` represents "explicitly empty" (especially from JSON payloads). They MUST NOT be mixed within a single API or type.
+
+## Scope and Hoisting
+
+### JS-014 — Block Scope Discipline
+
+**MUST**
+
+`let` and `const` are block-scoped. A variable MUST NOT be declared outside the block where it is used.
+
+### JS-015 — Intentional Hoisting
+
+**MUST**
+
+Function declarations hoist; function expressions and arrow functions do not. Hoisting MUST be relied on intentionally, never accidentally.
+
+### JS-016 — Temporal Dead Zone Respect
+
+**MUST NOT**
+
+Accessing a `let` or `const` before its declaration throws — this is a feature that catches bugs. Declarations MUST NOT be moved to the top of a file "just in case" to work around it.
+
+### JS-017 — No Implicit Globals
+
+**MUST NOT**
+
+Assigning to an undeclared variable creates a global in sloppy mode. This MUST NOT occur. Strict mode throws on this, which is the desired behavior.
+
+Example (illustrative, JavaScript):
 
 BAD:
-
-javascript
-const total = "5" + 3; // "53"
-GOOD:
-
-javascript
-const total = Number("5") + 3; // 8
-4.5 Template Literals
-Use template literals for interpolation, not string concatenation:
-
-BAD:
-
-javascript
-const url = "/users/" + id + "/posts";
-GOOD:
-
-javascript
-const url = `/users/${id}/posts`;
-4.6 null vs undefined
-Pick one for "no value" and be consistent. In most modern projects, use
-undefined for "missing" and reserve null for "explicitly empty"
-(especially when it comes from a JSON payload).
-
-Never mix them within a single API or type.
-
-5. Scope and Hoisting
-5.1 Block Scope
-let and const are block-scoped. Do not declare a variable outside
-the block where it is used.
-
-5.2 Function Hoisting
-Function declarations hoist. Function expressions and arrow functions
-do not. Rely on this intentionally, never accidentally.
-
-5.3 Temporal Dead Zone
-Accessing a let or const before its declaration throws. This is a
-feature: it catches bugs. Do not work around it by moving declarations
-to the top of a file "just in case".
-
-5.4 No Implicit Globals
-Assigning to an undeclared variable creates a global. In strict mode
-this throws, which is good. Never rely on the sloppy mode behavior.
-
-BAD:
-
-javascript
+```javascript
 function setup() {
   config = {}; // creates global `config`
 }
-GOOD:
+```
 
-javascript
+GOOD:
+```javascript
 function setup() {
   const config = {};
   return config;
 }
-6. Objects and Arrays
-6.1 Destructuring Over Property Access
-When reading multiple properties from the same object:
+```
+
+## Objects and Arrays
+
+### JS-018 — Destructuring Over Property Access
+
+**SHOULD**
+
+When reading multiple properties from the same object, destructuring SHOULD be preferred over individual property access.
+
+### JS-019 — Default Values in Destructuring
+
+**SHOULD**
+
+Defaults SHOULD be used for optional fields in destructuring (e.g., `const { limit = 20 } = options;`). The same default MUST NOT then be reapplied inside the body with `||`.
+
+### JS-020 — Rest and Spread Without Mutation
+
+**MUST NOT**
+
+`rest` (`...rest`) MUST be used for grouping remaining properties; `spread` (`...obj`) MUST be used for merging. Inputs MUST NOT be mutated via `Object.assign(target, source)`; a new object MUST be returned.
+
+### JS-021 — `Object.freeze` for Constants
+
+**SHOULD**
+
+Module-level lookup tables that must not be mutated SHOULD use `Object.freeze`. Freezing is shallow; nested objects remain mutable unless frozen recursively.
+
+### JS-022 — Array Methods Over Loops
+
+**SHOULD**
+
+`map`, `filter`, `reduce`, `find`, `some`, `every`, and `flatMap` SHOULD be preferred over manual `for` loops for transformations. `for...of` SHOULD be used when the loop has side effects or early exit. `.forEach` MUST NOT be used for transformations; it discards the return value and forces mutation.
+
+### JS-023 — No Argument Mutation
+
+**MUST NOT**
+
+A function MUST NOT mutate its arguments. Mutation surprises callers and breaks memoization. A new value MUST be returned. Exception: the function's name explicitly says it mutates (e.g., `sortInPlace`, `pushItem`), or the project's established pattern is mutation-based.
+
+### JS-024 — `Array.prototype.sort` Copy Discipline
+
+**MUST**
+
+`sort` sorts in place and returns the same array. If the input MUST NOT change, it MUST be copied first: `[...items].sort(...)`.
+
+### JS-025 — `includes` Over `indexOf`
+
+**SHOULD**
+
+`includes` SHOULD be used for existence checks. `indexOf` SHOULD be used only when the index itself is needed.
+
+### JS-026 — `Set` for Uniqueness
+
+**SHOULD**
+
+For removing duplicates or fast lookups, `Set` SHOULD be used instead of array scans.
+
+## Functions
+
+### JS-027 — Default Parameters Over `||`
+
+**MUST**
+
+Default parameters MUST be used instead of `||` inside the function body. `||` treats `0`, `""`, and `false` as missing; default parameters do not.
+
+### JS-028 — Named Parameters via Destructuring
+
+**SHOULD**
+
+For functions with more than three parameters, an options object with destructuring SHOULD be used instead of a positional argument list.
+
+### JS-029 — Early Return Discipline
+
+**SHOULD**
+
+Conditionals SHOULD NOT be nested. Early returns for failure cases SHOULD be used to flatten the control flow.
+
+### JS-030 — Side Effect Naming
+
+**MUST**
+
+A function named `getUser` MUST NOT send an email. Read functions MUST be kept pure. Side effects MUST be named explicitly (e.g., `saveUser`, `sendWelcomeEmail`).
+
+### JS-031 — No `arguments` Object
+
+**MUST NOT**
+
+The `arguments` object MUST NOT be used. Rest parameters (`...args`) MUST be used instead. `arguments` is not an array, does not work with arrow functions, and defeats rest-parameter tooling.
+
+## Async and Promises
+
+### JS-032 — `async`/`await` Over `.then` Chains
+
+**SHOULD**
+
+`async`/`await` SHOULD be used for readable control flow. `.then` SHOULD be used only for short chains or when mixing with non-async APIs.
+
+### JS-033 — No `await` in `forEach`
+
+**MUST NOT**
+
+`forEach` does not await its callback — the loop returns immediately. `await` MUST NOT be used inside `forEach`. A `for...of` loop MUST be used for sequential async work, or `Promise.all` for parallel work.
+
+Example (illustrative, JavaScript):
 
 BAD:
-
-javascript
-const name = user.name;
-const email = user.email;
-const role = user.role;
-GOOD:
-
-javascript
-const { name, email, role } = user;
-6.2 Default Values in Destructuring
-Use defaults for optional fields:
-
-javascript
-const { limit = 20, offset = 0 } = options;
-Do not then write limit = limit || 20 inside the body.
-
-6.3 Rest and Spread
-Use rest (...rest) for grouping remaining properties. Use spread
-(...obj) for merging. Do not mutate inputs:
-
-BAD:
-
-javascript
-function update(target, source) {
-  Object.assign(target, source); // mutates target
-  return target;
-}
-GOOD:
-
-javascript
-function update(target, source) {
-  return { ...target, ...source };
-}
-6.4 Object.freeze for Constants
-For module-level lookup tables that must not be mutated, use
-Object.freeze or as const (TypeScript):
-
-javascript
-const STATUSES = Object.freeze({
-  ACTIVE: "active",
-  INACTIVE: "inactive",
-});
-Freezing is shallow. Nested objects remain mutable unless frozen
-recursively.
-
-6.5 Array Methods Over Loops
-Prefer map, filter, reduce, find, some, every, flatMap
-over manual for loops for transformations. Use for...of when the
-loop has side effects or early exit.
-
-Do not use .forEach for transformations; it discards the return
-value and forces mutation.
-
-BAD:
-
-javascript
-const names = [];
-users.forEach(u => names.push(u.name));
-GOOD:
-
-javascript
-const names = users.map(u => u.name);
-6.6 Never Mutate Function Arguments
-A function that mutates its arguments surprises callers and breaks
-memoization. Return a new value instead.
-
-Exception: the function's name explicitly says it mutates
-(sortInPlace, pushItem), or the project's pattern is mutation-based
-(rare, and usually a mistake).
-
-6.7 Array.prototype.sort Mutates
-sort sorts in place and returns the same array. If the input must not
-change, copy first:
-
-javascript
-const sorted = [...items].sort((a, b) => a.rank - b.rank);
-6.8 includes vs indexOf
-Use includes for existence checks. indexOf is only for finding an
-index.
-
-BAD: if (arr.indexOf(x) !== -1)
-GOOD: if (arr.includes(x))
-
-6.9 Set for Uniqueness
-For removing duplicates or fast lookups, use Set, not an array scan.
-
-BAD:
-
-javascript
-if (items.filter(i => i === x).length > 0) { /* ... */ }
-GOOD:
-
-javascript
-const seen = new Set(items);
-if (seen.has(x)) { /* ... */ }
-7. Functions
-7.1 Default Parameters
-Use default parameters, not || inside the body:
-
-BAD:
-
-javascript
-function greet(name) {
-  name = name || "world";
-}
-GOOD:
-
-javascript
-function greet(name = "world") { /* ... */ }
-|| treats 0, "", and false as missing. Default parameters do
-not.
-
-7.2 Named Parameters via Object Destructuring
-For functions with more than three parameters, use an options object:
-
-BAD:
-
-javascript
-function createUser(name, email, role, active, sendEmail) { /* ... */ }
-GOOD:
-
-javascript
-function createUser({ name, email, role, active = true, sendEmail = false }) { /* ... */ }
-7.3 Return Early
-Do not nest conditionals. Return early for the failure case:
-
-BAD:
-
-javascript
-function process(user) {
-  if (user) {
-    if (user.active) {
-      return doWork(user);
-    }
-  }
-  return null;
-}
-GOOD:
-
-javascript
-function process(user) {
-  if (!user) return null;
-  if (!user.active) return null;
-  return doWork(user);
-}
-7.4 Side Effects Belong in Named Functions
-A function named getUser should not send an email. Keep read functions
-pure, name side effects explicitly (saveUser, sendWelcomeEmail).
-
-8. Async and Promises
-8.1 Async/Await Over .then Chains
-Use async / await for readable control flow. Use .then only for
-short chains or when mixing with non-async APIs.
-
-BAD:
-
-javascript
-fetchUser(id)
-  .then(user => fetchPosts(user.id))
-  .then(posts => render(posts))
-  .catch(handleError);
-GOOD:
-
-javascript
-try {
-  const user = await fetchUser(id);
-  const posts = await fetchPosts(user.id);
-  render(posts);
-} catch (error) {
-  handleError(error);
-}
-8.2 Never await in forEach
-forEach does not await the callback. The loop returns immediately.
-
-BAD:
-
-javascript
+```javascript
 items.forEach(async (item) => {
   await process(item); // not awaited
 });
-GOOD:
+```
 
-javascript
+GOOD:
+```javascript
 for (const item of items) {
   await process(item);
 }
-If order does not matter and parallel execution is desired:
-
-javascript
-await Promise.all(items.map(item => process(item)));
-8.3 Promise.all vs Promise.allSettled
-Promise.all rejects on the first rejection. Use when all results
-are required.
-
-Promise.allSettled returns all outcomes. Use when partial success
-is acceptable.
-
-Do not use Promise.all for fire-and-forget operations. Unhandled
-rejections cause process crashes or silent failures.
-
-8.4 Never Mix Callbacks and Promises
-A function either returns a Promise or takes a callback. Not both.
-Never wrap a callback API in a Promise and also call the callback.
-
-8.5 Timeouts on External Calls
-Every network, database, or external call has a timeout. A promise that
-never resolves hangs the request forever.
-
-javascript
-const controller = new AbortController();
-setTimeout(() => controller.abort(), 5000);
-await fetch(url, { signal: controller.signal });
-8.6 Unhandled Rejections
-Every promise chain has a .catch, or it is inside a try / catch,
-or it is returned from an async function whose caller handles it.
-Never let a promise reject without a handler.
-
-9. Error Handling
-9.1 Always Throw Error or Subclasses
-BAD:
-
-javascript
-throw "something went wrong";
-GOOD:
-
-javascript
-throw new Error("something went wrong");
-String throws lose the stack trace and the .message property's
-conventions.
-
-9.2 Do Not Swallow Errors
-BAD:
-
-javascript
-try { doWork(); } catch (e) { /* nothing */ }
-GOOD:
-
-javascript
-try {
-  doWork();
-} catch (error) {
-  logger.error("doWork failed", error);
-  throw error;
-}
-If the error is intentionally ignored, add a comment explaining why.
-
-9.3 Do Not catch and Rethrow Without Change
-BAD:
-
-javascript
-try { doWork(); } catch (e) { throw e; }
-GOOD:
-
-javascript
-doWork();
-The try / catch adds nothing. Remove it.
-
-9.4 Re-throw With Context
-When wrapping an error:
-
-javascript
-try {
-  await saveUser(user);
-} catch (error) {
-  throw new Error(`failed to save user ${user.id}`, { cause: error });
-}
-Use the cause option. Do not concatenate messages and lose the
-original error object.
-
-9.5 Do Not Use error.message for Logic
-Messages are for humans. Match on error types or codes:
-
-BAD:
-
-javascript
-catch (error) {
-  if (error.message.includes("not found")) { /* ... */ }
-}
-GOOD:
-
-javascript
-catch (error) {
-  if (error instanceof NotFoundError) { /* ... */ }
-}
-10. Modules
-10.1 ESM Over CommonJS
-Use import / export. Only use require when the project is
-explicitly CommonJS and cannot migrate.
+```
 
-10.2 Named Exports Over Default Exports
-Named exports make refactoring tools work, avoid naming mismatches at
-import sites, and produce clearer stack traces.
+### JS-034 — `Promise.all` vs `Promise.allSettled`
 
-BAD:
+**MUST**
 
-javascript
-export default function createUser() { /* ... */ }
-GOOD:
+`Promise.all` rejects on the first rejection and MUST be used only when all results are required. `Promise.allSettled` returns all outcomes and MUST be used when partial success is acceptable. `Promise.all` MUST NOT be used for fire-and-forget operations; unhandled rejections cause process crashes or silent failures.
 
-javascript
-export function createUser() { /* ... */ }
-Default exports are acceptable when the module is truly a single
-concept and the project uses this consistently.
+### JS-035 — No Mixed Callbacks and Promises
 
-10.3 No Barrel Files
-An index.js that re-exports everything from a folder:
+**MUST NOT**
 
-Breaks tree-shaking.
+A function MUST either return a Promise or take a callback, not both. A callback API MUST NOT be wrapped in a Promise while also calling the callback.
 
-Creates circular import risk.
+### JS-036 — Timeouts on External Calls
 
-Makes stack traces harder to read.
+**MUST**
 
-Import directly from the specific file.
+Every network, database, or external call MUST have a timeout. A promise that never resolves hangs the request forever. `AbortController` MUST be used for `fetch` and equivalent APIs.
 
-10.4 No Side Effects in Module Top-Level
-A module's top-level code runs on import. Do not put I/O, network
-calls, or global mutations there. Do work in named functions.
+### JS-037 — Unhandled Rejection Prohibition
 
-Exception: explicitly documented initialization modules with a single
-init() that is called by the application entry point.
+**MUST NOT**
 
-10.5 Dynamic Import for Lazy Loading
-Use await import("...") for code that is not needed at startup.
-Static imports always load.
+A promise MUST NOT reject without a handler. Every promise chain MUST have a `.catch`, be inside a `try/catch`, or be returned from an async function whose caller handles it.
 
-11. DOM and Browser (When Applicable)
-11.1 querySelector Over getElementById
-Modern querySelector / querySelectorAll handle all selectors
-uniformly. Prefer them unless the project has a reason not to.
+### JS-038 — Floating Promise Prohibition
 
-11.2 No innerHTML With Untrusted Data
-BAD:
+**MUST NOT**
 
-javascript
-element.innerHTML = userInput;
-GOOD:
+A promise that is created and not awaited, caught, returned, or intentionally ignored with a comment MUST NOT exist. Linters flag floating promises because they hide unhandled rejections.
 
-javascript
-element.textContent = userInput;
-Or sanitize explicitly with the project's sanitizer library.
+## Error Handling
 
-11.3 Event Delegation
-Attach listeners to a parent element when the children are dynamic.
-Do not attach a listener per row of a list.
+### JS-039 — Throw `Error` or Subclasses
 
-11.4 addEventListener Requires Removal
-Every listener added to a long-lived element is removed when no longer
-needed, or the element is discarded. Otherwise, listeners leak.
+**MUST**
 
-11.5 localStorage Is Synchronous and Limited
-localStorage blocks the main thread and has a small quota. Never
-store large objects. Never store sensitive data (tokens, PII).
+Only `Error` or its subclasses MUST be thrown. String throws lose the stack trace and the `.message` property conventions.
 
-12. Node.js (When Applicable)
-12.1 Never Use __dirname in ESM
-Use import.meta.url and fileURLToPath:
+Example (illustrative, JavaScript):
 
-javascript
-import { fileURLToPath } from "node:url";
-import { dirname } from "node:path";
-const __dirname = dirname(fileURLToPath(import.meta.url));
-12.2 Use node: Prefix for Core Modules
-BAD: import fs from "fs";
-GOOD: import fs from "node:fs";
+BAD: `throw "something went wrong";`
+GOOD: `throw new Error("something went wrong");`
 
-The node: prefix distinguishes core modules from npm packages with
-the same name.
+### JS-040 — No Silent Error Swallowing
 
-12.3 Prefer fs/promises Over Callbacks
-BAD: fs.readFile(path, (err, data) => {})
-GOOD: await fs.readFile(path)
+**MUST NOT**
 
-12.4 Never process.exit() in Library Code
-Only the application entry point calls process.exit(). Libraries
-throw, let the caller decide.
+Errors MUST NOT be swallowed silently in a `catch` block. They MUST be logged, rethrown, or explicitly ignored with a comment explaining why.
 
-12.5 Streams for Large Data
-Reading a 2 GB file with readFile will crash. Use streams.
+### JS-041 — No Empty `catch`/`throw`
 
-13. JavaScript-Specific Anti-Patterns
-13.1 == Somewhere in the Codebase
-Even one instance invites more. Enforce === with a linter.
+**MUST NOT**
 
-13.2 Mutation of Shared State
-BAD: A module-level let cache = {} that every function mutates.
-GOOD: A dedicated cache module with a clear API, or no cache at all.
+A `try { ... } catch (e) { throw e; }` block adds nothing and MUST NOT exist. The `try`/`catch` MUST be removed.
 
-13.3 Implicit Globals From Typos
-BAD: userNmae = "x" (typo creates global).
-GOOD: Strict mode throws. Keep it on.
+### JS-042 — Re-throw With Context
 
-13.4 arguments Object
-BAD: function f() { return arguments[0]; }
-GOOD: function f(...args) { return args[0]; }
+**MUST**
 
-arguments is not an array, does not work with arrow functions, and
-defeats rest-parameter tooling.
+When wrapping an error, the `cause` option MUST be used (e.g., `new Error("msg", { cause: error })`). Original error messages MUST NOT be concatenated and the original error object MUST NOT be discarded.
 
-13.5 this in Callbacks
-BAD:
+### JS-043 — No Logic on `error.message`
 
-javascript
-obj.on("event", function() { this.handle(); });
-GOOD:
+**MUST NOT**
 
-javascript
-obj.on("event", () => this.handle());
-Or bind explicitly if function is required.
+`error.message` is for humans. Logic MUST NOT branch on message contents. Matching MUST be done on error types or codes (e.g., `error instanceof NotFoundError`).
 
-13.6 new With Factory Functions
-If a function returns an object, do not call it with new. The new
-operator adds this binding rules that are easy to get wrong.
+## Modules
 
-13.7 Chained || for Default Values
-BAD: const name = input || "default";
-This treats 0, "", and false as missing.
+### JS-044 — ESM Over CommonJS
 
-GOOD: const name = input ?? "default";
+**MUST**
 
-13.8 ?? and || Precedence
-a ?? b || c is a syntax error without parentheses. Even with
-parentheses, mixing them is confusing. Write it explicitly:
+ESM (`import`/`export`) MUST be used. CommonJS (`require`) MUST only be used when the project is explicitly CommonJS and cannot migrate.
 
-javascript
-const value = (a ?? b) || c;
-13.9 Optional Chaining Over Guard Chains
-BAD:
+### JS-045 — Named Exports Preference
 
-javascript
-const name = user && user.profile && user.profile.name;
-GOOD:
+**SHOULD**
 
-javascript
-const name = user?.profile?.name;
-13.10 Non-Null Assertions in Plain JS
-Plain JavaScript has no !. Do not import the TypeScript habit of
-assuming a value is non-null without checking.
+Named exports SHOULD be preferred over default exports. Named exports make refactoring tools work, avoid naming mismatches at import sites, and produce clearer stack traces. Default exports are acceptable when the module is truly a single concept and the project uses them consistently.
 
-13.11 Floating Promises
-A promise that is created and not awaited or chained is a floating
-promise. Linters flag it. Every promise must be:
+### JS-046 — Barrel File Prohibition
 
-awaited, or
+**MUST NOT**
 
-.catched, or
+Barrel files (`index.js` re-exporting everything from a folder) MUST NOT be used. They break tree-shaking, create circular import risk, and make stack traces harder to read. Imports MUST come directly from the specific file.
 
-explicitly returned to a caller, or
+See ARCH-056 in `domains/framework/02-architecture-anti-slop.md`.
 
-intentionally ignored with a comment.
+### JS-047 — No Top-Level Side Effects
 
-13.12 Callbacks Without Error Parameters
-Node-style callbacks take (err, result). Do not call a callback with
-a single argument when the convention is two. It silently misaligns
-consumers.
+**MUST NOT**
 
-13.13 Magic Numbers and Strings
-BAD: if (status === 3)
-GOOD: if (status === STATUS.ACTIVE)
+A module's top-level code runs on import. I/O, network calls, or global mutations MUST NOT be placed there. Work MUST be done in named functions. Exception: explicitly documented initialization modules with a single `init()` called by the application entry point.
 
-Named constants improve readability and refactoring.
+### JS-048 — Dynamic Import for Lazy Loading
 
-13.14 Deeply Nested Ternaries
-BAD:
+**SHOULD**
 
-javascript
-const label = a ? "A" : b ? "B" : c ? "C" : "D";
-GOOD: A switch, a lookup table, or an if / else chain.
+`await import("...")` SHOULD be used for code that is not needed at startup. Static imports always load eagerly.
 
-13.15 JSON.parse(JSON.stringify(x)) for Deep Clone
-This loses Date, Map, Set, undefined, functions, and circular
-references. Use structuredClone when available, or a proper deep-clone
-library.
+## DOM and Browser
 
-13.16 NaN Comparison
-NaN === NaN is false. Use Number.isNaN(x), not x === NaN.
+### JS-049 — `querySelector` Over Legacy Selectors
 
-13.17 typeof null === "object"
-This is a historical bug. Never branch on typeof x === "object" to
-detect objects; use x !== null && typeof x === "object".
+**SHOULD**
 
-14. Response to Violation
-If a previous response violated a rule here:
+`querySelector` / `querySelectorAll` SHOULD be preferred over `getElementById` and other legacy selectors for uniform API surface.
 
-text
-In the previous response, [specific rule] was violated. Correction:
-[corrected code]
-No justification. No apology paragraph. Fix and move on.
+### JS-050 — No `innerHTML` With Untrusted Data
 
+**MUST NOT**
 
+`innerHTML` MUST NOT be assigned untrusted data. `textContent` MUST be used, or the input MUST be sanitized with the project's sanitizer library.
 
----
+See SEC-024 in `domains/concern/02-security-critical-anti-slop.md`.
+
+### JS-051 — Event Delegation
+
+**SHOULD**
+
+For dynamic children, event listeners SHOULD be attached to a parent element (delegation) rather than one listener per child.
+
+### JS-052 — Listener Removal Discipline
+
+**MUST**
+
+Every listener added to a long-lived element MUST be removed when no longer needed, or the element MUST be discarded. Otherwise, listeners leak memory.
+
+### JS-053 — `localStorage` Discipline
+
+**MUST NOT**
+
+`localStorage` blocks the main thread and has a small quota. Large objects MUST NOT be stored. Sensitive data (tokens, PII) MUST NOT be stored there.
+
+## Node.js Runtime
+
+### JS-054 — `__dirname` Replacement in ESM
+
+**MUST**
+
+`__dirname` is not available in ESM. `import.meta.url` with `fileURLToPath` and `dirname` from `node:path` MUST be used instead.
+
+### JS-055 — `node:` Prefix for Core Modules
+
+**SHOULD**
+
+The `node:` prefix SHOULD be used for core modules (e.g., `import fs from "node:fs"`). It distinguishes core modules from npm packages with the same name.
+
+### JS-056 — `fs/promises` Over Callbacks
+
+**SHOULD**
+
+`fs/promises` SHOULD be preferred over callback-based `fs` APIs in async code.
+
+### JS-057 — No `process.exit()` in Library Code
+
+**MUST NOT**
+
+Only the application entry point MUST call `process.exit()`. Library code MUST throw and let the caller decide.
+
+### JS-058 — Streams for Large Data
+
+**MUST**
+
+Reading large files (e.g., >100 MB) with `readFile` crashes the process. Streams MUST be used for large data.
+
+## Traps from Other Languages
+
+### JS-060 — From Java: Class Overuse
+
+**SHOULD NOT**
+
+JavaScript favors plain objects, functions, and closures. Reaching for a class with static methods (as in Java) SHOULD NOT be done when a module of exported functions is clearer.
+
+### JS-061 — From Python: Dict Mutation Discipline
+
+**MUST NOT**
+
+Python dicts are commonly mutated in place. In JavaScript, function arguments MUST NOT be mutated (see JS-023). A new object MUST be returned unless mutation is explicit in the function name.
+
+### JS-062 — From Go: Error Return Values
+
+**SHOULD NOT**
+
+Go returns `(result, error)`. JavaScript throws or uses a Result type. Inventing a `[result, error]` tuple convention SHOULD NOT be done unless the project already uses it.
+
+### JS-063 — From C/C++: Integer Division Assumption
+
+**MUST NOT**
+
+JavaScript has no integer division operator. `/` always produces a float. `Math.floor`, `Math.trunc`, or `Math.ceil` MUST be used explicitly. Assuming integer division produces silent wrong answers.
+
+### JS-064 — From Rust: `null` Is Not `Option`
+
+**MUST NOT**
+
+JavaScript has no `Option<T>`. `null` and `undefined` are not a type-safe absence marker. For critical paths, a discriminated union (e.g., `{ kind: "some", value } | { kind: "none" }`) or a Result library SHOULD be used instead of relying on truthiness.
+
+## AI-Specific JavaScript Discipline
+
+### JS-080 — Runtime API Verification
+
+**MUST**
+
+Before using a runtime-specific API (Node `fs`, browser `localStorage`, Deno `Deno.readTextFile`), the assistant MUST verify it exists in the target runtime. Using Node-only APIs in browser code (or vice versa) produces silent runtime failures that are invisible at author time.
+
+See MAS-036 in `_universal/00-master-anti-slop.md`.
+
+### JS-081 — Existing Utility Discovery
+
+**MUST**
+
+Before writing a new utility function (e.g., `debounce`, `deepClone`, `formatDate`), the assistant MUST search the project and its declared dependencies for an existing equivalent. Inventing parallel utilities fragments the codebase and reintroduces bugs that established libraries have already solved.
+
+See MAS-035 in `_universal/00-master-anti-slop.md`.
+
+### JS-082 — Dynamic Pattern Restraint
+
+**SHOULD**
+
+The assistant SHOULD NOT introduce advanced dynamic patterns (Proxies, Reflect, metaprogramming, runtime code generation via `Function`) unless the project already uses them and the task strictly requires them. These patterns defeat static analysis and are a common source of AI-generated bugs.
+
+See MAS-038 in `_universal/00-master-anti-slop.md`.
+
+## Anti-Patterns
+
+### JS-070 — Shared Mutable Module State
+
+**MUST NOT**
+
+A module-level `let cache = {}` that every function mutates MUST NOT exist. A dedicated cache module with a clear API, or no cache at all, MUST be used instead.
+
+### JS-071 — `this` in Callbacks Without Binding
+
+**MUST NOT**
+
+Passing a method reference that relies on `this` without binding or arrow wrapping MUST NOT be done.
+
+Example (illustrative, JavaScript):
+
+BAD: `obj.on("event", function() { this.handle(); });`
+GOOD: `obj.on("event", () => this.handle());` or bind explicitly.
+
+### JS-072 — `new` With Factory Functions
+
+**MUST NOT**
+
+If a function returns an object, it MUST NOT be called with `new`. The `new` operator adds `this` binding rules that are easy to get wrong.
+
+### JS-073 — Chained `||` for Default Values
+
+**MUST NOT**
+
+`const name = input || "default"` treats `0`, `""`, and `false` as missing. The nullish coalescing operator `??` MUST be used instead.
+
+### JS-074 — `??` and `||` Precedence
+
+**MUST**
+
+`a ?? b || c` is a syntax error without parentheses. Even with parentheses, mixing them is confusing. The expression MUST be written explicitly: `(a ?? b) || c`.
+
+### JS-075 — Optional Chaining Over Guard Chains
+
+**SHOULD**
+
+`user?.profile?.name` SHOULD be used instead of `user && user.profile && user.profile.name`. Optional chaining is shorter, clearer, and less error-prone.
+
+### JS-076 — Non-Null Assertion Habit in Plain JS
+
+**MUST NOT**
+
+Plain JavaScript has no `!` non-null assertion. The TypeScript habit of assuming a value is non-null without checking MUST NOT be carried into plain JS. Explicit checks MUST be used.
+
+### JS-077 — Node-Style Callback Signature
+
+**MUST**
+
+Node-style callbacks take `(err, result)`. A callback MUST NOT be called with a single argument when the convention is two; it silently misaligns consumers.
+
+### JS-078 — Magic Numbers and Strings
+
+**MUST NOT**
+
+Magic numbers (`if (status === 3)`) and magic strings MUST NOT be used. Named constants (e.g., `STATUS.ACTIVE`) MUST be used instead.
+
+### JS-079 — Deeply Nested Ternaries
+
+**MUST NOT**
+
+Deeply nested ternaries (`a ? "A" : b ? "B" : c ? "C" : "D"`) MUST NOT be used. A `switch`, a lookup table, or an `if/else` chain MUST be used instead.
+
+### JS-083 — `JSON.parse(JSON.stringify(x))` for Deep Clone
+
+**MUST NOT**
+
+`JSON.parse(JSON.stringify(x))` loses `Date`, `Map`, `Set`, `undefined`, functions, and circular references. `structuredClone` (when available) or a proper deep-clone library MUST be used.
+
+### JS-084 — `NaN` Comparison
+
+**MUST NOT**
+
+`NaN === NaN` is `false`. `Number.isNaN(x)` MUST be used instead of `x === NaN`.
+
+### JS-085 — `typeof null` Trap
+
+**MUST NOT**
+
+`typeof null === "object"` is a historical bug. Branching on `typeof x === "object"` to detect objects MUST use `x !== null && typeof x === "object"`.
+
+## Response to Violation
+
+When a rule in this file is violated, report:
+
+Violation: JS-{NNN}
+Reason: {one-line reason}
+Correction: {smallest fix}
+
+For multiple violations, report each rule ID separately.
+
+Do not replace a technical correction with a generic explanation.

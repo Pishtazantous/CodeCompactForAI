@@ -2,98 +2,77 @@
 id: 02-typescript-anti-slop
 title: "TypeScript Anti-Slop Layer"
 lang: en
-depends_on: [00-master-anti-slop]
+depends_on: ["_universal/00-style-guide.md", "_universal/00-master-anti-slop.md", "domains/framework/02-architecture-anti-slop.md"]
 category: domain
 domain_type: language
-version: 2
+version: 3
 ---
 
 # TypeScript Anti-Slop Layer
 
-Layered under `_universal/00-master-anti-slop.md`. Universal rules
-(fabrication, fake completion, over-engineering, silent assumptions,
-generic security, dependency addition, output format) are NOT
-repeated here.
+This file defines behavioral contracts specific to the TypeScript language. It sits in the language layer, below the universal and architectural rules, and above framework-specific rules. It covers the type system, strict mode, generics, narrowing, and the escape hatches that let type errors hide at runtime. It does not cover framework rules (React, Express, Next.js — see `domains/framework/`), delivery rules (see `domains/delivery/`), or JavaScript semantics beyond what TypeScript inherits (see `02-javascript-anti-slop.md`).
 
-This file covers rules specific to TypeScript: the type system,
-strict mode, generics, narrowing, and the escape hatches that let
-type errors hide at runtime. It does NOT cover framework rules
-(React, Express, Next.js — see `domains/framework/`), delivery rules
-(see `domains/delivery/`), or JavaScript semantics beyond what
-TypeScript inherits (see `02-javascript-anti-slop.md`).
+TypeScript's value is the type checker. Every rule below either preserves that value or documents the rare case where a controlled escape is justified. The checker is not an adversary; disabling it to make an error go away is the single largest source of type-safety loss.
 
-TypeScript's value is the type checker. Every rule below either
-preserves that value or documents the rare case where a controlled
-escape is justified. The checker is not an adversary; disabling it
-to make an error go away is the single largest source of type-safety
-loss.
+## Scope
 
-## 1. Stack Assumptions
-
-This file assumes:
-
-- TypeScript 5.4 or later.
-- `tsc` or a bundler that uses it (`vite`, `esbuild`, `swc`,
-  `ts-node`, `tsx`).
-- A `tsconfig.json` is present.
-- The project uses ES modules.
+This file applies to projects using TypeScript 5.4 or later, compiled with `tsc` or a compatible bundler (`vite`, `esbuild`, `swc`, `ts-node`, `tsx`), utilizing ES modules, and containing a `tsconfig.json` file.
 
 ### Version Applicability
 
 - **Minimum version**: TypeScript 5.4.
-- **Features used in this file that require specific versions**:
+- **Features requiring specific versions**:
   - `using` declarations: TypeScript 5.2+.
   - `const` type parameters: TypeScript 5.0+.
   - `satisfies` operator: TypeScript 4.9+.
   - `accessor` keyword: TypeScript 4.9+.
   - `in` operator narrowing for unlisted keys: TypeScript 4.9+.
-- **If the project targets an older version**: the version-specific
-  syntax above is unavailable. The remaining rules still apply.
+- If the project targets an older version, the version-specific syntax above is unavailable, but the remaining rules still apply.
 
-## 2. Compiler Configuration
+## Rule Severity
 
-### 2.1 `strict: true`
+Severity follows `_universal/00-style-guide.md`.
 
-`tsconfig.json` has `strict: true`. If it does not, that is a
-project decision, not something to change silently.
+## Contracts
 
-Rationale: `strict` enables eight related flags (`noImplicitAny`,
-`strictNullChecks`, `strictFunctionTypes`, and others) that together
-close the majority of type-safety holes.
+A TypeScript codebase commits to four contracts. The table below maps each contract to the rules that enforce it.
 
-### 2.2 Related Flags
+| Contract | Description | Enforced By |
+|---|---|---|
+| Type Checker Integrity | Strict mode is enabled, and type escapes (`any`, `as`, `@ts-ignore`) are strictly controlled. | TS-001 to TS-014 |
+| Structural Clarity | Interfaces, types, generics, and utility types are used predictably and without unnecessary complexity. | TS-015 to TS-030 |
+| Module and Enum Discipline | Modern ES modules are used; legacy namespaces and unsafe enums are prohibited. | TS-031 to TS-040 |
+| Signature and Boundary Safety | Function signatures are explicit, and boundary data is validated, not just asserted. | TS-041 to TS-044, TS-026 |
 
-Recommended flags, verified against the project's tsconfig:
+## Compiler Configuration
 
-- `noImplicitAny`
-- `strictNullChecks`
-- `strictFunctionTypes`
-- `strictBindCallApply`
-- `strictPropertyInitialization`
-- `noImplicitThis`
-- `useUnknownInCatchVariables`
-- `noUnusedLocals`
-- `noUnusedParameters`
-- `noFallthroughCasesInSwitch`
-- `noImplicitReturns`
-- `noUncheckedIndexedAccess`
-- `exactOptionalPropertyTypes`
+### TS-001 — Strict Mode Enforcement
 
-Rationale: `noUncheckedIndexedAccess` catches array access that may
-return `undefined`. `exactOptionalPropertyTypes` distinguishes
-`prop?: T` from `prop: T | undefined`.
+**MUST**
 
-### 2.3 No Weakening Flags
+The `tsconfig.json` MUST have `strict: true`. If it does not, that is a project decision that MUST NOT be changed silently. `strict` enables eight related flags that together close the majority of type-safety holes.
 
-Never add `// @ts-nocheck` at the top of a file. Never disable a
-strict flag in `tsconfig.json` to fix a single error.
+### TS-002 — Recommended Strict Flags
 
-Rationale: weakening the config to silence an error hides the class
-of errors the flag was designed to catch.
+**SHOULD**
 
-## 3. The `any` Type
+The following flags SHOULD be enabled and verified against the project's tsconfig: `noImplicitAny`, `strictNullChecks`, `strictFunctionTypes`, `strictBindCallApply`, `strictPropertyInitialization`, `noImplicitThis`, `useUnknownInCatchVariables`, `noUnusedLocals`, `noUnusedParameters`, `noFallthroughCasesInSwitch`, `noImplicitReturns`, `noUncheckedIndexedAccess`, and `exactOptionalPropertyTypes`. `noUncheckedIndexedAccess` catches array access that may return `undefined`.
 
-### 3.1 No `any`
+### TS-003 — No Weakening Flags
+
+**MUST NOT**
+
+Adding `// @ts-nocheck` at the top of a file or disabling a strict flag in `tsconfig.json` to fix a single error MUST NOT occur. Weakening the config to silence an error hides the class of errors the flag was designed to catch.
+
+## The `any` and `unknown` Types
+
+### TS-004 — `any` Prohibition
+
+**MUST NOT**
+
+The `any` type MUST NOT be used. `any` disables type checking for the value and everything it touches; a single `any` in a call chain propagates and defeats the type system.
+
+Example (illustrative, TypeScript):
 
 BAD:
 ```typescript
@@ -110,679 +89,451 @@ function handle(data: unknown): string {
 }
 ```
 
-Rationale: `any` disables type checking for the value and everything
-it touches. A single `any` in a call chain propagates.
+### TS-005 — `unknown` as the Default
 
-### 3.2 `unknown` Is the Correct Default
+**MUST**
 
-When the shape of incoming data is not known at compile time, use
-`unknown`, then narrow with a type guard or schema.
+When the shape of incoming data is not known at compile time, `unknown` MUST be used, then narrowed with a type guard or schema. `unknown` forces the caller to prove the type before using the value.
 
-Rationale: `unknown` forces the caller to prove the type before
-using the value.
+### TS-006 — Justified `any` Isolation
 
-### 3.3 Justified `any`
+**MAY**
 
-There is one acceptable case: a broken third-party library type.
-Even then:
+The only acceptable case for `any` is a broken third-party library type. Even then, it MUST be isolated in a single function, commented, and wrapped in a properly typed function. `any` MUST NOT leak into the caller.
 
-- Isolate it in a single function.
-- Add a comment explaining why.
-- Wrap the result in a properly typed function.
+### TS-007 — `never` and `void` Discipline
 
-Never let `any` leak into the caller.
+**MUST**
 
-### 3.4 `never` and `void`
+`never` MUST be used for functions that never return (throw, infinite loop). `void` MUST be used for functions that return nothing meaningful. `void` MUST NOT be used as a generic type argument to mean "no value".
 
-- `never` is for functions that never return (throw, infinite loop).
-- `void` is for functions that return nothing meaningful.
+## Type Assertions and Escapes
 
-Rationale: `void` as a generic type argument to mean "no value" is
-misleading; use `void` only as a return type.
+### TS-008 — Unjustified `as` Prohibition
 
-## 4. Type Assertions
+**MUST NOT**
 
-### 4.1 No `as` Without a Reason
+The `as` keyword MUST NOT be used without a documented reason. `as` tells the compiler "trust me"; when the trust is misplaced, the error appears at runtime. Schema validation MUST be preferred.
 
-BAD:
-```typescript
-const user = response as User;
-```
+Example (illustrative, TypeScript):
 
-GOOD:
-```typescript
-const user = userSchema.parse(response);
-```
+BAD: `const user = response as User;`
+GOOD: `const user = userSchema.parse(response);`
 
-Rationale: `as` tells the compiler "trust me". When the trust is
-misplaced, the error appears at runtime.
+### TS-009 — `as const` Allowance
 
-### 4.2 `as const` Is Allowed
+**MAY**
 
-`as const` narrows literals and is not an escape hatch. Use it
-freely.
+`as const` narrows literals and is not an escape hatch. It MAY be used freely to preserve literal types.
 
-### 4.3 Double Assertions Are a Red Flag
+### TS-010 — Double Assertion Prohibition
 
-`value as unknown as Target` means the types are genuinely
-incompatible. Find the real type or introduce a runtime check.
+**MUST NOT**
 
-### 4.4 Non-Null Assertion `!`
+Double assertions (`value as unknown as Target`) indicate genuinely incompatible types. The real type MUST be found or a runtime check introduced. Double assertions MUST NOT be used to bypass the compiler.
 
-`value!.property` tells the compiler "this is not null". Use only
-when the surrounding code guarantees it and the compiler cannot
-see that.
+### TS-011 — Non-Null Assertion (`!`) Discipline
 
-BAD:
-```typescript
-const name = user!.profile!.name;
-```
+**SHOULD NOT**
 
-GOOD:
-```typescript
-const name = user?.profile?.name ?? "anonymous";
-```
+The non-null assertion (`value!.property`) SHOULD NOT be used unless the surrounding code guarantees it and the compiler cannot see that. Optional chaining (`?.`) and nullish coalescing (`??`) SHOULD be preferred.
 
-## 5. `@ts-ignore` and `@ts-expect-error`
+## `@ts-ignore` and `@ts-expect-error`
 
-### 5.1 `@ts-ignore` Is Forbidden
+### TS-012 — `@ts-ignore` Prohibition
 
-Rationale: it silences errors without any indication that the
-silence is intentional. If the underlying issue is fixed, the
-`@ts-ignore` remains and hides new errors.
+**MUST NOT**
 
-### 5.2 `@ts-expect-error` Requires a Comment
+`@ts-ignore` MUST NOT be used. It silences errors without any indication that the silence is intentional. If the underlying issue is fixed, the `@ts-ignore` remains and hides new errors.
 
-```typescript
-// @ts-expect-error -- library types are wrong; see issue #1234
-user.doThing();
-```
+### TS-013 — `@ts-expect-error` Documentation
 
-Rationale: `@ts-expect-error` at least fails when there is no error
-to suppress. Every occurrence needs a comment.
+**MUST**
 
-### 5.3 Prefer Fixing the Type
+Every `@ts-expect-error` MUST be accompanied by a comment explaining why the error is expected. `@ts-expect-error` fails when there is no error to suppress, making it safer than `@ts-ignore`.
 
-Almost every `@ts-expect-error` is a type guard, a schema parse at
-the boundary, or a correctly typed wrapper away from being
-unnecessary.
+### TS-014 — Type Fix Preference
 
-## 6. Interfaces and Type Aliases
+**SHOULD**
 
-### 6.1 `interface` for Object Shapes
+Almost every `@ts-expect-error` is a type guard, a schema parse at the boundary, or a correctly typed wrapper away from being unnecessary. Fixing the type SHOULD be preferred over suppressing the error.
 
-Use `interface` when the shape describes an object and might be
-extended.
+## Interfaces, Types, and Utility Types
 
-### 6.2 `type` for Everything Else
+### TS-015 — `interface` for Object Shapes
 
-`type` for unions, intersections, mapped types, tuples, and simple
-aliases.
+**SHOULD**
 
-### 6.3 Do Not Mix the Two for the Same Concept
+`interface` SHOULD be used when the shape describes an object and might be extended.
 
-Pick one style for a given entity. `interface User` in one file and
-`type User = ...` in another is a consistency bug.
+### TS-016 — `type` for Complex Structures
 
-### 6.4 Extending vs Intersecting
+**SHOULD**
 
-- `interface Admin extends User` for extension.
-- `type Admin = User & { role: Role }` when the base is a union or
-  a generic.
+`type` SHOULD be used for unions, intersections, mapped types, tuples, and simple aliases.
 
-### 6.5 Index Signatures Are a Smell
+### TS-017 — Concept Consistency
 
-`{ [key: string]: T }` loses the shape. Use `Record<K, V>` when the
-keys are dynamic, or an explicit interface when they are not.
+**MUST NOT**
 
-## 7. Generics
+Mixing `interface` and `type` for the same concept (e.g., `interface User` in one file and `type User = ...` in another) MUST NOT occur. One style MUST be picked per entity.
 
-### 7.1 Generics Express a Relationship
+### TS-018 — Extending vs Intersecting
 
-A generic parameter must relate two or more positions in the
-signature.
+**SHOULD**
 
-BAD:
-```typescript
-function wrap<T>(value: T): { value: T } {
-  return { value };
-}
-```
+`interface Admin extends User` SHOULD be used for extension. `type Admin = User & { role: Role }` SHOULD be used when the base is a union or a generic.
 
-GOOD:
-```typescript
-function first<T>(items: readonly T[]): T | undefined {
-  return items[0];
-}
-```
+### TS-019 — Index Signature Discipline
 
-### 7.2 No Over-Constrained Generics
+**SHOULD NOT**
 
-BAD:
-```typescript
-function identity<T extends Record<string, unknown>>(x: T): T {
-  return x;
-}
-```
+Index signatures (`{ [key: string]: T }`) lose the shape and SHOULD NOT be used. `Record<K, V>` SHOULD be used when keys are dynamic, or an explicit interface when they are not.
 
-The constraint prevents callers from passing an array, a primitive,
-or a class instance. It adds nothing.
+### TS-020 — Generic Relationship Requirement
 
-GOOD:
-```typescript
-function identity<T>(x: T): T {
-  return x;
-}
-```
+**MUST**
 
-### 7.3 Constrain Only What You Use
+A generic parameter MUST relate two or more positions in the signature. Generics MUST NOT be used when the type does not flow through the function.
 
-If the body accesses `x.id`, the constraint is `{ id: string }`. If
-the body accesses nothing, there is no constraint.
+### TS-021 — Over-Constrained Generics Prohibition
 
-### 7.4 `const` Type Parameters
+**MUST NOT**
 
-```typescript
-function tuple<const T extends readonly unknown[]>(...args: T): T {
-  return args;
-}
-```
+Generics MUST NOT be over-constrained (e.g., `<T extends Record<string, unknown>>` when the body does not require it). Over-constraining prevents callers from passing arrays, primitives, or class instances.
 
-Rationale: `const T` preserves the literal types of the arguments
-instead of widening them.
+### TS-022 — Minimal Generic Constraints
 
-## 8. Narrowing and Type Guards
+**MUST**
 
-### 8.1 Prefer Narrowing Over Casting
+If the body accesses `x.id`, the constraint MUST be `{ id: string }`. If the body accesses nothing, there MUST be no constraint.
 
-TypeScript can often prove a type from control flow. Use `typeof`,
-`instanceof`, `in`, and discriminated unions instead of casting.
+### TS-023 — `const` Type Parameters
 
-### 8.2 Custom Type Guards
+**SHOULD**
 
-```typescript
-function isUser(value: unknown): value is User {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "id" in value &&
-    typeof (value as { id: unknown }).id === "string"
-  );
-}
-```
+`const T` SHOULD be used to preserve the literal types of arguments instead of widening them (TypeScript 5.0+).
 
-Rationale: a type guard is the only way to narrow `unknown` to a
-structured type without a cast.
+### TS-024 — Narrowing Over Casting
 
-### 8.3 Schema Validation at Boundaries
+**SHOULD**
 
-At API, storage, and message boundaries, use the project's schema
-library (`zod`, `valibot`, `io-ts`, `ajv`). Type guards for complex
-shapes are derived from schemas, not written by hand.
+TypeScript can often prove a type from control flow. `typeof`, `instanceof`, `in`, and discriminated unions SHOULD be used instead of casting.
 
-### 8.4 Exhaustiveness Checks
+### TS-025 — Custom Type Guards
 
-For discriminated unions, use a `never` check in the default branch.
+**MUST**
 
-```typescript
-function describe(status: Status): string {
-  switch (status.kind) {
-    case "ok": return "ok";
-    case "error": return status.message;
-    default: {
-      const _exhaustive: never = status;
-      throw new Error(`unhandled: ${JSON.stringify(_exhaustive)}`);
-    }
-  }
-}
-```
+A custom type guard (`value is Type`) MUST be used to narrow `unknown` to a structured type without a cast.
 
-Rationale: the `never` check produces a compile error when a new
-variant is added and the switch is not updated.
+### TS-026 — Schema Validation at Boundaries
 
-## 9. Utility Types
+**MUST**
 
-### 9.1 Use the Built-In Utility Types
+At API, storage, and message boundaries, the project's schema library (`zod`, `valibot`, `io-ts`, `ajv`) MUST be used. Type guards for complex shapes MUST be derived from schemas, not written by hand.
 
-`Partial`, `Required`, `Readonly`, `Pick`, `Omit`, `Record`,
-`Exclude`, `Extract`, `NonNullable`, `ReturnType`, `Parameters`,
-`Awaited`, `InstanceType`.
+### TS-027 — Exhaustiveness Checks
 
-BAD:
-```typescript
-type MyRecord = { [key: string]: string };
-```
+**MUST**
 
-GOOD:
-```typescript
-type MyRecord = Record<string, string>;
-```
+For discriminated unions, a `never` check MUST be used in the default branch to produce a compile error when a new variant is added and the switch is not updated.
 
-### 9.2 Avoid Deeply Nested Utility Types
+### TS-028 — Built-In Utility Types
 
-`Omit<Partial<Pick<User, "a" | "b">>, "b">` is a sign the model
-should be split. Define a named type.
+**SHOULD**
 
-```typescript
-type UserDraft = Pick<User, "a">;
-```
+Built-in utility types (`Partial`, `Required`, `Readonly`, `Pick`, `Omit`, `Record`, `Exclude`, `Extract`, `NonNullable`, `ReturnType`, `Parameters`, `Awaited`, `InstanceType`) SHOULD be used instead of custom implementations.
 
-### 9.3 `satisfies` for Type Checking Without Widening
+### TS-029 — Deeply Nested Utility Types Prohibition
 
-BAD:
-```typescript
-const config: Record<string, string | number> = {
-  port: 3000,
-  host: "localhost",
-};
-// config.port is string | number
-```
+**MUST NOT**
 
-GOOD:
-```typescript
-const config = {
-  port: 3000,
-  host: "localhost",
-} satisfies Record<string, string | number>;
-// config.port is number
-```
+Deeply nested utility types (e.g., `Omit<Partial<Pick<User, "a" | "b">>, "b">`) MUST NOT be used. The model SHOULD be split into named types.
 
-Rationale: `satisfies` validates the value against the type without
-widening the inferred type.
+### TS-030 — `satisfies` for Config Objects
 
-## 10. Enums and Namespaces
+**SHOULD**
 
-### 10.1 Prefer String Unions Over `enum`
+The `satisfies` operator SHOULD be used for config objects to validate the value against a type without widening the inferred type (TypeScript 4.9+).
 
-BAD:
-```typescript
-enum Status {
-  Active = "active",
-  Inactive = "inactive",
-}
-```
+## Enums, Namespaces, and Modules
 
-GOOD:
-```typescript
-type Status = "active" | "inactive";
-```
+### TS-031 — String Unions Over `enum`
 
-Rationale: string unions serialize to JSON naturally, generate no
-runtime code, and work with `as const` objects.
+**SHOULD**
 
-### 10.2 `as const` Object for Iteration
+String unions (`type Status = "active" | "inactive"`) SHOULD be preferred over `enum`. String unions serialize to JSON naturally, generate no runtime code, and work with `as const` objects.
 
-```typescript
-const STATUSES = ["active", "inactive"] as const;
-type Status = (typeof STATUSES)[number];
-```
+### TS-032 — `as const` Object Iteration
 
-### 10.3 No Numeric Enums
+**SHOULD**
 
-Numeric enums produce reverse mappings and are notoriously unsafe
-(`Status[0]` compiles). Never use them.
+`as const` arrays SHOULD be used to derive union types for iteration (e.g., `type Status = (typeof STATUSES)[number]`).
 
-### 10.4 No `const enum`
+### TS-033 — Numeric Enum Prohibition
 
-`const enum` has cross-module issues with modern bundlers and with
-`isolatedModules`. Use `as const` objects or string unions.
+**MUST NOT**
 
-### 10.5 No `namespace`
+Numeric enums MUST NOT be used. They produce reverse mappings and are notoriously unsafe (e.g., `Status[0]` compiles).
 
-Use ES modules. `namespace` predates the module system and conflicts
-with bundlers and `isolatedModules`.
+### TS-034 — `const enum` Prohibition
 
-## 11. Modules and Imports
+**MUST NOT**
 
-### 11.1 No `require` in TypeScript
+`const enum` MUST NOT be used. It has cross-module issues with modern bundlers and with `isolatedModules`.
 
-Use `import`. `require` defeats tree-shaking and type inference. The
-exception is dynamic `import()` for lazy loading.
+### TS-035 — `namespace` Prohibition
 
-### 11.2 Type-Only Imports
+**MUST NOT**
 
-```typescript
-import type { User } from "./types";
-```
+`namespace` MUST NOT be used. ES modules MUST be used instead. `namespace` predates the module system and conflicts with bundlers and `isolatedModules`.
 
-Rationale: the import is erased at compile time and prevents
-runtime cycles.
+### TS-036 — `require` Prohibition
 
-### 11.3 No `import * as X`
+**MUST NOT**
 
-Namespace imports prevent tree-shaking. Import named exports
-explicitly, unless the module is genuinely a namespace.
+`require` MUST NOT be used in TypeScript. `import` MUST be used. `require` defeats tree-shaking and type inference. Dynamic `import()` is the exception for lazy loading.
 
-### 11.4 No Barrel Files
+### TS-037 — Type-Only Imports
 
-An `index.ts` re-exporting everything breaks tree-shaking, creates
-circular import risk, and makes stack traces harder to read. Import
-directly from the specific file.
+**MUST**
 
-### 11.5 Circular Imports Are a Design Smell
+`import type { User }` MUST be used when importing types. The import is erased at compile time and prevents runtime cycles.
 
-If two modules need each other, extract the shared type or function
-into a third module.
+### TS-038 — Namespace Import Prohibition
 
-## 12. Function Signatures
+**MUST NOT**
 
-### 12.1 Explicit Return Types on Public Functions
+`import * as X` MUST NOT be used unless the module is genuinely a namespace. Namespace imports prevent tree-shaking. Named exports MUST be imported explicitly.
 
-Public (exported) functions have an explicit return type. This
-prevents accidental widening and makes the contract readable.
+### TS-039 — Barrel File Prohibition
 
-Private functions may omit the return type when it is obvious.
+**MUST NOT**
 
-### 12.2 Optional vs `undefined`
+Barrel files (`index.ts` re-exporting everything) MUST NOT be used. They break tree-shaking, create circular import risk, and make stack traces harder to read. Imports MUST come directly from the specific file.
 
-`prop?: T` and `prop: T | undefined` are not the same when
-`exactOptionalPropertyTypes` is enabled. Match the project's
-convention.
+See ARCH-056 in `domains/framework/02-architecture-anti-slop.md`.
 
-### 12.3 Default Parameters Over `undefined` Checks
+### TS-040 — Circular Import Resolution
 
-BAD:
-```typescript
-function greet(name?: string) {
-  name = name || "world";
-  return `hello ${name}`;
-}
-```
+**MUST NOT**
 
-GOOD:
-```typescript
-function greet(name = "world") {
-  return `hello ${name}`;
-}
-```
+Circular imports MUST NOT exist. If two modules need each other, the shared type or function MUST be extracted into a third module. Type-only imports (`import type`) MUST be used to break type-level cycles.
 
-Rationale: default parameters distinguish `undefined` from `null`,
-`""`, `0`, and `false`.
+## Functions and Signatures
 
-### 12.4 Function Overloads Only When Necessary
+### TS-041 — Explicit Return Types on Public Functions
 
-Overloads are justified when each overload has a distinct return
-type tied to the input type. Otherwise, a single signature with a
-union is simpler.
+**MUST**
 
-## 13. Traps from Other Languages
+Public (exported) functions MUST have an explicit return type. This prevents accidental widening and makes the contract readable. Private functions may omit the return type when it is obvious.
 
-### 13.1 From Java: Overuse of Classes
+### TS-042 — Optional vs `undefined` Consistency
 
-Java code often reaches for a class. TypeScript favors plain objects
-and functions.
+**MUST**
 
-BAD:
-```typescript
-class UserService {
-  static getUser(id: string) { /* ... */ }
-}
-```
+The distinction between `prop?: T` and `prop: T | undefined` MUST be handled consistently according to the project's `exactOptionalPropertyTypes` setting.
 
-GOOD:
-```typescript
-export function getUser(id: string) { /* ... */ }
-```
+### TS-043 — Default Parameters Over `undefined` Checks
 
-### 13.2 From C#: Overuse of Interfaces
+**SHOULD**
 
-C# code often defines an interface for every class. TypeScript
-favors structural typing; interfaces are used at module boundaries.
+Default parameters (`name = "world"`) SHOULD be used instead of `undefined` checks (`name = name || "world"`). Default parameters distinguish `undefined` from `null`, `""`, `0`, and `false`.
 
-BAD: `interface IUserRepository` with a single implementation.
+### TS-044 — Function Overload Discipline
 
-GOOD: A concrete `UserRepository` type. Add an interface only when
-a second implementation exists.
+**SHOULD**
 
-### 13.3 From JavaScript: Implicit `any` Via Missing Types
+Function overloads SHOULD only be used when each overload has a distinct return type tied to the input type. Otherwise, a single signature with a union SHOULD be used.
 
-JavaScript habits (no type annotations) produce implicit `any` under
-`noImplicitAny: false`. Enable the flag and annotate.
+## Traps from Other Languages
 
-### 13.4 From Python: Duck Typing by Default
+### TS-045 — Java Class Overuse
 
-Python relies on duck typing at runtime. TypeScript enforces it at
-compile time. Write the types, do not rely on the runtime.
+**SHOULD NOT**
 
-### 13.5 From Go: Error Return Values
+TypeScript favors plain objects and functions. Reaching for a class with static methods (as in Java) SHOULD NOT be done. Exported functions SHOULD be used instead.
 
-Go returns `(result, error)`. TypeScript throws or uses a Result
-type. Do not invent a `[result, error]` tuple unless the project
-uses that pattern.
+### TS-046 — C# Interface Overuse
 
-### 13.6 From Rust: Result Types Without the Ecosystem
+**SHOULD NOT**
 
-`Result<T, E>` in TypeScript is fine, but there is no `?` operator.
-Callers check the discriminant manually. Use it only when the
-project already does.
+TypeScript favors structural typing. Defining an `IUserRepository` interface for every class (as in C#) SHOULD NOT be done. Interfaces SHOULD only be added when a second implementation exists.
 
-## 14. Anti-Patterns
+### TS-047 — JavaScript Implicit `any`
 
-### 14.1 `any` in a Signature
+**MUST NOT**
 
-Covered in 3.1.
+JavaScript habits (no type annotations) produce implicit `any` under `noImplicitAny: false`. The flag MUST be enabled and types MUST be annotated.
 
-### 14.2 `as` to Force a Type
+### TS-048 — Python Duck Typing
 
-Covered in 4.1.
+**MUST NOT**
 
-### 14.3 `@ts-ignore` Without a Reason
+Python relies on duck typing at runtime. TypeScript enforces it at compile time. Types MUST be written; runtime duck typing MUST NOT be relied upon.
 
-Covered in 5.1.
+### TS-049 — Go Error Return Values
 
-### 14.4 `enum`
+**SHOULD NOT**
 
-Covered in 10.1.
+Go returns `(result, error)`. TypeScript throws or uses a Result type. Inventing a `[result, error]` tuple SHOULD NOT be done unless the project already uses that pattern.
 
-### 14.5 `namespace`
+### TS-050 — Rust Result Types
 
-Covered in 10.5.
+**SHOULD**
 
-### 14.6 Double Assertion
+`Result<T, E>` in TypeScript is fine, but there is no `?` operator. Callers MUST check the discriminant manually. It SHOULD only be used when the project already does.
 
-Covered in 4.3.
+## AI-Specific TypeScript Discipline
 
-### 14.7 Non-Null Assertion `!`
+### TS-070 — TS Type and API Verification
 
-Covered in 4.4.
+**MUST**
 
-### 14.8 Implicit `any` in Function Parameters
+Before using a TypeScript utility type, compiler option, or third-party library type, the assistant MUST verify it exists in the target TypeScript version and library version. Invented utility types or incorrect generic constraints produce compiler errors that block the build.
 
-```typescript
-function handle(data) { /* data is any */ }
-```
+See MAS-036 in `_universal/00-master-anti-slop.md`.
 
-`noImplicitAny` catches this. Enable it.
+### TS-071 — Existing Type Discovery
 
-### 14.9 Single-Field Interfaces
+**MUST**
 
-BAD:
-```typescript
-interface UserId { id: string; }
-```
+Before creating a new type alias, interface, or generic utility, the assistant MUST search the project for an existing equivalent. Inventing parallel type definitions for the same domain concept creates type mismatches and casting bugs.
 
-GOOD:
-```typescript
-type UserId = string;
-```
+See MAS-035 in `_universal/00-master-anti-slop.md`.
 
-Rationale: a single-field interface adds a layer with no shape
-information.
+### TS-072 — Type Complexity Restraint
 
-### 14.10 `Partial<T>` for Update Payloads
+**SHOULD**
 
-BAD:
-```typescript
-function updateUser(id: string, data: Partial<User>) { /* ... */ }
-```
+The assistant SHOULD NOT introduce highly complex conditional types, deep mapped types, or template literal types unless the project already uses them and the type-level computation is strictly required. Runtime validation is often clearer than extreme type-level programming.
 
-This allows setting `id`, `createdAt`, and any field the caller
-should not touch.
+See MAS-038 in `_universal/00-master-anti-slop.md`.
 
-GOOD:
-```typescript
-function updateUser(id: string, data: UpdateUserInput) { /* ... */ }
-```
+## Anti-Patterns
 
-### 14.11 Deeply Nested Conditional Types
+### TS-051 — Single-Field Interfaces
 
-A type with three levels of conditional types is unmaintainable.
-Split into named types or replace with a runtime schema.
+**MUST NOT**
 
-### 14.12 `Object` as a Type
+A single-field interface (`interface UserId { id: string; }`) MUST NOT be used. A type alias (`type UserId = string`) MUST be used instead. A single-field interface adds a layer with no shape information.
 
-BAD: `function handle(x: Object)`.
+### TS-052 — `Partial<T>` for Update Payloads
 
-GOOD: `function handle(x: object)` or a specific shape.
+**MUST NOT**
 
-Rationale: `Object` (uppercase) refers to the wrapper type and
-matches almost anything.
+`Partial<T>` MUST NOT be used for update payloads. It allows setting `id`, `createdAt`, and any field the caller should not touch. A specific `UpdateUserInput` type MUST be used.
 
-### 14.13 `Function` as a Type
+### TS-053 — Deeply Nested Conditional Types
 
-BAD: `function call(fn: Function)`.
+**MUST NOT**
 
-GOOD: `function call(fn: (...args: unknown[]) => unknown)` or a
-specific signature.
+A type with three or more levels of conditional types is unmaintainable and MUST NOT be used. It MUST be split into named types or replaced with a runtime schema.
 
-### 14.14 `{}` as a Type
+### TS-054 — `Object` as a Type
 
-BAD: `function handle(x: {})`.
+**MUST NOT**
 
-GOOD: `function handle(x: object)`.
+`Object` (uppercase) MUST NOT be used as a type. It refers to the wrapper type and matches almost anything. `object` (lowercase) or a specific shape MUST be used.
 
-Rationale: `{}` matches almost every non-null value, including
-primitives.
+### TS-055 — `Function` as a Type
 
-### 14.15 Casting Through `unknown`
+**MUST NOT**
 
-Covered in 4.3.
+`Function` MUST NOT be used as a type. A specific signature (e.g., `(...args: unknown[]) => unknown`) MUST be used.
 
-### 14.16 Type Assertions on JSON Responses
+### TS-056 — `{}` as a Type
 
-BAD:
-```typescript
-const data = (await response.json()) as User;
-```
+**MUST NOT**
 
-GOOD:
-```typescript
-const data = userSchema.parse(await response.json());
-```
+`{}` MUST NOT be used as a type. It matches almost every non-null value, including primitives. `object` MUST be used.
 
-### 14.17 `readonly` Missing on Public Arrays
+### TS-057 — `readonly` on Public Arrays
 
-BAD:
-```typescript
-function sum(values: number[]) {
-  values.push(0); // mutates the caller's array
-}
-```
+**MUST**
 
-GOOD:
-```typescript
-function sum(values: readonly number[]) { /* ... */ }
-```
+Public arrays passed as arguments MUST be typed as `readonly T[]` to prevent the function from mutating the caller's array.
 
-### 14.18 `interface` Merging in Application Code
+### TS-058 — `interface` Merging in Application Code
 
-Declaration merging is a library feature. In application code, two
-`interface User` declarations that merge silently confuse readers.
+**MUST NOT**
 
-### 14.19 No `satisfies` for Config Objects
+Declaration merging (two `interface User` declarations merging silently) MUST NOT be used in application code. It is a library feature and confuses readers.
 
-Without `satisfies`, a config object either widens or requires an
-explicit type annotation that loses literal types.
+### TS-059 — `declare` for Runtime Values
 
-### 14.20 `declare` for Runtime Values
+**MUST NOT**
 
-`declare const X: T` asserts a value exists at runtime. If it does
-not, the code fails silently. Use it only for genuinely ambient
-values (globals injected by a bundler).
+`declare const X: T` MUST NOT be used for runtime values unless they are genuinely ambient (globals injected by a bundler). If the value does not exist at runtime, the code fails silently.
 
-### 14.21 `// @ts-check` Missing in Plain JS Files
+### TS-060 — `// @ts-check` in Plain JS Files
 
-A `.js` file with `// @ts-check` gets checked. Without it, the file
-is silently ignored by `tsc`.
+**MUST**
 
-### 14.22 Mutable Default Objects in Class Properties
+A `.js` file in a TypeScript project MUST include `// @ts-check` at the top to be checked by `tsc`. Without it, the file is silently ignored.
 
-```typescript
-class Service {
-  private cache: Record<string, string> = {}; // shared across instances
-}
-```
+### TS-061 — Mutable Default Objects in Class Properties
 
-Class properties with object literals are per-instance, but the
-initializer runs once if the class is transpiled to ES5. Prefer
-assigning in the constructor.
+**MUST NOT**
 
-### 14.23 `unknown` Without Narrowing
+Class properties initialized with object literals (`private cache = {}`) MUST NOT be used if the class is transpiled to ES5, as the initializer may run once and be shared. Assignment in the constructor MUST be used.
 
-```typescript
-function handle(data: unknown) {
-  return data.name; // error: Object is of type 'unknown'
-}
-```
+### TS-062 — `unknown` Without Narrowing
 
-`unknown` is a promise to the reader: this value will be narrowed
-before use. Using it without narrowing defeats the point.
+**MUST NOT**
 
-### 14.24 `T extends any` in a Generic
+`unknown` MUST NOT be used without narrowing. Using it without narrowing defeats the point of the type. `unknown` is a promise to the reader that the value will be narrowed before use.
 
-BAD: `<T extends any>(x: T) => x`.
+### TS-063 — `T extends any` in a Generic
 
-This is the same as `<T>(x: T) => x` but noisier.
+**MUST NOT**
 
-### 14.25 Union Type With Overlapping Members
+`<T extends any>` MUST NOT be used. It is the same as `<T>` but noisier.
 
-```typescript
-type Status = "active" | "inactive" | string;
-```
+### TS-064 — Union Type With Overlapping Members
 
-The `string` member makes the literals redundant. Narrow the union.
+**MUST NOT**
 
-### 14.26 `Record<string, any>`
+A union type with overlapping members (e.g., `"active" | "inactive" | string`) MUST NOT be used. The `string` member makes the literals redundant. The union MUST be narrowed.
 
-BAD: `const config: Record<string, any> = {}`.
+### TS-065 — `Record<string, any>`
 
-GOOD: A typed config object with known keys.
+**MUST NOT**
 
-### 14.27 `Promise<any>` Return Type
+`Record<string, any>` MUST NOT be used. A typed config object with known keys or `Record<string, unknown>` MUST be used.
 
-A promise that resolves to `any` disables typing for the resolved
-value and its consumers.
+### TS-066 — `Promise<any>` Return Type
 
-### 14.28 Untyped Catch Variables Without `useUnknownInCatchVariables`
+**MUST NOT**
 
-Without the flag, `catch (e)` types `e` as `any`. With the flag, `e`
-is `unknown` and must be narrowed.
+A promise that resolves to `any` MUST NOT be returned. It disables typing for the resolved value and its consumers.
 
-### 14.29 `ReadonlyArray<T>` Written as `readonly T[]` for Clarity
+### TS-067 — Untyped Catch Variables
 
-Both are valid. Match the project's convention. Mixed use is noise.
+**MUST**
 
-### 14.30 Type-Only Export Missing
+The `useUnknownInCatchVariables` flag MUST be enabled. Without it, `catch (e)` types `e` as `any`. With the flag, `e` is `unknown` and MUST be narrowed.
 
-```typescript
-export { User } from "./types"; // not a type-only export
-```
+### TS-068 — `ReadonlyArray<T>` Syntax Consistency
 
-GOOD:
-```typescript
-export type { User } from "./types";
-```
+**MUST**
 
-Rationale: type-only exports are erased at compile time, preventing
-runtime imports of types.
+The syntax for readonly arrays (`ReadonlyArray<T>` vs `readonly T[]`) MUST be consistent across the project. Mixed use is noise.
 
-## 15. Response to Violation
+### TS-069 — Type-Only Export
 
-If a previous response violated a rule here:
+**MUST**
 
-```
-In the previous response, [specific rule] was violated. Correction:
-[corrected code]
-```
+When re-exporting types, `export type { User }` MUST be used. Type-only exports are erased at compile time, preventing runtime imports of types.
 
-No justification. No apology paragraph. Fix and move on.
+## Response to Violation
+
+When a rule in this file is violated, report:
+
+Violation: TS-{NNN}
+Reason: {one-line reason}
+Correction: {smallest fix}
+
+For multiple violations, report each rule ID separately.
+
+Do not replace a technical correction with a generic explanation.

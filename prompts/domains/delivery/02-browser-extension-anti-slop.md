@@ -2,748 +2,552 @@
 id: 02-browser-extension-anti-slop
 title: "Browser Extension Anti-Slop Layer"
 lang: en
-depends_on: [00-master-anti-slop]
+depends_on: ["_universal/00-style-guide.md", "_universal/00-master-anti-slop.md"]
 category: domain
 domain_type: delivery
-version: 2
+version: 3
 ---
 
 # Browser Extension Anti-Slop Layer
 
-Layered under `_universal/00-master-anti-slop.md`. Universal rules
-(fabrication, fake completion, over-engineering, silent assumptions,
-generic security, dependency addition, output format) are NOT
-repeated here.
+This file defines behavioral contracts specific to browser extensions. It sits in the delivery layer, below the universal anti-slop rules and above framework-specific web patterns. It covers manifest discipline, permissions, service worker lifecycle, content scripts, message passing, storage, UI surfaces, and store compliance. It does not cover general web page logic (see `02-frontend-anti-slop.md`), framework rules (see framework files), language rules (see language files), or detailed security and accessibility concerns (see concern files).
 
-This file covers rules specific to browser extensions: manifest
-discipline, permissions, service worker lifecycle, content scripts,
-message passing, storage, UI surfaces, and store compliance. It does
-NOT cover web page logic (see `02-frontend-anti-slop.md`), framework
-rules (see the framework files), language rules (see the language
-files), or security and accessibility concerns in detail (see the
-concern files).
+An extension runs inside the user's browser, on every page the user visits, with elevated privileges. The browser trusts the extension. The extension MUST be written to deserve that trust.
 
-An extension runs inside the user's browser, on every page the user
-visits, with elevated privileges. The browser trusts the extension.
-The extension must be written to deserve that trust.
+## Scope
 
-## 1. Stack Assumptions
+This file applies to Chrome and Edge extensions (Manifest V3), Firefox extensions (Manifest V2/V3), Safari Web Extensions, and cross-browser extensions using polyfills (e.g., `webextension-polyfill`). The examples use Chrome Extension API names where illustrative. Firefox and Safari APIs differ slightly, but the principles are identical. When the browser is not specified, Manifest V3 for Chromium is assumed.
 
-This file applies to:
+## Rule Severity
 
-- Chrome and Edge extensions (Manifest V3).
-- Firefox extensions (Manifest V2, migrating to V3).
-- Safari extensions (Safari Web Extensions, based on WebKit).
-- Cross-browser extensions using a polyfill (`webextension-polyfill`).
+Severity follows `_universal/00-style-guide.md`.
 
-The examples use the Chrome extension API names. Firefox and Safari
-names differ slightly. The principles are identical. When the
-browser is not specified, assume Manifest V3 for Chromium.
+## Contracts
 
-## 2. Delivery Contracts
+A browser extension commits to six contracts. The table below maps each contract to the rules that enforce it.
 
-A browser extension commits to six contracts. Every section below
-enforces one or more of these.
+| Contract | Description | Enforced By |
+|---|---|---|
+| Permission Minimalism | Requests only the permissions it uses. Every permission is a trust cost. | EXT-001 to EXT-004, EXT-055 |
+| Isolation | Does not corrupt the host page. DOM changes are namespaced, scripts isolated, styles scoped. | EXT-016, EXT-019, EXT-022, EXT-053 |
+| Stateless Service Worker | Survives termination and resumption. No persistent state in memory. | EXT-009 to EXT-015 |
+| Store Compliance | Follows Chrome Web Store, Edge Add-ons, and Mozilla Add-ons policies. | EXT-005 to EXT-008, EXT-043 to EXT-048, EXT-067 |
+| Data Minimalism | Collects only what it needs. Does not exfiltrate data. Discloses collection. | EXT-027, EXT-032, EXT-034, EXT-046 |
+| User Control | User can disable, revoke, and uninstall without artifacts. Does not fight the user. | EXT-036, EXT-042, EXT-072 |
 
-### 2.1 Permission Minimalism
+## Manifest Discipline
 
-The extension requests only the permissions it uses. Every
-permission is a trust cost and a review hurdle.
+### EXT-001 — Minimal Permissions
 
-### 2.2 Isolation
+**MUST**
 
-The extension does not corrupt the host page. Its DOM changes are
-namespaced and removable. Its scripts run in isolated worlds. Its
-styles are scoped.
+Every permission is a review hurdle and a security risk. The extension MUST request only what it explicitly uses.
 
-### 2.3 Stateless Service Worker
-
-The service worker may be terminated at any time. Every behavior
-survives termination and resumption.
-
-### 2.4 Store Compliance
-
-The extension follows the Chrome Web Store, Edge Add-ons, and
-Mozilla Add-ons policies. Non-compliance means removal.
-
-### 2.5 Data Minimalism
-
-The extension collects only what it needs. It does not exfiltrate
-data. It discloses what it collects.
-
-### 2.6 User Control
-
-The user can disable the extension, revoke permissions, and uninstall
-without leaving artifacts. The extension does not fight the user.
-
-## 3. Manifest Discipline
-
-### 3.1 Minimal Permissions
-
-Every permission is a review hurdle and a security risk. Request
-only what the extension uses.
+Example (illustrative, Chrome Extension API):
 
 BAD:
 ```json
 "permissions": ["tabs", "storage", "webRequest", "<all_urls>"]
 ```
 
-For an extension that reads the current tab's URL, the above is
-over-permissioned.
-
 GOOD:
 ```json
 "permissions": ["activeTab", "storage"]
 ```
 
-### 3.2 Optional Permissions
+### EXT-002 — Optional Permissions
 
-For features the user may not need immediately, use
-`optional_permissions` and request at runtime. This reduces the
-initial trust prompt and improves install conversion.
+**SHOULD**
 
-### 3.3 Specific Host Permissions
+For features the user may not need immediately, `optional_permissions` SHOULD be used and requested at runtime. This reduces the initial trust prompt and improves install conversion.
 
-BAD:
-```json
-"host_permissions": ["<all_urls>"]
-```
+### EXT-003 — Specific Host Permissions
 
-GOOD:
-```json
-"host_permissions": ["https://example.com/*"]
-```
+**MUST**
 
-`<all_urls>` triggers additional review and alarms users. Use a
-specific origin when possible.
+Broad host permissions MUST NOT be used when specific origins suffice. `<all_urls>` triggers additional review and alarms users.
 
-### 3.4 `activeTab` Over Broad Host Permissions
+Example (illustrative):
 
-`activeTab` grants temporary access to the current tab when the user
-invokes the extension. It is preferred over host permissions for
-extensions that act on the active page.
+BAD: `"host_permissions": ["<all_urls>"]`
+GOOD: `"host_permissions": ["https://example.com/*"]`
 
-### 3.5 No Remote Code
+### EXT-004 — `activeTab` Preference
 
-Manifest V3 forbids loading code from a remote server. Every script
-is bundled. No `eval`, no `new Function`, no remote `<script src>`.
-The extension's CSP enforces this.
+**SHOULD**
 
-### 3.6 Tight CSP
+`activeTab` grants temporary access to the current tab when the user invokes the extension. It SHOULD be preferred over broad host permissions for extensions that act on the active page via a user gesture.
 
-The extension's Content Security Policy does not include
-`unsafe-eval` or `unsafe-inline`. If a library requires them, find
-another library.
+### EXT-005 — Remote Code Prohibition
 
-### 3.7 Manifest `version` Bumps
+**MUST NOT**
 
-Every publish increments the manifest version. A same-version upload
-is rejected. Use semantic versioning: `1.0.0`, `1.0.1`, `1.1.0`.
+Manifest V3 forbids loading code from a remote server. Every script MUST be bundled. `eval`, `new Function`, and remote `<script src>` MUST NOT be used. The extension's CSP enforces this.
 
-### 3.8 `minimum_chrome_version`
+### EXT-006 — Tight CSP
 
-If the extension uses an API introduced in a recent Chrome version,
-state the minimum. Older browsers reject the install cleanly
-instead of failing at runtime.
+**MUST NOT**
 
-## 4. Service Worker (Background)
+The extension's Content Security Policy MUST NOT include `unsafe-eval` or `unsafe-inline`. If a library requires them, a different library MUST be found.
 
-### 4.1 No Persistent State in Memory
+### EXT-007 — Manifest Version Bumps
 
-A Manifest V3 service worker terminates after 30 seconds of
-inactivity. State in module-level variables is lost.
+**MUST**
 
-BAD:
-```javascript
-let currentUser = null;
-```
+Every publish MUST increment the manifest version. A same-version upload is rejected. Semantic versioning (e.g., `1.0.0`, `1.0.1`, `1.1.0`) MUST be used.
 
-GOOD:
-```javascript
-await chrome.storage.session.set({ currentUser });
-```
+### EXT-008 — Minimum Browser Version
 
-### 4.2 Use `chrome.storage` for Persistence
+**MUST**
 
-- `storage.session`: in-memory, cleared on browser restart.
-- `storage.local`: persists until uninstalled.
-- `storage.sync`: syncs across devices, quota-limited.
+If the extension uses an API introduced in a recent browser version, `minimum_chrome_version` (or equivalent) MUST be stated. Older browsers will reject the install cleanly instead of failing at runtime.
 
-Choose the right one. `storage.session` for transient state,
-`storage.local` for durable state.
+## Service Worker (Background)
 
-### 4.3 Event Listeners Registered Synchronously
+### EXT-009 — No Persistent Memory State
 
-Event listeners (message, alarm, action, tabs, webNavigation) are
-registered at the top level of the service worker, not inside an
-async function or a callback. Otherwise the listener is registered
-after the event fires.
+**MUST NOT**
 
-BAD:
-```javascript
-chrome.storage.local.get(["enabled"]).then(({ enabled }) => {
-  if (enabled) {
-    chrome.runtime.onMessage.addListener(handleMessage);
-  }
-});
-```
+A Manifest V3 service worker terminates after ~30 seconds of inactivity. State in module-level variables is lost and MUST NOT be relied upon.
 
-GOOD:
-```javascript
-chrome.runtime.onMessage.addListener(handleMessage);
-```
+Example (illustrative):
 
-The handler itself reads state from `chrome.storage` when needed.
+BAD: `let currentUser = null;`
+GOOD: `await chrome.storage.session.set({ currentUser });`
 
-### 4.4 `chrome.alarms` Over `setInterval`
+### EXT-010 — Chrome Storage Usage
 
-`setInterval` does not survive service worker termination. Use
-`chrome.alarms` for periodic work.
+**MUST**
 
-BAD:
-```javascript
-setInterval(checkForUpdates, 60_000);
-```
+`chrome.storage` MUST be used for persistence. `storage.session` MUST be used for transient state (cleared on restart), and `storage.local` MUST be used for durable state.
 
-GOOD:
-```javascript
-chrome.alarms.create("check-updates", { periodInMinutes: 1 });
-chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === "check-updates") checkForUpdates();
-});
-```
+### EXT-011 — Synchronous Event Listener Registration
 
-### 4.5 No Long-Running Tasks
+**MUST**
 
-A task over 30 seconds may be killed. Break into chunks, use an
-offscreen document, or offload to a native host.
+Event listeners (message, alarm, action, tabs, webNavigation) MUST be registered synchronously at the top level of the service worker. Registering them inside an async function or callback causes them to miss events that fire before registration.
 
-### 4.6 No DOM Access in the Service Worker
+### EXT-012 — `chrome.alarms` Over `setInterval`
 
-The service worker has no DOM. `document` is undefined. Use an
-offscreen document for DOM-requiring APIs (parsing, canvas,
-audio).
+**MUST**
 
-### 4.7 Persist Work in Progress
+`setInterval` does not survive service worker termination and MUST NOT be used. `chrome.alarms` MUST be used for periodic work.
 
-If the service worker may be terminated mid-operation, persist the
-work and resume on the next event.
+### EXT-013 — Long-Running Task Prohibition
 
-## 5. Content Scripts
+**MUST NOT**
 
-### 5.1 Isolated World by Default
+A task over 30 seconds may be killed by the browser. Long tasks MUST be broken into chunks, offloaded to an offscreen document, or delegated to a native host.
 
-Content scripts run in an isolated world. They have access to the
-DOM but not to the page's JavaScript variables. `window.myApp` is
-not accessible.
+### EXT-014 — No DOM Access in Service Worker
 
-### 5.2 Message Passing to the Service Worker
+**MUST NOT**
 
-Content scripts communicate with the service worker via
-`chrome.runtime.sendMessage`. The service worker responds
-asynchronously.
+The service worker has no DOM (`document` is undefined). DOM-requiring APIs (parsing, canvas, audio) MUST use an offscreen document.
 
-### 5.3 No `eval` in Content Scripts
+### EXT-015 — Work in Progress Persistence
 
-Same rule as the service worker. The extension's CSP forbids it.
+**MUST**
 
-### 5.4 Scoped DOM Changes
+If the service worker may be terminated mid-operation, the work MUST be persisted and resumed on the next event.
 
-Every DOM change is namespaced with a class prefix or a custom
-attribute. Without it, the extension's elements conflict with the
-page's.
+## Content Scripts
 
-BAD:
-```html
-<div class="toolbar">...</div>
-```
+### EXT-016 — Isolated World Assumption
 
-GOOD:
-```html
-<div class="myext-toolbar" data-myext="true">...</div>
-```
+**MUST**
 
-### 5.5 `MutationObserver` With Filtering
+Content scripts run in an isolated world. They have access to the DOM but not to the page's JavaScript variables (e.g., `window.myApp`). Code MUST NOT assume access to the page's JS context.
 
-`MutationObserver` on a busy page fires constantly. Filter the
-observations to the subtree that matters.
+### EXT-017 — Service Worker Message Passing
 
-BAD:
-```javascript
-observer.observe(document.body, { childList: true, subtree: true });
-```
+**MUST**
 
-GOOD:
-```javascript
-observer.observe(document.querySelector("#app"), {
-  childList: true,
-  subtree: false,
-});
-```
+Content scripts MUST communicate with the service worker via `chrome.runtime.sendMessage`. The service worker responds asynchronously.
 
-### 5.6 Cleanup on Unload
+### EXT-018 — No `eval` in Content Scripts
 
-DOM elements added by the content script are removed when the
-extension is disabled or the page unloads.
+**MUST NOT**
 
-### 5.7 No Global Styles
+The extension's CSP forbids `eval` in content scripts. It MUST NOT be used.
 
-A content script does not inject global CSS. Styles are scoped to
-the extension's elements, or injected into a shadow DOM.
+### EXT-019 — Scoped DOM Changes
 
-BAD:
-```css
-button { background: red; }
-```
+**MUST**
 
-GOOD:
-```css
-.myext-toolbar button { background: red; }
-```
+Every DOM change MUST be namespaced with a class prefix or a custom attribute to prevent conflicts with the host page's elements.
 
-### 5.8 Handle Pages Without the Expected DOM
+Example (illustrative):
 
-A content script runs on any matching URL. If the page does not
-have the expected structure, the script exits cleanly.
+BAD: `<div class="toolbar">...</div>`
+GOOD: `<div class="myext-toolbar" data-myext="true">...</div>`
 
-## 6. Message Passing
+### EXT-020 — Filtered MutationObserver
 
-### 6.1 Typed Messages
+**MUST**
 
-Every message has a `type` field. Handlers switch on the type.
-Unknown types are ignored, not silently processed.
+`MutationObserver` on a busy page fires constantly. Observations MUST be filtered to the specific subtree that matters. Observing the entire `document.body` with `subtree: true` is prohibited unless strictly necessary.
 
-```javascript
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  switch (msg.type) {
-    case "GET_USER": return handleGetUser(sendResponse);
-    case "SET_USER": return handleSetUser(msg, sendResponse);
-    default: return false;
-  }
-});
-```
+### EXT-021 — Cleanup on Unload
 
-### 6.2 Async Responses
+**MUST**
 
-An async handler returns `true` from the listener and calls
-`sendResponse` later.
+DOM elements and event listeners added by the content script MUST be removed when the extension is disabled or the page unloads.
 
-BAD:
-```javascript
-chrome.runtime.onMessage.addListener(async (msg, sender, sendResponse) => {
-  const result = await handle(msg);
-  sendResponse(result); // channel already closed
-});
-```
+### EXT-022 — No Global Styles
 
-GOOD:
-```javascript
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  (async () => {
-    const result = await handle(msg);
-    sendResponse(result);
-  })();
-  return true;
-});
-```
+**MUST NOT**
 
-### 6.3 Never Trust the Sender
+A content script MUST NOT inject global CSS (e.g., `button { background: red; }`). Styles MUST be scoped to the extension's elements or injected into a shadow DOM.
 
-A content script can claim to be from any URL. Validate
-`sender.origin` or `sender.tab.url` when the response is sensitive.
+### EXT-023 — Graceful DOM Absence
 
-### 6.4 No Sensitive Data in Messages
+**MUST**
 
-Messages between content scripts and the service worker may be
-observed. Do not pass tokens or PII unnecessarily.
+A content script runs on any matching URL. If the page does not have the expected DOM structure, the script MUST exit cleanly without throwing errors.
 
-### 6.5 Message Versioning
+## Message Passing
 
-The message protocol is versioned. A content script injected by an
-old version talks to a new service worker during an update.
-Include a protocol version in messages and handle mismatches.
+### EXT-024 — Typed Messages
 
-### 6.6 No Direct DOM Access From Messages
+**MUST**
 
-The service worker does not manipulate the DOM. The content script
-does. Messages carry data, not selectors or HTML strings.
+Every message MUST have a `type` field. Handlers MUST switch on the type. Unknown types MUST be ignored, not silently processed.
 
-### 6.7 Idempotent Handlers
+### EXT-025 — Async Response Handling
 
-A message handler that runs twice does not cause harm. This matters
-during reconnections and duplicated events.
+**MUST**
 
-## 7. Storage
+An async handler MUST return `true` from the listener synchronously and call `sendResponse` later. Failing to return `true` closes the channel before the async work completes.
 
-### 7.1 Quotas
+### EXT-026 — Sender Trust Prohibition
 
-`chrome.storage.local` has a 10 MB quota by default (unlimited with
-the `unlimitedStorage` permission). `chrome.storage.sync` has 100 KB
-total, 8 KB per item. Design within these limits.
+**MUST NOT**
 
-### 7.2 No Secrets in `storage.sync`
+A content script can claim to be from any URL. `sender.origin` or `sender.tab.url` MUST be validated when the response is sensitive. Blindly trusting the sender is prohibited.
 
-`storage.sync` synchronizes to the user's Google account. Do not
-put tokens there.
+### EXT-027 — No Sensitive Data in Messages
 
-### 7.3 Schema Versioning
+**MUST NOT**
 
-When the stored data shape changes, migrate. Otherwise existing
-users' data is misread.
+Messages between content scripts and the service worker may be observed. Tokens or PII MUST NOT be passed unnecessarily.
 
-BAD:
-```javascript
-const { settings } = await chrome.storage.local.get("settings");
-// assumes the new shape; old data breaks
-```
+### EXT-028 — Message Protocol Versioning
 
-GOOD:
-```javascript
-const { settings, schemaVersion = 1 } = await chrome.storage.local.get([
-  "settings",
-  "schemaVersion",
-]);
-const migrated = migrateSettings(settings, schemaVersion);
-```
+**MUST**
 
-### 7.4 Encrypt Sensitive Data
+The message protocol MUST be versioned. A content script injected by an old version may talk to a new service worker during an update. A protocol version MUST be included and mismatches handled.
 
-If the extension stores tokens, encrypt them before writing. The
-`storage.local` area is readable by anything with filesystem access
-to the user's profile.
+### EXT-029 — No Direct DOM Access From Messages
 
-### 7.5 Batch Reads and Writes
+**MUST NOT**
 
-`chrome.storage.local.get` and `.set` are async. Batch operations
-to reduce round trips.
+The service worker does not manipulate the DOM. Messages MUST carry data, not selectors or HTML strings for the service worker to process.
 
-BAD:
-```javascript
-const a = await chrome.storage.local.get("a");
-const b = await chrome.storage.local.get("b");
-const c = await chrome.storage.local.get("c");
-```
+### EXT-030 — Idempotent Handlers
 
-GOOD:
-```javascript
-const { a, b, c } = await chrome.storage.local.get(["a", "b", "c"]);
-```
+**MUST**
 
-### 7.6 Clean Up on Uninstall
+Message handlers MUST be idempotent. A handler that runs twice (due to reconnections or duplicated events) MUST NOT cause harm.
 
-The `runtime.onInstalled` event with `details.reason === "uninstall"`
-allows cleanup. Use it for remote config, server-side sessions, or
-user-specific state that should not persist.
+## Storage
 
-## 8. UI Surfaces
+### EXT-031 — Quota Awareness
 
-### 8.1 Popup Is Transient
+**MUST**
 
-A popup closes when the user clicks outside it. Do not put workflows
-that require multiple clicks in the popup unless the state is
-persisted.
+Storage quotas (`storage.local` default 10 MB, `storage.sync` 100 KB total / 8 KB per item) MUST be respected. Data structures MUST be designed within these limits.
 
-### 8.2 Options Page for Complex Settings
+### EXT-032 — No Secrets in `storage.sync`
 
-Options live in `options.html`, not in the popup. Popups are for
-quick actions, not configuration.
+**MUST NOT**
 
-### 8.3 Action Badge
+`storage.sync` synchronizes to the user's cloud account. Tokens and secrets MUST NOT be stored there.
 
-The badge is 4 characters maximum. Use it sparingly. A badge that
-is always visible is noise.
+### EXT-033 — Schema Versioning and Migration
 
-### 8.4 Context Menus
+**MUST**
 
-Register context menu items in the service worker. Validate the
-`info` argument before acting.
+When the stored data shape changes, a migration MUST be applied. Reading new shapes directly from old data breaks existing users.
 
-### 8.5 Side Panel and DevTools
+### EXT-034 — Sensitive Data Encryption
 
-Chrome's Side Panel and DevTools panels are for extended UI. Use
-them when the popup is too small.
+**MUST**
 
-### 8.6 No Full-Page Overlays
+If the extension stores tokens locally, they MUST be encrypted before writing to `storage.local`, as it is readable by anything with filesystem access to the user's profile.
 
-An overlay that covers the whole page disrupts the user. Use a
-small floating widget, a popup, or a side panel.
+### EXT-035 — Batched Storage Operations
 
-## 9. Publishing and Store Compliance
+**SHOULD**
 
-### 9.1 Store Listing Content
+`chrome.storage.local.get` and `.set` are async. Operations SHOULD be batched to reduce round trips.
 
-- Clear description.
-- Screenshots showing actual functionality.
-- Privacy policy if the extension handles user data.
-- Justification for every permission in the developer dashboard.
+### EXT-036 — Uninstall Cleanup
 
-### 9.2 Single Purpose
+**MUST**
 
-Chrome Web Store requires a single, narrow purpose. An extension
-that does five things is rejected or split.
+The `runtime.onInstalled` event (or `runtime.setUninstallURL`) MUST be used to clean up remote config, server-side sessions, or user-specific state that should not persist after uninstall.
 
-### 9.3 No Deceptive Behavior
+## UI Surfaces
 
-No hidden tracking, no ad injection, no changing the user's search
-engine without consent. Deceptive behavior is an immediate removal.
+### EXT-037 — Transient Popup
 
-### 9.4 Data Collection Disclosure
+**MUST**
 
-Both Chrome and Firefox require a privacy disclosure listing the
-data collected and its use. Match the disclosure to the actual
-behavior.
+A popup closes when the user clicks outside it. Workflows requiring multiple clicks MUST NOT be placed in the popup unless the state is strictly persisted.
 
-### 9.5 Update Cadence
+### EXT-038 — Options Page for Complex Settings
 
-Frequent updates are fine, but each update is reviewed. A breaking
-change requires a version bump and a release note.
+**MUST**
 
-### 9.6 No Remotely Hosted Code
+Complex configuration MUST live in `options.html`, not in the popup. Popups are for quick actions.
 
-Manifest V3 forbids loading code from a remote server. Every script
-is bundled. Configuration and rules can be remote; code cannot.
+### EXT-039 — Action Badge Discipline
 
-### 9.7 Reviewable Source
+**MUST**
 
-If the extension is minified, provide the source map or a link to
-the source. Reviewers reject opaque extensions.
+The badge is 4 characters maximum. It MUST be used sparingly. A badge that is always visible without updating is noise.
 
-## 10. Security
+### EXT-040 — Context Menu Validation
 
-### 10.1 Cross-Origin Requests Through the Service Worker
+**MUST**
 
-Content scripts cannot make cross-origin requests. The service
-worker does, using `fetch`. Validate the URLs before fetching.
+Context menu items MUST be registered in the service worker. The `info` argument MUST be validated before acting.
 
-### 10.2 `chrome.scripting` Injection With Validation
+### EXT-041 — Extended UI Surfaces
 
-BAD:
-```javascript
-chrome.scripting.executeScript({
-  target: { tabId },
-  files: [userProvidedPath],
-});
-```
+**SHOULD**
 
-GOOD: A static list of script files. Never a user-provided path.
+Chrome's Side Panel and DevTools panels SHOULD be used when the popup is too small for the required UI.
 
-### 10.3 Content Security Policy
+### EXT-042 — No Full-Page Overlays
 
-The extension's CSP is set in the manifest. Do not weaken it.
-`unsafe-eval` and `unsafe-inline` are rejected by the store.
+**MUST NOT**
 
-### 10.4 No Token in URL
+An overlay that covers the whole page disrupts the user and MUST NOT be used. A small floating widget, a popup, or a side panel MUST be used instead.
 
-Tokens in query strings are logged by proxies and leaked via
-referrers. Use headers or `chrome.storage`.
+## Publishing and Store Compliance
 
-### 10.5 Validate Incoming Messages
+### EXT-043 — Store Listing Accuracy
 
-A message handler validates every field of the message. A malformed
-message does not crash the handler.
+**MUST**
 
-### 10.6 No Privilege Escalation via DOM
+The store listing MUST have a clear description, screenshots showing actual functionality, a privacy policy if handling user data, and justification for every permission in the developer dashboard.
 
-A content script that reads from the page's DOM trusts page
-content. Sanitize before using values from the DOM.
+### EXT-044 — Single Purpose
 
-## 11. Performance
+**MUST**
 
-### 11.1 No Blocking Page Load
+Chrome Web Store requires a single, narrow purpose. An extension that does multiple unrelated things will be rejected or MUST be split.
 
-A content script at `document_start` runs before the page's DOM is
-ready. Do not perform heavy work there. Defer to `DOMContentLoaded`
-or later.
+### EXT-045 — Deceptive Behavior Prohibition
 
-### 11.2 Lazy Injection
+**MUST NOT**
 
-Inject content scripts only on pages where they are needed. Use
-`matches` in the manifest and dynamic injection for opt-in features.
+Hidden tracking, ad injection, or changing the user's search engine without explicit consent are immediate removal offenses and MUST NOT be used.
 
-### 11.3 Bundle Size
+### EXT-046 — Data Collection Disclosure
 
-The extension's bundle is downloaded once per install and stored on
-disk. Keep it small. Unused dependencies inflate the package.
+**MUST**
 
-### 11.4 No Infinite `MutationObserver`
+Privacy disclosures listing collected data and its use MUST match the actual behavior of the extension.
 
-An observer that triggers DOM changes that trigger the observer
-loops forever. Break the cycle by filtering or debouncing.
+### EXT-047 — Update Cadence and Notes
 
-### 11.5 Debounce Storage Writes
+**MUST**
 
-Every `chrome.storage.local.set` is async and has a cost. Debounce
-high-frequency writes.
+Breaking changes MUST include a version bump and a release note.
 
-## 12. Anti-Patterns
+### EXT-048 — Reviewable Source
 
-### 12.1 Broad Permissions
+**MUST**
 
-Covered in 3.1 and 3.3. Over-permissioning is the most common
-review rejection cause.
+If the extension is minified, the source map or a link to the source MUST be provided. Reviewers reject opaque extensions.
 
-### 12.2 Remote Code
+## Security
 
-Any script loaded from a URL fails review and violates the store
-policy.
+### EXT-049 — Cross-Origin Request Routing
 
-### 12.3 Persistent Service Worker State
+**MUST**
 
-Module-level variables are lost when the service worker terminates.
+Content scripts cannot make cross-origin requests. The service worker MUST make them using `fetch`. URLs MUST be validated before fetching.
 
-### 12.4 `setInterval` in the Service Worker
+### EXT-050 — `chrome.scripting` Injection Validation
 
-Does not survive termination. Use `chrome.alarms`.
+**MUST NOT**
 
-### 12.5 Listener Registered Inside an Async Function
+User-provided paths MUST NOT be passed to `chrome.scripting.executeScript`. A static list of script files MUST be used.
 
-The listener misses events that occur before it registers. Register
-listeners synchronously at the top level.
+### EXT-051 — No Token in URL
 
-### 12.6 DOM Pollution
+**MUST NOT**
 
-Global styles or un-namespaced elements conflict with the host page.
-Scope everything.
+Tokens in query strings are logged by proxies and leaked via referrers. They MUST be passed via headers or `chrome.storage`.
 
-### 12.7 `MutationObserver` on the Whole Document
+### EXT-052 — Incoming Message Validation
 
-Fires on every DOM change. Filter to the subtree that matters.
+**MUST**
 
-### 12.8 Unhandled Messages
+A message handler MUST validate every field of the message. A malformed message MUST NOT crash the handler.
 
-A message handler that does not switch on `type` and does not
-return `false` leaves the response channel open. The caller times
-out.
+### EXT-053 — DOM Privilege Escalation Prevention
 
-### 12.9 Sync `storage.sync` for Secrets
+**MUST**
 
-Tokens in `storage.sync` are synchronized to the user's account.
-Use `storage.local` with encryption.
+A content script that reads from the page's DOM trusts page content. Values from the DOM MUST be sanitized before use to prevent XSS or privilege escalation.
 
-### 12.10 `innerHTML` From User Input
+## Performance
 
-BAD: `popup.innerHTML = userProvidedText`.
+### EXT-054 — No Blocking Page Load
 
-GOOD: `popup.textContent = userProvidedText`.
+**MUST NOT**
 
-The extension's origin has elevated privileges. XSS here is worse
-than on a normal page.
+A content script at `document_start` runs before the page's DOM is ready. Heavy work MUST NOT be performed there. It MUST be deferred to `DOMContentLoaded` or later.
 
-### 12.11 No CSP
+### EXT-055 — Lazy Injection
 
-A manifest without a CSP (in Manifest V2) or with an `unsafe-eval`
-CSP is rejected.
+**MUST**
 
-### 12.12 Injecting Into Every Page
+Content scripts MUST only be injected on pages where they are needed. `matches` in the manifest and dynamic injection for opt-in features MUST be used. Injecting into `<all_urls>` for a niche feature is prohibited.
 
-A content script that runs on `<all_urls>` for a feature that only
-matters on three sites wastes resources and increases the attack
-surface.
+### EXT-056 — Bundle Size Discipline
 
-### 12.13 Unhandled Errors in Content Scripts
+**MUST**
 
-An error in a content script may break the page. Wrap in
-try/catch and report to the service worker.
+The extension's bundle is downloaded once per install and stored on disk. Unused dependencies MUST be removed to keep it small.
 
-### 12.14 No Update Migration
+### EXT-057 — Infinite MutationObserver Prohibition
 
-A schema change without migration breaks existing users' data.
+**MUST NOT**
 
-### 12.15 Synchronous Storage Reads in Hot Paths
+An observer that triggers DOM changes that trigger the observer loops forever. The cycle MUST be broken by filtering or debouncing.
 
-`chrome.storage.local.get` is async. Calling it on every keystroke
-in a content script is slow. Cache in memory.
+### EXT-058 — Debounced Storage Writes
 
-### 12.16 Message Protocol Without Version
+**MUST**
 
-The message format changes between extension versions. Content
-scripts injected by an old version miscommunicate with a new
-service worker during an update.
+Every `chrome.storage.local.set` is async and has a cost. High-frequency writes MUST be debounced.
 
-### 12.17 Blocking the Main Thread on the Page
+## AI-Specific Browser Extension Discipline
 
-A content script that runs a heavy loop blocks the page's rendering.
-Yield or offload to the service worker.
+### EXT-080 — Extension API Verification
 
-### 12.18 No Uninstall Cleanup
+**MUST**
 
-State stored in `storage.local` remains after uninstall in some
-browsers. Provide a cleanup path via `runtime.setUninstallURL`.
+Before using a browser extension API (e.g., `chrome.declarativeNetRequest`, `chrome.sidePanel`), the assistant MUST verify the API exists in the target Manifest version (V2 vs V3) and browser. Invented APIs or V2 APIs used in V3 cause immediate review rejection or runtime crashes.
 
-### 12.19 Badge Updates on Every Event
+See MAS-036 in `_universal/00-master-anti-slop.md`.
 
-A badge update on every message causes flicker and CPU churn.
-Debounce.
+### EXT-081 — Existing Handler Discovery
 
-### 12.20 No Error Reporting
+**MUST**
 
-A silent failure in the service worker means a broken extension
-with no diagnostic. Log to `storage.local` or a remote service with
-consent.
+Before creating a new content script, message listener, or background task, the assistant MUST search the project for an existing equivalent. Inventing parallel message channels or duplicate content scripts creates state desyncs and memory leaks.
 
-### 12.21 Trusting `sender.url` Blindly
+See MAS-035 in `_universal/00-master-anti-slop.md`.
 
-A content script can claim any URL. Validate `sender.origin` against
-the extension's allowlist.
+### EXT-082 — Permission Restraint
 
-### 12.22 `tabs` Permission for `activeTab` Use Case
+**SHOULD**
 
-BAD: Requesting `tabs` when the extension only needs the active
-tab.
+The assistant SHOULD NOT suggest broad permissions (e.g., `<all_urls>`, `webRequest`) when a narrower alternative (e.g., `activeTab`, `declarativeNetRequest`) exists. Over-permissioning is the primary cause of store review rejection.
 
-GOOD: `activeTab` with a user gesture.
+See MAS-038 in `_universal/00-master-anti-slop.md`.
 
-### 12.23 `webRequest` in Manifest V3
+## Anti-Patterns
 
-`webRequest` blocking is replaced by `declarativeNetRequest`. Using
-the old API is rejected.
+### EXT-059 — Unhandled Message Channels
 
-### 12.24 Inline Scripts in Extension Pages
+**MUST NOT**
 
-Inline `<script>` blocks are rejected by the CSP. Use external
-script files.
+A message handler that does not switch on `type` and does not return `false` leaves the response channel open. The caller times out. Unhandled messages MUST return `false`.
 
-### 12.25 localStorage in Extension Pages
+### EXT-060 — `innerHTML` XSS Prohibition
 
-`localStorage` in an extension page is not synchronized with
-`chrome.storage` and is not accessible from the service worker.
-Use `chrome.storage` consistently.
+**MUST NOT**
 
-### 12.26 `window.open` Without Validation
+Assigning user input or DOM-scraped text to `innerHTML` in extension pages (popup, options) is prohibited. The extension's origin has elevated privileges; XSS here is critical. `textContent` or strict sanitization MUST be used.
 
-BAD: `window.open(userProvidedUrl)`.
+### EXT-061 — Unhandled Content Script Errors
 
-GOOD: Validate against an allowlist of domains.
+**MUST**
 
-### 12.27 Mixed Content in Extension Pages
+An error in a content script may break the host page. Content scripts MUST wrap execution in try/catch and report errors to the service worker.
 
-An extension page that loads `http://` resources is blocked by
-default. Use `https://` or bundle the resource.
+### EXT-062 — Synchronous Storage Reads in Hot Paths
 
-### 12.28 No `incognito` Strategy
+**MUST NOT**
 
-An extension that behaves differently in incognito without
-documentation confuses users. Declare `incognito` mode in the
-manifest and document the behavior.
+`chrome.storage.local.get` is async. Calling it on every keystroke or mouse move in a content script is slow. Data MUST be cached in memory.
 
-### 12.29 File Downloads Without a Reason
+### EXT-063 — Main Thread Blocking
 
-`chrome.downloads` requires a permission and is a review trigger.
-Use it only when the extension genuinely downloads files, not as a
-convenience.
+**MUST NOT**
 
-### 12.30 No Content Script Cleanup
+A content script that runs a heavy synchronous loop blocks the host page's rendering. Work MUST yield to the event loop or be offloaded to the service worker.
 
-A content script that adds listeners or observers without removing
-them leaks memory. Remove listeners on `unload`.
+### EXT-064 — Badge Update Flicker
 
-## 13. Response to Violation
+**MUST NOT**
 
-If a previous response violated a rule here:
+Updating the action badge on every single message or event causes flicker and CPU churn. Badge updates MUST be debounced.
 
-```
-In the previous response, [specific rule] was violated. Correction:
-[corrected code]
-```
+### EXT-065 — Silent Service Worker Failures
 
-No justification. No apology paragraph. Fix and move on.
+**MUST NOT**
+
+A silent failure in the service worker means a broken extension with no diagnostic. Errors MUST be logged to `storage.local` or a remote service (with user consent).
+
+### EXT-066 — `webRequest` Blocking in V3
+
+**MUST NOT**
+
+`webRequest` blocking is replaced by `declarativeNetRequest` in Manifest V3. Using the old blocking API is rejected by the store.
+
+### EXT-067 — Inline Scripts in Extension Pages
+
+**MUST NOT**
+
+Inline `<script>` blocks in extension pages (popup, options) are rejected by the default CSP. External script files MUST be used.
+
+### EXT-068 — `localStorage` in Extension Pages
+
+**MUST NOT**
+
+`localStorage` in an extension page is not synchronized with `chrome.storage` and is not accessible from the service worker. `chrome.storage` MUST be used consistently.
+
+### EXT-069 — Unvalidated `window.open`
+
+**MUST NOT**
+
+`window.open(userProvidedUrl)` is prohibited. URLs MUST be validated against an allowlist of domains.
+
+### EXT-070 — Mixed Content Prohibition
+
+**MUST NOT**
+
+An extension page loading `http://` resources is blocked by default. `https://` or bundled resources MUST be used.
+
+### EXT-071 — Incognito Strategy Declaration
+
+**MUST**
+
+An extension that behaves differently in incognito without documentation confuses users. `incognito` mode MUST be declared in the manifest and the behavior documented.
+
+### EXT-072 — File Download Justification
+
+**MUST**
+
+`chrome.downloads` requires a permission and is a review trigger. It MUST only be used when the extension genuinely downloads files, not as a convenience.
+
+## Response to Violation
+
+When a rule in this file is violated, report:
+
+Violation: EXT-{NNN}
+Reason: {one-line reason}
+Correction: {smallest fix}
+
+For multiple violations, report each rule ID separately.
+
+Do not replace a technical correction with a generic explanation.

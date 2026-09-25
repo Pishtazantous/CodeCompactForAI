@@ -2,372 +2,420 @@
 id: 02-game-anti-slop
 title: "Game Anti-Slop Layer"
 lang: en
-depends_on: [00-master-anti-slop]
+depends_on: ["_universal/00-style-guide.md", "_universal/00-master-anti-slop.md"]
 category: domain
 domain_type: delivery
-version: 1
+version: 2
 ---
 
 # Game Anti-Slop Layer
 
-Layered under `_universal/00-master-anti-slop.md`. Universal rules
-(fabrication, fake completion, over-engineering, silent assumptions,
-security anti-patterns, output format) are NOT repeated here.
+This file defines behavioral contracts specific to game development. It sits in the delivery layer, below the universal anti-slop rules and above engine-specific or language-specific patterns. It covers frame budgets, entity systems, asset pipelines, determinism, netcode, and the patterns that produce stutters, desyncs, or unshippable builds. It does not cover language-specific rules (see language files) or engine-specific rules for Unity, Unreal, or Godot (see framework files when present).
 
-This file covers rules specific to game development: frame budget,
-entity systems, asset pipelines, determinism, netcode, and the
-patterns that produce stutters, desyncs, or unshippable builds.
-Language-specific rules live in `domains/language/`. Engine-specific
-rules (Unity, Unreal, Godot) live in `domains/framework/` when
-present.
+A game is a real-time simulation bound by strict hardware limits. A bug is not just a crash; it is a dropped frame, a desync, or an unshippable build.
 
-## 1. Stack Assumptions
+## Scope
 
-This layer applies to:
+This file applies to native engines (Unreal, custom C++ engines), managed engines (Unity, Godot), web games (Three.js, Babylon.js, WebGL), 2D and 3D games, single-player and multiplayer architectures, and PC, console, mobile, and web targets. The principles are engine-agnostic. The examples use C# and C++ syntax where illustrative.
 
-- Native engines (Unreal, custom C++ engines).
-- Managed engines (Unity, Godot).
-- Web games (Three.js, Babylon.js, WebGL).
-- 2D and 3D games, single-player and multiplayer.
-- PC, console, mobile, and web targets.
+## Rule Severity
 
-## 2. Frame Budget
+Severity follows `_universal/00-style-guide.md`.
 
-### 2.1 16.67 ms for 60 FPS
+## Contracts
 
-Every frame has a budget. 60 FPS means 16.67 ms per frame. 30 FPS
-means 33.33 ms. Exceeding the budget drops a frame.
+A game system commits to five contracts. The table below maps each contract to the rules that enforce it.
 
-### 2.2 Budget Breakdown
+| Contract | Description | Enforced By |
+|---|---|---|
+| Frame Budget Discipline | Every subsystem operates within a measured time budget to maintain target FPS. | GAME-001 to GAME-004 |
+| Architecture & Memory | Entity systems use composition, data-oriented design, and stable IDs to maximize cache coherence. | GAME-005 to GAME-009, GAME-039 |
+| Determinism & Loop | Simulation runs on a fixed timestep, interpolates for rendering, and produces identical outputs for identical inputs. | GAME-010 to GAME-018 |
+| Network Integrity | The server is authoritative, clients predict and reconcile, and bandwidth is bounded. | GAME-019 to GAME-027, GAME-049 |
+| Pipeline & Asset Flow | Assets are built, compressed, streamed, and versioned without blocking the main thread. | GAME-028 to GAME-036, GAME-054, GAME-055 |
 
-- Simulation (physics, AI, gameplay logic): ~50%.
-- Rendering: ~30%.
-- Audio: ~5%.
-- Everything else: ~15%.
+## Frame Budget
 
-The exact split depends on the game. The rule is: every subsystem
-has a budget, and it is measured.
+### GAME-001 — Frame Budget Adherence
 
-### 2.3 Profile Before Optimizing
+**MUST**
 
-A 10 FPS drop is either one slow system or a thousand small costs.
-The profiler tells which.
+Every frame MUST have a strict time budget. 60 FPS requires a 16.67 ms budget; 30 FPS requires 33.33 ms. Exceeding the budget drops a frame and degrades the user experience.
 
-### 2.4 No Synchronous Asset Loads During Gameplay
+### GAME-002 — Subsystem Budget Measurement
 
-Loading a texture, model, or audio clip mid-frame causes a stutter.
-Assets are loaded asynchronously or during a loading screen.
+**MUST**
 
-## 3. Entity and Component Systems
+Every subsystem (simulation, rendering, audio, I/O) MUST have a defined and measured time budget. A typical split might be ~50% simulation, ~30% rendering, ~5% audio, and ~15% other, but the exact split MUST be profiled and enforced per project.
 
-### 3.1 Prefer Composition Over Inheritance
+### GAME-003 — Profiler-Driven Optimization
 
-A `Player` inheriting from `Character` inheriting from `GameObject`
-is rigid. Composition (a `Player` has a `Movement`, a `Health`, a
-`Renderer`) is flexible.
+**MUST**
 
-### 3.2 Data-Oriented When Performance Requires
+Optimization MUST be driven by profiler data, not assumptions. A frame drop is either one slow system or a thousand small costs; the profiler MUST dictate the target.
 
-For hundreds or thousands of entities, structure-of-arrays layout
-is faster than array-of-objects. Use it in hot systems.
+### GAME-004 — Asynchronous Asset Loading
 
-### 3.3 Component Purity
+**MUST NOT**
 
-A component holds data, not behavior. Systems process components.
-This separation enables caching, networking, and serialization.
+Synchronous loading of textures, models, or audio clips during gameplay MUST NOT occur, as it causes frame stutters. Assets MUST be loaded asynchronously or during designated loading screens.
 
-### 3.4 Entity IDs Are Stable
+## Entity and Component Systems
 
-An entity ID is not a pointer. It survives save/load, network
-transfers, and frame boundaries.
+### GAME-005 — Composition Over Inheritance
 
-### 3.5 System Order Is Deterministic
+**MUST**
 
-The order in which systems run affects the simulation. Define it
-explicitly. Do not rely on dictionary iteration order.
+Entity architecture MUST prefer composition over deep inheritance hierarchies. A `Player` inheriting from `Character` inheriting from `GameObject` is rigid. Composition (a `Player` entity possessing `Movement`, `Health`, and `Renderer` components) MUST be used for flexibility.
 
-## 4. Game Loop
+### GAME-006 — Data-Oriented Design
 
-### 4.1 Fixed Timestep for Simulation
+**SHOULD**
 
-Physics and gameplay logic run at a fixed rate (60 Hz, 30 Hz). The
-renderer interpolates between states.
+For systems processing hundreds or thousands of entities, data-oriented design (structure-of-arrays layout) SHOULD be used instead of array-of-objects to maximize CPU cache coherence in hot paths.
 
-BAD: Variable timestep for physics. Reproducibility is lost, and
-physics behaves differently on different hardware.
+### GAME-007 — Component Data Purity
 
-### 4.2 Interpolation for Rendering
+**MUST**
 
-The renderer displays an interpolated state between the last two
-simulation ticks. Without this, the game looks jittery at high
-refresh rates.
+Components MUST hold data, not behavior. Systems MUST process components. This separation enables caching, networking serialization, and efficient memory layout.
 
-### 4.3 Clamp Delta Time
+### GAME-008 — Stable Entity IDs
 
-A long pause (loading, breakpoint, alt-tab) produces a huge delta.
-Clamp it to a maximum (e.g. 100 ms) to prevent physics explosions.
+**MUST**
 
-### 4.4 No I/O in the Game Loop
+Entity IDs MUST be stable identifiers, not memory pointers. They MUST survive save/load cycles, network transfers, and frame boundaries.
 
-Disk reads, network calls, and file writes are offloaded to worker
-threads.
+### GAME-009 — Deterministic System Order
 
-## 5. Determinism
+**MUST**
 
-### 5.1 Same Input, Same Output
+The order in which systems run affects the simulation and MUST be defined explicitly. Relying on dictionary iteration order or implicit engine ordering is prohibited.
 
-Given the same inputs and the same initial state, the simulation
-produces the same output every time.
+## Game Loop
 
-### 5.2 No Floating-Point Non-Determinism Across Platforms
+### GAME-010 — Fixed Timestep Simulation
 
-`sin`, `cos`, `pow`, and fused multiply-add differ between CPUs,
-compilers, and optimization levels. For lockstep multiplayer, use
-fixed-point math or a deterministic math library.
+**MUST**
 
-### 5.3 Iteration Order
+Physics and gameplay logic MUST run at a fixed timestep (e.g., 60 Hz, 30 Hz). Variable timesteps for physics destroy reproducibility and cause simulation divergence across different hardware.
 
-Any iteration over a hash map, a set, or an unordered collection
-produces non-deterministic order. Use sorted or indexed collections
-in simulation code.
+### GAME-011 — Render Interpolation
 
-### 5.4 Random Seed
+**MUST**
 
-The game's RNG is seeded. Every player in a lockstep session uses
-the same seed. Replays are reproducible.
+The renderer MUST display an interpolated state between the last two simulation ticks. Without interpolation, the game looks jittery at high refresh rates or when the simulation rate differs from the display rate.
 
-### 5.5 No Wall Clock in Simulation
+### GAME-012 — Delta Time Clamping
 
-`System.currentTimeMillis()` or `time.time()` in simulation code
-breaks determinism. Use the simulation tick counter.
+**MUST**
 
-## 6. Networking
+Delta time MUST be clamped to a maximum value (e.g., 100 ms). A long pause (loading, breakpoint, alt-tab) produces a huge delta that causes physics explosions and tunneling if unclamped.
 
-### 6.1 Client-Server or Peer-to-Peer
+### GAME-013 — Game Loop I/O Prohibition
 
-Pick one. Hybrid approaches (listen servers, host migration) add
-complexity. Choose deliberately.
+**MUST NOT**
 
-### 6.2 Authoritative Server
+Disk reads, network calls, and file writes MUST NOT occur on the main game loop thread. I/O MUST be offloaded to worker threads or handled asynchronously.
 
-The server owns the truth. Clients predict locally and reconcile.
-A client never determines the outcome of a competitive action.
+## Determinism
 
-### 6.3 Client-Side Prediction
+### GAME-014 — Simulation Determinism
 
-The client applies the action immediately, then reconciles when the
-server's authoritative state arrives.
+**MUST**
 
-### 6.4 Lag Compensation
+Given the same inputs and the same initial state, the simulation MUST produce the exact same output every time. This is mandatory for lockstep multiplayer and replay systems.
 
-The server rewinds the world to the shooter's view when validating a
-hit. Without it, high-latency players miss.
+### GAME-015 — Cross-Platform Math Determinism
 
-### 6.5 Bandwidth Budget
+**MUST**
 
-Every message has a size. The bandwidth per player per second is
-bounded. Measure and optimize.
+Standard floating-point math (`sin`, `cos`, `pow`, fused multiply-add) differs between CPUs, compilers, and optimization levels. For lockstep multiplayer, fixed-point math or a strictly deterministic math library MUST be used.
 
-### 6.6 Snapshot Interpolation
+### GAME-016 — Deterministic Iteration Order
 
-The client buffers server snapshots and interpolates between them
-for smooth motion.
+**MUST NOT**
 
-### 6.7 No Trust in Client Input
+Iteration over hash maps, sets, or unordered collections MUST NOT be used in simulation code, as it produces non-deterministic order. Sorted or indexed collections MUST be used.
 
-A client can send any input. Validate on the server: movement speed,
-fire rate, resource spending.
+### GAME-017 — Seeded RNG
 
-### 6.8 Disconnection Handling
+**MUST**
 
-A disconnected player is handled gracefully: their entity is frozen,
-removed, or taken over by AI depending on the game.
+The game's Random Number Generator MUST be seeded. Every player in a lockstep session MUST use the same seed to ensure replays and multiplayer simulations are reproducible.
 
-### 6.9 Cheat Prevention
+### GAME-018 — Wall Clock Prohibition
 
-- Server-side validation of every action.
-- No client-side trust for resources, positions, or scores.
-- Anti-cheat for competitive games.
+**MUST NOT**
 
-## 7. Asset Pipeline
+Wall clock time (e.g., `System.currentTimeMillis()`, `time.time()`) MUST NOT be used in simulation code. The simulation tick counter MUST be used to preserve determinism.
 
-### 7.1 Assets Are Built, Not Imported
+## Networking
 
-Raw assets (PSD, Maya, WAV) are processed into runtime formats by a
-build step. Runtime does not read the source formats.
+### GAME-019 — Explicit Network Topology
 
-### 7.2 Compression and Format
+**MUST**
 
-- Textures: platform-specific (BC, ASTC, ETC2). Not PNG in a 3D
-  game.
-- Audio: compressed (Vorbis, Opus) for long clips; uncompressed for
-  short, frequent clips.
-- Meshes: optimized index order, LODs, no unused data.
+The network topology (Client-Server or Peer-to-Peer) MUST be chosen deliberately. Hybrid approaches (listen servers, host migration) add massive complexity and MUST be explicitly justified.
 
-### 7.3 LOD
+### GAME-020 — Server Authority
 
-Distant objects use lower-detail meshes. Without LOD, distant objects
-consume GPU time for pixels the player cannot see.
+**MUST**
 
-### 7.4 Streaming
+In a client-server model, the server MUST own the truth. Clients predict locally and reconcile. A client MUST NEVER determine the outcome of a competitive action.
 
-Large worlds stream assets by region. The player is not in a loading
-screen when crossing a boundary.
+### GAME-021 — Client-Side Prediction
 
-### 7.5 Asset Versioning
+**MUST**
 
-Assets are versioned with the code. A mismatch causes missing or
-wrong assets at runtime.
+The client MUST apply input actions immediately for responsiveness, then reconcile state when the server's authoritative update arrives.
 
-## 8. Audio
+### GAME-022 — Lag Compensation
 
-### 8.1 No Blocking Audio Loads
+**SHOULD**
 
-Audio is loaded asynchronously or preloaded. A synchronous load
-stutters.
+For competitive shooters or action games, the server SHOULD rewind the world to the shooter's view when validating a hit. Without lag compensation, high-latency players will consistently miss.
 
-### 8.2 Voice Limit
+### GAME-023 — Bandwidth Budgeting
 
-A hundred simultaneous sounds overwhelm the mixer and the CPU. Cap
-the number of concurrent voices.
+**MUST**
 
-### 8.3 3D Positioning
+Every network message MUST have a measured size. The bandwidth per player per second MUST be bounded, optimized, and strictly monitored.
 
-Sounds in a 3D game are positioned. A stereo-only sound in a 3D
-world breaks immersion.
+### GAME-024 — Snapshot Interpolation
 
-### 8.4 Audio Ducking
+**MUST**
 
-Music quiets under dialogue. Without it, the dialogue is inaudible.
+The client MUST buffer server snapshots and interpolate between them to render smooth motion for remote entities.
 
-## 9. Game-Specific Anti-Patterns
+### GAME-025 — Client Input Validation
 
-### 9.1 Variable Timestep Physics
+**MUST NOT**
 
-Covered in 4.1.
+Client input MUST NEVER be trusted. The server MUST validate movement speed, fire rate, resource spending, and action cooldowns to prevent cheating.
 
-### 9.2 Unclamped Delta Time
+### GAME-026 — Graceful Disconnection
 
-Covered in 4.3.
+**MUST**
 
-### 9.3 Synchronous Loading During Gameplay
+A disconnected player MUST be handled gracefully. Their entity MUST be frozen, removed, or taken over by AI depending on the game's design, rather than causing a crash or null-reference error.
 
-Covered in 2.4.
+### GAME-027 — Cheat Prevention Baseline
 
-### 9.4 Deep Inheritance Hierarchies
+**MUST**
 
-Covered in 3.1.
+Competitive games MUST implement server-side validation for every action and MUST NOT trust client-side state for resources, positions, or scores.
 
-### 9.5 God Object
+## Asset Pipeline
 
-A `GameManager` that owns everything. Every new feature adds another
-field and another method. Split by responsibility.
+### GAME-028 — Runtime Asset Format
 
-### 9.6 String-Based Lookups in Hot Paths
+**MUST**
 
-BAD: `GetComponent("Health")` per frame.
-GOOD: A cached component reference, or an integer ID.
+Raw assets (PSD, Maya, WAV) MUST be processed into optimized runtime formats by a build step. The runtime MUST NOT read source formats.
 
-### 9.7 Allocations Per Frame
+### GAME-029 — Platform-Specific Compression
 
-`new` (C#, Java, JavaScript) or `malloc` (C++) per frame produces GC
-pauses or fragmentation. Reuse objects from a pool.
+**MUST**
 
-### 9.8 Querying the Scene Tree Every Frame
+Assets MUST use platform-specific compression (e.g., BC, ASTC, ETC2 for textures; Vorbis/Opus for long audio). Using uncompressed or wrong formats (e.g., PNG for 3D textures) wastes memory and bandwidth.
 
-BAD: `FindObjectsOfType<Enemy>()` in `Update`.
-GOOD: A maintained list updated when enemies spawn or die.
+### GAME-030 — Level of Detail (LOD)
 
-### 9.9 Float Equality
+**MUST**
 
-BAD: `if (position.x == target.x)`.
-GOOD: `if (Math.Abs(position.x - target.x) < epsilon)`.
+Distant objects MUST use lower-detail meshes (LODs). Rendering high-poly meshes for pixels the player cannot see wastes GPU time.
 
-### 9.10 No Fixed Update for Physics
+### GAME-031 — World Streaming
 
-Physics runs in the physics update, not the render update. Otherwise
-behavior depends on frame rate.
+**SHOULD**
 
-### 9.11 Ignoring Frame Rate on Different Hardware
+Large worlds SHOULD stream assets by region asynchronously. The player MUST NOT be forced into a loading screen when crossing a boundary.
 
-Testing only on a development machine at 120 FPS. The game stutters
-on target hardware.
+### GAME-032 — Asset Versioning
 
-### 9.12 Magic Numbers in Gameplay
+**MUST**
 
-BAD: `if (player.health < 23) { ... }`.
-GOOD: `if (player.health < LOW_HEALTH_THRESHOLD) { ... }`.
+Assets MUST be versioned alongside the code. A mismatch between code and asset versions causes missing or broken content at runtime.
 
-### 9.13 No Save/Load Compatibility
+## Audio
 
-A new version changes the save format. Existing saves are unreadable.
+### GAME-033 — Async Audio Loading
 
-### 9.14 Hardcoded Paths
+**MUST NOT**
 
-BAD: `C:\Users\dev\assets\...` in code.
-GOOD: A resource path resolved at runtime.
+Audio clips MUST NOT be loaded synchronously during gameplay. They MUST be preloaded or streamed asynchronously to prevent audio stutters.
 
-### 9.15 Single-Threaded Everything
+### GAME-034 — Concurrent Voice Limit
 
-Modern CPUs have many cores. Physics, animation, and rendering can
-be parallelized. Single-threaded games leave performance unused.
+**MUST**
 
-### 9.16 No Localization
+The number of concurrent audio voices MUST be capped. A hundred simultaneous sounds overwhelm the mixer and the CPU.
 
-Strings hardcoded in code. Localization added at the end costs ten
-times more.
+### GAME-035 — 3D Audio Positioning
 
-### 9.17 No Accessibility
+**MUST**
 
-No subtitles, no remappable controls, no colorblind mode. Excludes
-players and fails platform requirements.
+Sounds in a 3D game MUST be spatially positioned. Playing stereo-only sounds in a 3D world breaks immersion and spatial awareness.
 
-### 9.18 Trusting Client State in Multiplayer
+### GAME-036 — Audio Ducking
 
-Covered in 6.7.
+**MUST**
 
-### 9.19 No Reconnect
+Music and ambient audio MUST duck (quiet down) under dialogue or critical sound effects. Without ducking, critical audio becomes inaudible.
 
-A network blip disconnects the player permanently. Provide reconnect
-with state restoration.
+## AI-Specific Game Discipline
 
-### 9.20 No Matchmaking Considerations
+### GAME-060 — Engine API Verification
 
-Random matchmaking with players of vastly different skill. Skill-based
-matchmaking is expected.
+**MUST**
 
-### 9.21 No Analytics
+Before using an engine-specific API (e.g., Unity `GetComponent`, Unreal `UObject` macros, Godot `Node` methods), the assistant MUST verify the method signature and lifecycle rules for the target engine version. Invented APIs or misuse of engine lifecycles cause silent failures or editor crashes.
 
-No telemetry on crashes, frame rate, or player progression. Fixing
-issues is guesswork.
+See MAS-036 in `_universal/00-master-anti-slop.md`.
 
-### 9.22 Ignoring the Editor
+### GAME-061 — Existing Component Discovery
 
-Runtime code and editor code are tangled. The game works in the
-editor but breaks in a build.
+**MUST**
 
-### 9.23 No Build Reproducibility
+Before creating a new gameplay component, manager, or shader, the assistant MUST search the project for an existing equivalent. Inventing parallel movement controllers or UI managers fragments gameplay logic and creates state desyncs.
 
-The build script is a series of manual steps. A reproducible build
-is a one-command operation.
+See MAS-035 in `_universal/00-master-anti-slop.md`.
 
-### 9.24 No Content Pipeline Tests
+### GAME-062 — Architecture Restraint
 
-An asset change breaks the game in a way that is only caught at
-runtime. CI validates assets.
+**SHOULD**
 
-### 9.25 Shader Compilation Stutters
+The assistant SHOULD NOT introduce complex software design patterns (e.g., heavy dependency injection, deep OOP hierarchies, reactive streams) into hot game loops unless the engine explicitly requires them. Game architecture MUST prioritize cache locality and frame budget over enterprise abstraction.
 
-A shader compiled on first use causes a stutter. Precompile or use a
-shader cache.
+See MAS-038 in `_universal/00-master-anti-slop.md`.
 
-## 10. Response to Violation
+## Anti-Patterns
 
-If a previous response violated a rule here:
+### GAME-037 — God Object Prohibition
 
-```
-In the previous response, [specific rule] was violated. Correction:
-[corrected code]
-```
+**MUST NOT**
 
-No justification. No apology paragraph. Fix and move on.
+A `GameManager` that owns everything is prohibited. Every new feature MUST NOT add another field and method to a single monolithic class. Responsibilities MUST be split.
+
+### GAME-038 — Hot Path String Lookup Prohibition
+
+**MUST NOT**
+
+String-based lookups (e.g., `GetComponent("Health")`, `Find("Player")`) MUST NOT be used in hot paths (per-frame updates). Cached component references or integer IDs MUST be used.
+
+### GAME-039 — Per-Frame Allocation Prohibition
+
+**MUST NOT**
+
+Allocating memory (`new` in C#/Java/JS, `malloc` in C++) per frame produces Garbage Collection pauses or heap fragmentation. Objects MUST be reused from an object pool.
+
+### GAME-040 — Per-Frame Scene Query Prohibition
+
+**MUST NOT**
+
+Querying the entire scene tree every frame (e.g., `FindObjectsOfType<Enemy>()` in `Update`) is prohibited. A maintained list updated on spawn/despawn events MUST be used.
+
+### GAME-041 — Float Equality Prohibition
+
+**MUST NOT**
+
+Exact float equality checks (e.g., `if (position.x == target.x)`) MUST NOT be used due to precision issues. Epsilon comparisons (e.g., `Math.Abs(a - b) < epsilon`) MUST be used.
+
+### GAME-042 — Target Hardware Testing
+
+**MUST**
+
+Testing MUST NOT occur only on the high-end development machine. The game MUST be profiled and tested on the minimum target hardware to catch frame drops and memory limits.
+
+### GAME-043 — Gameplay Magic Number Prohibition
+
+**MUST NOT**
+
+Magic numbers in gameplay logic (e.g., `if (health < 23)`) MUST NOT be used. Named constants or data-driven configuration (e.g., `LOW_HEALTH_THRESHOLD`) MUST be used.
+
+### GAME-044 — Save Format Compatibility
+
+**MUST**
+
+Save file formats MUST maintain backward compatibility or include explicit migration logic. A new version MUST NOT render existing player saves unreadable.
+
+### GAME-045 — Hardcoded Path Prohibition
+
+**MUST NOT**
+
+Hardcoded absolute paths (e.g., `C:\Users\dev\assets\...`) MUST NOT be used. Resource paths MUST be resolved dynamically via the engine's virtual file system.
+
+### GAME-046 — Multi-Threading Utilization
+
+**SHOULD**
+
+Modern CPUs have many cores. Physics, animation, pathfinding, and rendering SHOULD be parallelized. Single-threaded architectures leave performance unused.
+
+### GAME-047 — String Externalization
+
+**MUST NOT**
+
+Hardcoding UI and dialogue strings in code is prohibited. Strings MUST be externalized for localization from the start; adding localization at the end costs exponentially more.
+
+### GAME-048 — Accessibility Baseline
+
+**MUST**
+
+Games MUST include a baseline of accessibility: subtitles, remappable controls, and colorblind modes. Excluding these fails platform requirements (e.g., CVAA) and excludes players.
+
+See MAS-039 in `_universal/00-master-anti-slop.md`.
+
+### GAME-049 — Network Reconnection
+
+**MUST**
+
+Multiplayer games MUST provide a reconnection mechanism with state restoration. A minor network blip MUST NOT disconnect the player permanently.
+
+### GAME-050 — Matchmaking Consideration
+
+**SHOULD**
+
+Multiplayer games SHOULD implement skill-based or rule-based matchmaking. Randomly matching players of vastly different skill levels degrades the experience.
+
+### GAME-051 — Telemetry and Analytics
+
+**MUST**
+
+Games MUST include telemetry for crashes, frame rate drops, and player progression bottlenecks. Fixing live issues without analytics is guesswork.
+
+### GAME-052 — Editor and Runtime Separation
+
+**MUST**
+
+Runtime code and editor-only code MUST be strictly separated. Code that works in the editor but relies on editor-only assemblies or states MUST NOT be included in the production build.
+
+### GAME-053 — Reproducible Builds
+
+**MUST**
+
+The build process MUST be a one-command, reproducible operation. Manual build steps lead to unshippable or inconsistent releases.
+
+### GAME-054 — Asset Pipeline CI
+
+**MUST**
+
+The CI pipeline MUST validate the asset pipeline. An asset change that breaks the game MUST be caught in CI, not at runtime on a player's machine.
+
+### GAME-055 — Shader Precompilation
+
+**MUST**
+
+Shaders MUST be precompiled or cached. Compiling a shader on first use during gameplay causes a massive, visible frame stutter.
+
+## Response to Violation
+
+When a rule in this file is violated, report:
+
+Violation: GAME-{NNN}
+Reason: {one-line reason}
+Correction: {smallest fix}
+
+For multiple violations, report each rule ID separately.
+
+Do not replace a technical correction with a generic explanation.

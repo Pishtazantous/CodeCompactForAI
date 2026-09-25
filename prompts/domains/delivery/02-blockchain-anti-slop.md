@@ -2,98 +2,50 @@
 id: 02-blockchain-anti-slop
 title: "Blockchain Anti-Slop Layer"
 lang: en
-depends_on: [00-master-anti-slop]
+depends_on: ["_universal/00-style-guide.md", "_universal/00-master-anti-slop.md"]
 category: domain
 domain_type: delivery
-version: 2
+version: 3
 ---
 
 # Blockchain Anti-Slop Layer
 
-Layered under `_universal/00-master-anti-slop.md`. Universal rules
-(fabrication, fake completion, over-engineering, silent assumptions,
-generic security, dependency addition, output format) are NOT
-repeated here.
+This file defines behavioral contracts specific to blockchain systems and smart contracts. It sits in the delivery layer, below the universal anti-slop rules and above language-specific patterns. It covers smart contract security, gas discipline, upgradeability, oracle use, testing methodology, and deployment. It does not cover generic web security (see `02-security-critical-anti-slop.md`), language rules for Solidity or Rust (see language files), or frontend rules for dApps (see `02-frontend-anti-slop.md`).
 
-This file covers rules specific to blockchain systems: smart
-contract security, gas discipline, upgradeability, oracle use,
-testing methodology, and deployment. It does NOT cover generic web
-security (see `02-security-critical-anti-slop.md`), language rules
-for Solidity or Rust (see the language files), or frontend rules for
-dApps (see `02-frontend-anti-slop.md`).
+A deployed smart contract is immutable. A bug is permanent and, if exploitable, is exploited within hours. The adversary is anonymous, funded, and automated.
 
-A deployed smart contract is immutable. A bug is permanent and, if
-exploitable, is exploited within hours. The adversary is anonymous,
-funded, and automated. The rules below reflect that reality.
+## Scope
 
-## 1. Stack Assumptions
+This file applies to EVM chains (Ethereum, Polygon, Arbitrum, Optimism, Base, BNB Chain, Avalanche C-Chain), Solana (Rust, Anchor), Move-based chains (Aptos, Sui), Cosmos SDK chains, and Bitcoin script (limited scope). The examples use Solidity and Rust syntax where illustrative. Solidity-specific rules (storage layout, `delegatecall` semantics) are covered here because they are part of the protocol, not just the language.
 
-This file applies to:
+## Rule Severity
 
-- EVM chains (Ethereum, Polygon, Arbitrum, Optimism, Base, BNB
-  Chain, Avalanche C-Chain).
-- Solana (Rust, Anchor).
-- Move-based chains (Aptos, Sui).
-- Cosmos SDK chains.
-- Bitcoin script (limited scope).
+Severity follows `_universal/00-style-guide.md`.
 
-The examples use Solidity and Rust. The principles are
-platform-agnostic. Solidity-specific rules (storage layout,
-`delegatecall` semantics) are covered here because they are part of
-the protocol, not the language. Language rules for Solidity itself
-(style, comments, naming) live in the language files.
+## Contracts
 
-## 2. Delivery Contracts
+A blockchain system commits to eight contracts. The table below maps each contract to the rules that enforce it.
 
-A blockchain system commits to eight contracts. Every section below
-enforces one or more of these.
+| Contract | Description | Enforced By |
+|---|---|---|
+| Immutability Discipline | Bytecode cannot be changed unless explicitly designed for upgradeability. | BC-040 to BC-046 |
+| Value Preservation | Funds are not lost, drained, or locked. External calls have defined failure modes. | BC-009, BC-065, BC-075 |
+| Access Control | State-changing functions have explicit checks. Default is deny. | BC-016 to BC-021 |
+| Gas Predictability | Users can predict gas costs. Unbounded loops are prohibited. | BC-022 to BC-027, BC-046 |
+| Oracle Integrity | Data comes from manipulation-resistant sources. No single-source oracle. | BC-030 to BC-034 |
+| Reentrancy Safety | External calls are analyzed for reentrancy and explicitly guarded. | BC-009 to BC-015 |
+| MEV & Flash Loan Safety | Slippage, front-running, and infinite capital adversaries are mitigated. | BC-035 to BC-039 |
+| Public Auditability | Source is verified, owner authority is visible, and events are emitted. | BC-056, BC-061, BC-072 |
 
-### 2.1 Immutability After Deploy
+## Reentrancy
 
-Once deployed, a contract's bytecode cannot be changed unless it
-was explicitly designed for upgradeability. Every bug is permanent.
+### BC-009 — Checks-Effects-Interactions
 
-### 2.2 Value Preservation
+**MUST**
 
-Funds held by the contract are not lost, drained, or locked by
-unintended behavior. Every external call has a defined failure
-mode.
+State MUST be updated before any external call. An attacker's fallback function can call back into the contract before state is zeroed, draining funds.
 
-### 2.3 Access Control
-
-Every state-changing function that should be restricted has an
-explicit check. The default is deny.
-
-### 2.4 Gas Predictability
-
-Users can predict the gas cost of an action within a reasonable
-range. Unbounded loops and state explosion are not acceptable.
-
-### 2.5 Upgrade Safety
-
-If upgradeable, the upgrade path cannot brick the contract. Storage
-layout is preserved across upgrades.
-
-### 2.6 Oracle Integrity
-
-Price and external data come from sources that resist manipulation.
-A single-source oracle is a vulnerability.
-
-### 2.7 Reentrancy Safety
-
-Every external call is analyzed for reentrancy. The pattern is
-either non-reentrant by design or explicitly guarded.
-
-### 2.8 Public Auditability
-
-The source code is verified on the chain's explorer. The owner's
-authority and the contract's behavior are visible to any user.
-
-## 3. Reentrancy
-
-### 3.1 Checks-Effects-Interactions
-
-State is updated before any external call.
+Example (illustrative, Solidity):
 
 BAD:
 ```solidity
@@ -105,9 +57,6 @@ function withdraw() external {
 }
 ```
 
-An attacker's fallback function calls `withdraw` again before
-`balances[msg.sender]` is zeroed. Funds are drained.
-
 GOOD:
 ```solidity
 function withdraw() external nonReentrant {
@@ -118,224 +67,156 @@ function withdraw() external nonReentrant {
 }
 ```
 
-### 3.2 `nonReentrant` Modifier as Defense in Depth
+### BC-010 — nonReentrant Defense in Depth
 
-Even with Checks-Effects-Interactions, add a `nonReentrant` guard
-to functions that make external calls. The modifier protects
-against future modifications that break the pattern.
+**MUST**
 
-### 3.3 Cross-Function Reentrancy
+Even with Checks-Effects-Interactions, a `nonReentrant` guard MUST be added to functions that make external calls. The modifier protects against future modifications that break the pattern.
 
-An attacker can call a different function during the callback, not
-just the same one. The guard applies to every function that shares
-state with an external-calling function.
+### BC-011 — Cross-Function Reentrancy
 
-### 3.4 Read-Only Reentrancy
+**MUST**
 
-A view function called during an external callback returns
-inconsistent state. Lending protocols and DEXs have been drained by
-this pattern. Update state before the call.
+Reentrancy guards MUST apply to every function that shares state with an external-calling function. An attacker can call a different function during the callback, not just the same one.
 
-### 3.5 `transfer` vs `call`
+### BC-012 — Read-Only Reentrancy
 
-`transfer` and `send` forward a fixed 2,300 gas. A recipient with
-a fallback consuming more than that reverts the transfer. Use
-`call` with a reentrancy guard.
+**MUST**
 
-### 3.6 ERC-777 and ERC-1155 Callbacks
+State MUST be updated before external calls to prevent read-only reentrancy. A view function called during an external callback returning inconsistent state has drained lending protocols and DEXs.
 
-Some token standards invoke callbacks on transfer. A contract that
-assumes ERC-20 semantics is reentrant through these tokens. Check
-the token's standard before integrating.
+### BC-013 — `call` Over `transfer` and `send`
 
-### 3.7 Reentrancy Through the Fallback Function
+**MUST NOT**
 
-A contract's `receive` or `fallback` function that modifies state is
-a reentrancy entry point. Keep them minimal.
+`transfer` and `send` forward a fixed 2,300 gas. A recipient with a fallback consuming more than that reverts the transfer. `call` with a reentrancy guard MUST be used instead.
 
-## 4. Access Control
+### BC-014 — Token Standard Callback Awareness
 
-### 4.1 `msg.sender`, Never `tx.origin`
+**MUST**
 
-BAD:
-```solidity
-require(tx.origin == owner, "not owner");
-```
+Some token standards (ERC-777, ERC-1155) invoke callbacks on transfer. A contract that assumes ERC-20 semantics is reentrant through these tokens. The token's standard MUST be checked before integrating.
 
-An attacker tricks the owner into calling a malicious contract that
-calls back into the victim contract. `tx.origin` is the owner, so
-the check passes.
+### BC-015 — Minimal Fallback Functions
 
-GOOD:
-```solidity
-require(msg.sender == owner, "not owner");
-```
+**MUST**
 
-### 4.2 Explicit Modifiers
+A contract's `receive` or `fallback` function that modifies state is a reentrancy entry point. They MUST be kept minimal and strictly guarded.
 
-Every restricted function has a modifier. No implicit trust.
+## Access Control
 
-BAD:
-```solidity
-function mint(address to, uint256 amount) external {
-    _mint(to, amount);
-}
-```
+### BC-016 — `msg.sender` Over `tx.origin`
 
-GOOD:
-```solidity
-function mint(address to, uint256 amount) external onlyRole(MINTER_ROLE) {
-    _mint(to, amount);
-}
-```
+**MUST NOT**
 
-### 4.3 Role-Based Access Control
+`tx.origin` MUST NOT be used for authentication. An attacker can trick the owner into calling a malicious contract that calls back into the victim contract. `msg.sender` MUST be used.
 
-Use OpenZeppelin's `AccessControl` for contracts with multiple
-roles. Each role is a `bytes32` constant. Roles are granted and
-revoked, not hardcoded.
+Example (illustrative, Solidity):
 
-### 4.4 Ownership as a Multisig
+BAD: `require(tx.origin == owner, "not owner");`
+GOOD: `require(msg.sender == owner, "not owner");`
 
-A contract's owner is a multisig (Safe, Gnosis). A single EOA is a
-single point of failure and compromise.
+### BC-017 — Explicit Modifiers
 
-BAD: An EOA owns the contract.
+**MUST**
 
-GOOD: A 3-of-5 multisig owns the contract. At least three keys are
-in hardware wallets, geographically distributed.
+Every restricted function MUST have an explicit modifier. Implicit trust is prohibited.
 
-### 4.5 Renounce Ownership Carefully
+### BC-018 — Role-Based Access Control
 
-Renouncing ownership removes the ability to fix bugs. Do it only
-when the contract is intended to be immutable and the logic is
-audited.
+**SHOULD**
 
-### 4.6 No Hidden Owner
+For contracts with multiple roles, a standard Role-Based Access Control library (e.g., OpenZeppelin's `AccessControl`) SHOULD be used. Roles MUST be granted and revoked, not hardcoded.
 
-A contract with a backdoored admin function (mint without limit,
-pause, self-destruct). Users cannot see the risk without reading
-the code. Hidden owners are exit scams.
+### BC-019 — Multisig Ownership
 
-## 5. Gas and Storage
+**MUST**
 
-### 5.1 Storage Is Expensive
+A contract's owner MUST be a multisig (e.g., Safe, Gnosis). A single EOA is a single point of failure and compromise. At least three keys SHOULD be in hardware wallets, geographically distributed.
 
-Writing a new storage slot costs 20,000 gas. Reading costs 2,100.
-Minimize writes.
+### BC-020 — Renounce Ownership Discipline
 
-### 5.2 Pack Struct Fields
+**MUST**
 
-Solidity packs fields into 32-byte slots.
+Renouncing ownership removes the ability to fix bugs. It MUST only be done when the contract is intended to be immutable and the logic is fully audited.
 
-BAD:
-```solidity
-struct User {
-    uint256 id;      // slot 0
-    uint8 status;    // slot 1 (31 bytes wasted)
-    uint256 balance; // slot 2
-}
-```
+### BC-021 — Hidden Owner Prohibition
 
-GOOD:
-```solidity
-struct User {
-    uint256 id;      // slot 0
-    uint256 balance; // slot 1
-    uint8 status;    // slot 2
-    uint8 flags;     // packed with status
-}
-```
+**MUST NOT**
 
-### 5.3 `calldata` Over `memory` for External Parameters
+A contract with a backdoored admin function (mint without limit, pause, self-destruct) is an exit scam. Hidden owners MUST NOT exist. Users MUST be able to see the risk without reading the code.
 
-BAD: `function foo(uint256[] memory arr) external`.
+## Gas and Storage
 
-GOOD: `function foo(uint256[] calldata arr) external`.
+### BC-022 — Storage Minimization
 
-`calldata` avoids a copy.
+**MUST**
 
-### 5.4 `immutable` and `constant`
+Writing a new storage slot costs 20,000 gas; reading costs 2,100. Storage writes MUST be minimized.
 
-`immutable` and `constant` values are not stored in storage. Use
-them for values that do not change.
+### BC-023 — Struct Field Packing
 
-BAD:
-```solidity
-address public owner; // storage slot
-```
+**SHOULD**
 
-GOOD:
-```solidity
-address public immutable owner;
-```
+Solidity packs fields into 32-byte slots. Struct fields SHOULD be ordered to maximize packing and minimize wasted bytes.
 
-Set once in the constructor.
+### BC-024 — `calldata` Over `memory`
 
-### 5.5 Custom Errors
+**MUST**
 
-BAD: `require(condition, "Insufficient balance")`.
+For external function parameters, `calldata` MUST be used instead of `memory` to avoid unnecessary copying.
 
-GOOD:
-```solidity
-error InsufficientBalance(uint256 available, uint256 required);
-if (balance < amount) revert InsufficientBalance(balance, amount);
-```
+### BC-025 — `immutable` and `constant` Usage
 
-Custom errors are cheaper and more informative.
+**MUST**
 
-### 5.6 Unbounded Loops
+Values that do not change MUST be declared as `immutable` (set in constructor) or `constant` (compile-time). They are not stored in storage slots.
 
-BAD:
-```solidity
-for (uint256 i = 0; i < users.length; i++) { /* ... */ }
-```
+### BC-026 — Custom Errors
 
-A loop over a growing array eventually exceeds the block gas limit.
-The function is bricked.
+**SHOULD**
 
-GOOD: Pagination or a pull-based pattern.
+Custom errors (e.g., `error InsufficientBalance(...)`) SHOULD be used instead of string literals in `require` statements. They are cheaper and more informative.
 
-### 5.7 `unchecked` Only When Proven
+### BC-027 — Unbounded Loops Prohibition
 
-`unchecked { ++i; }` saves gas when overflow is impossible. Only
-when proven. In Solidity 0.8+, arithmetic is checked by default.
+**MUST NOT**
 
-### 5.8 Storage Layout Is Documented
+Unbounded loops over growing arrays MUST NOT be used. A loop that eventually exceeds the block gas limit bricks the function. Pagination or a pull-based pattern MUST be used.
 
-For upgradeable contracts, the storage layout is documented and
-tested. A reordering breaks all existing data.
+### BC-028 — `unchecked` Arithmetic Discipline
 
-## 6. Oracles
+**MUST**
 
-### 6.1 No Single-Source Price
+`unchecked { ++i; }` saves gas when overflow is impossible, but MUST only be used when mathematically proven. In Solidity 0.8+, arithmetic is checked by default.
 
-BAD:
-```solidity
-uint256 price = pair.getReserves().token0Price;
-```
+### BC-029 — Storage Layout Documentation
 
-A flash loan can move the reserve and the price in one transaction.
+**MUST**
 
-GOOD: A decentralized oracle (Chainlink) or a TWAP with a
-reasonable window.
+For upgradeable contracts, the storage layout MUST be documented and tested. Reordering breaks all existing data.
 
-### 6.2 TWAP With a Long Window
+## Oracles
 
-A TWAP is manipulable if the window is short. Use a window long
-enough that an attacker cannot sustain manipulation.
+### BC-030 — Single-Source Price Prohibition
 
-### 6.3 Stale Price Checks
+**MUST NOT**
 
-Check the timestamp of the oracle response. A price older than the
-configured maximum is rejected.
+A single-source price oracle (e.g., a single DEX pool reserve) MUST NOT be used. A flash loan can move the reserve and the price in one transaction. A decentralized oracle (e.g., Chainlink) or a TWAP with a reasonable window MUST be used.
 
-BAD:
-```solidity
-(, int256 price, , , ) = priceFeed.latestRoundData();
-```
+### BC-031 — TWAP Window Length
 
-GOOD:
+**MUST**
+
+A TWAP (Time-Weighted Average Price) MUST use a window long enough that an attacker cannot sustain manipulation.
+
+### BC-032 — Stale Price Checks
+
+**MUST**
+
+The timestamp of the oracle response MUST be checked. A price older than the configured maximum staleness MUST be rejected.
+
+Example (illustrative, Solidity):
 ```solidity
 (uint80 roundId, int256 price, , uint256 updatedAt, uint80 answeredInRound) =
     priceFeed.latestRoundData();
@@ -344,574 +225,405 @@ require(answeredInRound >= roundId, "stale round");
 require(price > 0, "invalid price");
 ```
 
-### 6.4 Decimal Normalization
+### BC-033 — Decimal Normalization
 
-Different oracles use different decimals (8, 18). Normalize before
-arithmetic.
+**MUST**
 
-### 6.5 Circuit Breakers
+Different oracles use different decimals (e.g., 8, 18). Decimals MUST be normalized before arithmetic.
 
-If the oracle reports a price beyond a configurable deviation from
-the last price, pause the contract. A sudden 90% move is either a
-real event (pause is correct) or an attack (pause saves funds).
+### BC-034 — Circuit Breakers
 
-## 7. Flash Loans and MEV
+**SHOULD**
 
-### 7.1 Assume the Adversary Has Infinite Capital
+If the oracle reports a price beyond a configurable deviation from the last price, the contract SHOULD pause. A sudden 90% move is either a real event or an attack; pausing saves funds.
 
-A flash loan provides millions in a single transaction. Any
-protocol that depends on an instantaneous balance or reserve
-without a time-weighted check is vulnerable.
+## Flash Loans and MEV
 
-### 7.2 Slippage Protection
+### BC-035 — Infinite Capital Adversary Assumption
 
-Every swap has a `minAmountOut` or `maxAmountIn`. A swap without
-slippage protection is sandwiched.
+**MUST**
 
-BAD:
-```solidity
-router.swapExactTokensForTokens(amountIn, 0, path, to, deadline);
-```
+The adversary MUST be assumed to have infinite capital via flash loans. Any protocol that depends on an instantaneous balance or reserve without a time-weighted check is vulnerable.
 
-The `0` means "accept any output", including near-zero.
+### BC-036 — Slippage Protection
 
-GOOD:
-```solidity
-router.swapExactTokensForTokens(amountIn, minAmountOut, path, to, deadline);
-```
+**MUST**
 
-### 7.3 Commit-Reveal for Sensitive Operations
+Every swap MUST have a `minAmountOut` or `maxAmountIn`. A swap without slippage protection will be sandwiched.
 
-An auction or a game that reveals bids on-chain is front-runnable.
-Use commit-reveal with a delay.
+Example (illustrative, Solidity):
 
-### 7.4 Private Mempool When Necessary
+BAD: `router.swapExactTokensForTokens(amountIn, 0, path, to, deadline);`
+GOOD: `router.swapExactTokensForTokens(amountIn, minAmountOut, path, to, deadline);`
 
-For critical operations, submit through a private mempool
-(Flashbots, MEV-Share) to avoid front-running. Document the trade-
-off: private submission reduces MEV exposure but adds a
-dependency.
+### BC-037 — Commit-Reveal for Sensitive Ops
 
-### 7.5 Deadline on Every Swap
+**MUST**
 
-A swap without a deadline can be delayed indefinitely by miners.
-Always set a deadline.
+An auction or game that reveals bids on-chain is front-runnable. Commit-reveal with a delay MUST be used for sensitive operations.
 
-## 8. Upgradeability
+### BC-038 — Private Mempool Usage
 
-### 8.1 Storage Layout Is Sacred
+**SHOULD**
 
-An upgrade cannot change the order or types of existing storage
-slots.
+For critical operations, transactions SHOULD be submitted through a private mempool (e.g., Flashbots, MEV-Share) to avoid front-running. The trade-off (dependency on the private relay) MUST be documented.
 
-BAD: Inserting a new variable at the top of a state declaration.
+### BC-039 — Swap Deadlines
 
-GOOD: Appending new variables at the end, or using a namespaced
-storage pattern (EIP-7201) that isolates each upgrade's storage.
+**MUST**
 
-### 8.2 Initializer, Not Constructor
+Every swap MUST have a deadline. A swap without a deadline can be delayed indefinitely by miners/validators.
 
-A proxy contract does not run the implementation's constructor.
-Use an `initialize` function with an `initializer` modifier.
+## Upgradeability
 
-BAD:
-```solidity
-contract Impl {
-    address public owner;
-    constructor() { owner = msg.sender; } // never runs on proxy
-}
-```
+### BC-040 — Storage Layout Sanctity
 
-GOOD:
-```solidity
-contract Impl {
-    address public owner;
-    function initialize(address _owner) external initializer {
-        owner = _owner;
-    }
-}
-```
+**MUST**
 
-### 8.3 Upgrade Authorization
+An upgrade MUST NOT change the order or types of existing storage slots. New variables MUST be appended at the end, or a namespaced storage pattern (e.g., EIP-7201) MUST be used.
 
-Only a trusted address (multisig, timelock, DAO) can upgrade.
-Never an EOA.
+### BC-041 — Initializer Over Constructor
 
-### 8.4 Timelock
+**MUST**
 
-A timelock between proposing an upgrade and executing it gives
-users time to exit if they disagree. A 48-hour timelock is common
-for financial contracts.
+A proxy contract does not run the implementation's constructor. An `initialize` function with an `initializer` modifier MUST be used.
 
-### 8.5 No `selfdestruct` in Implementation
+### BC-042 — Upgrade Authorization
 
-`selfdestruct` in an implementation contract destroys the logic
-while the proxy still points to it. The contract is bricked.
+**MUST**
 
-### 8.6 Storage Gaps
+Only a trusted address (multisig, timelock, DAO) can upgrade. An EOA MUST NOT have upgrade rights.
 
-For inheritance-based upgradeable contracts, leave a storage gap
-in base contracts:
+### BC-043 — Timelock Requirement
 
-```solidity
-contract Base {
-    uint256[50] private __gap;
-}
-```
+**SHOULD**
 
-The gap is consumed by future variables, preserving layout.
+A timelock between proposing an upgrade and executing it SHOULD be implemented to give users time to exit. A 48-hour timelock is common for financial contracts.
 
-### 8.7 Upgrade Testing
+### BC-044 — `selfdestruct` Prohibition
 
-Every upgrade is tested against a fork of mainnet with existing
-state. A local test with fresh state does not catch storage
-collisions.
+**MUST NOT**
 
-## 9. Testing
+`selfdestruct` MUST NOT be used in an implementation contract. It destroys the logic while the proxy still points to it, bricking the contract.
 
-### 9.1 Fork Tests
+### BC-045 — Storage Gaps
 
-Test against a fork of mainnet with real state. Foundry's
-`--fork-url` or Hardhat's `forking` makes this easy.
+**MUST**
 
-### 9.2 Fuzz Testing
+For inheritance-based upgradeable contracts, a storage gap (e.g., `uint256[50] private __gap;`) MUST be left in base contracts to be consumed by future variables, preserving layout.
 
-Foundry's fuzzer or Echidna generates random inputs. Fuzzing finds
-edge cases that hand-written tests miss.
+### BC-046 — Upgrade Fork Testing
 
-### 9.3 Invariant Testing
+**MUST**
 
-Define invariants (for example, "the sum of all balances equals
-the total supply") and let the fuzzer try to break them.
+Every upgrade MUST be tested against a fork of mainnet with existing state. A local test with fresh state does not catch storage collisions.
 
-BAD: A test that checks a specific sequence.
+## Testing
 
-GOOD: An invariant that holds across all sequences the fuzzer
-generates.
+### BC-047 — Fork Tests
 
-### 9.4 Coverage Targets
+**MUST**
 
-Aim for near-100% line and branch coverage. Every branch of every
-`require` and `if` is tested.
+Tests MUST run against a fork of mainnet with real state (e.g., Foundry's `--fork-url` or Hardhat's `forking`).
 
-### 9.5 Static Analysis
+### BC-048 — Fuzz Testing
 
-Slither, Mythril, and the compiler's own warnings. Run in CI.
+**MUST**
 
-### 9.6 Audit Before Mainnet
+Fuzz testing (e.g., Foundry's fuzzer, Echidna) MUST be used to generate random inputs and find edge cases that hand-written tests miss.
 
-A professional audit for any contract holding real value. No
-exceptions. Audits are not a guarantee, but the absence of one is a
-red flag.
+### BC-049 — Invariant Testing
 
-### 9.7 Bug Bounty
+**MUST**
 
-After deployment, a bug bounty (Immunefi, HackerOne) incentivizes
-white-hat disclosure. The payout must be high enough to exceed the
-attacker's expected gain.
+Invariants (e.g., "the sum of all balances equals the total supply") MUST be defined and tested against fuzzer-generated sequences.
 
-### 9.8 Test the Deployed Bytecode
+### BC-050 — Coverage Targets
 
-A test that passes on source but fails on deployed bytecode (due to
-optimizer settings or compiler version) is a false sense of
-security. Verify the deployed bytecode matches the tested source.
+**SHOULD**
 
-## 10. Deployment
+Near-100% line and branch coverage SHOULD be targeted. Every branch of every `require` and `if` MUST be tested.
 
-### 10.1 Deterministic Addresses
+### BC-051 — Static Analysis
 
-Use CREATE2 for deterministic addresses across chains. This allows
-counterfactual deployments and cross-chain consistency.
+**MUST**
 
-### 10.2 Verify on the Explorer
+Static analysis tools (e.g., Slither, Mythril) and compiler warnings MUST be run in CI.
 
-The source code is verified on Etherscan (or the chain's
-equivalent). Users can read what they are interacting with. An
-unverified contract is a red flag.
+### BC-052 — Pre-Mainnet Audit
 
-### 10.3 Constructor Arguments Are Public
+**MUST**
 
-They are in the deployment transaction. Never pass secrets as
-constructor arguments.
+A professional audit MUST be obtained for any contract holding real value. No exceptions.
 
-### 10.4 Deployment Scripts Are Code
+### BC-053 — Bug Bounty Program
 
-Use Foundry scripts or Hardhat deploy. Not manual transactions in
-a UI. A deployment is reproducible.
+**SHOULD**
 
-### 10.5 Multisig for Ownership
+After deployment, a bug bounty (e.g., Immunefi, HackerOne) SHOULD be established. The payout MUST be high enough to exceed the attacker's expected gain.
 
-Covered in 4.4.
+### BC-054 — Deployed Bytecode Verification
 
-### 10.6 Deployment Checklist
+**MUST**
 
-Before deployment:
+The deployed bytecode MUST be verified to match the tested source. Optimizer settings or compiler versions can cause discrepancies.
 
-- [ ] Tests pass on the exact commit.
-- [ ] Audit findings addressed.
-- [ ] Constructor arguments double-checked.
-- [ ] Owner is the multisig, not the deployer EOA.
-- [ ] The contract is verified on the explorer.
-- [ ] The first action after deploy is a role transfer or a
-      renounce, per the plan.
+## Deployment
 
-### 10.7 Post-Deployment Verification
+### BC-055 — Deterministic Addresses
 
-After deployment, verify:
+**SHOULD**
 
-- The owner and roles are as intended.
-- The contract responds to basic queries.
-- A small transaction succeeds.
+CREATE2 SHOULD be used for deterministic addresses across chains, allowing counterfactual deployments and cross-chain consistency.
 
-## 11. Documentation
+### BC-056 — Explorer Verification
 
-### 11.1 NatSpec for Public Functions
+**MUST**
 
-Every public function has NatSpec comments describing parameters,
-returns, and reverts. Users read the source; comments are part of
-the contract.
+The source code MUST be verified on the chain's explorer (e.g., Etherscan). An unverified contract is a red flag.
 
-### 11.2 Owner Capabilities
+### BC-057 — Public Constructor Arguments
 
-A README or a section in the docs lists every privileged action
-the owner can perform. Users can evaluate the trust they are
-placing.
+**MUST**
 
-### 11.3 Known Limitations
+Constructor arguments are public in the deployment transaction. Secrets MUST NEVER be passed as constructor arguments.
 
-Documented. An unaudited component, a known rounding error, a
-deliberate trade-off. Users evaluate their exposure.
+### BC-058 — Deployment Scripts as Code
 
-### 11.4 Emergency Procedures
+**MUST**
 
-A documented process for pausing the contract, upgrading it, or
-recovering funds in an emergency. Who can act, how, and with what
-notice.
+Deployments MUST be executed via reproducible scripts (e.g., Foundry scripts, Hardhat deploy). Manual transactions in a UI are prohibited.
 
-## 12. Anti-Patterns
+### BC-059 — Deployment Checklist
 
-### 12.1 Unchecked External Calls
+**MUST**
 
-BAD:
-```solidity
-token.transfer(to, amount);
-```
+Before deployment, a strict checklist MUST be verified: tests pass on exact commit, audit findings addressed, constructor args checked, owner is multisig, contract verified, and first post-deploy action planned.
 
-Some ERC-20 tokens do not revert on failure; they return `false`.
-The call silently fails.
+### BC-060 — Post-Deployment Verification
 
-GOOD:
-```solidity
-require(token.transfer(to, amount), "transfer failed");
-// Or use SafeERC20
-```
+**MUST**
 
-### 12.2 Unbounded Loops
+After deployment, the owner, roles, basic queries, and a small test transaction MUST be verified.
 
-Covered in 5.6.
+## Documentation
 
-### 12.3 `transfer` and `send`
+### BC-061 — NatSpec for Public Functions
 
-Covered in 3.5.
+**MUST**
 
-### 12.4 `tx.origin` for Auth
+Every public function MUST have NatSpec comments describing parameters, returns, and reverts. Comments are part of the contract.
 
-Covered in 4.1.
+### BC-062 — Owner Capabilities Documentation
 
-### 12.5 Block Timestamp as Randomness
+**MUST**
 
-`block.timestamp` is manipulable by miners/validators within a
-window. Never the source of randomness.
+Every privileged action the owner can perform MUST be documented. Users MUST be able to evaluate the trust they are placing.
 
-BAD:
-```solidity
-uint256 winner = uint256(blockhash(block.number - 1)) % players.length;
-```
+### BC-063 — Known Limitations Documentation
 
-A validator can influence the outcome.
+**MUST**
 
-GOOD: Chainlink VRF or a commit-reveal scheme.
+Known limitations (unaudited components, rounding errors, deliberate trade-offs) MUST be documented.
 
-### 12.6 Block Number Assumptions
+### BC-064 — Emergency Procedures Documentation
 
-`block.number` is not a reliable time source. Block times vary
-between chains and after upgrades.
+**MUST**
 
-### 12.7 Single Oracle
+A documented process for pausing, upgrading, or recovering funds in an emergency MUST exist.
 
-Covered in 6.1.
+## Anti-Patterns
 
-### 12.8 `delegatecall` to Untrusted
+### BC-065 — Unchecked External Calls
 
-BAD:
-```solidity
-target.delegatecall(data); // target from user input
-```
+**MUST NOT**
 
-The target executes with the current contract's storage and
-address. A malicious target drains funds or takes ownership.
+External calls to tokens (e.g., `token.transfer`) MUST NOT be unchecked. Some ERC-20 tokens do not revert on failure; they return `false`. `require(token.transfer(...))` or `SafeERC20` MUST be used.
 
-GOOD: An allowlist of trusted targets.
+### BC-066 — Block Timestamp Randomness
 
-### 12.9 No Reentrancy Guard
+**MUST NOT**
 
-Covered in 3.1.
+`block.timestamp` or `blockhash` MUST NOT be used as a source of randomness. Validators can influence the outcome. Chainlink VRF or a commit-reveal scheme MUST be used.
 
-### 12.10 Ignoring Return Values
+### BC-067 — Block Number Time Assumptions
 
-Covered in 12.1.
+**MUST NOT**
 
-### 12.11 `require` With Concatenated Strings
+`block.number` MUST NOT be used as a reliable time source. Block times vary between chains and after upgrades.
 
-BAD:
-```solidity
-require(ok, string(abi.encodePacked("failed for ", user)));
-```
+### BC-068 — Untrusted `delegatecall`
 
-String concatenation costs gas and bloats the bytecode.
+**MUST NOT**
 
-GOOD:
-```solidity
-if (!ok) revert FailedFor(user);
-```
+`delegatecall` to an untrusted or user-supplied target MUST NOT be used. The target executes with the current contract's storage and address, allowing fund drainage. An allowlist of trusted targets MUST be used.
 
-### 12.12 Magic Numbers
+### BC-069 — String Concatenation in `require`
 
-BAD:
-```solidity
-if (amount > 1000000000000000000) { /* ... */ }
-```
+**MUST NOT**
 
-GOOD:
-```solidity
-if (amount > 1 ether) { /* ... */ }
-```
+String concatenation in `require` (e.g., `require(ok, string(abi.encodePacked(...)))`) costs gas and bloats bytecode. Custom errors MUST be used.
 
-### 12.13 Floating Pragma
+### BC-070 — Magic Numbers
 
-BAD:
-```solidity
-pragma solidity ^0.8.0;
-```
+**MUST NOT**
 
-A floating pragma compiles with different compiler versions, some
-of which may have bugs.
+Magic numbers (e.g., `1000000000000000000`) MUST NOT be used. Named constants or Ether units (e.g., `1 ether`) MUST be used.
 
-GOOD:
-```solidity
-pragma solidity 0.8.24;
-```
+### BC-071 — Floating Pragma
 
-### 12.14 No Slippage Protection
+**MUST NOT**
 
-Covered in 7.2.
+Floating pragmas (e.g., `pragma solidity ^0.8.0;`) MUST NOT be used. A specific compiler version (e.g., `pragma solidity 0.8.24;`) MUST be locked to avoid compiler bugs.
 
-### 12.15 Front-Run-Friendly Auctions
+### BC-072 — Missing Events
 
-Covered in 7.3.
+**MUST NOT**
 
-### 12.16 Upgrade Without Timelock
+State changes without events are invisible to indexers. Events MUST be emitted for every meaningful state change.
 
-Covered in 8.4.
+### BC-073 — Event Indexing Discipline
 
-### 12.17 Missing Events
+**MUST**
 
-A state change without an event is invisible to indexers and
-users. Emit events for every meaningful change.
+Only fields that consumers filter on (addresses, IDs) MUST be indexed in events. Indexing non-filterable fields wastes gas.
 
-BAD:
-```solidity
-function setFee(uint256 newFee) external onlyOwner {
-    fee = newFee;
-}
-```
+### BC-074 — Pause Mechanism
 
-GOOD:
-```solidity
-event FeeUpdated(uint256 oldFee, uint256 newFee);
+**MUST**
 
-function setFee(uint256 newFee) external onlyOwner {
-    uint256 oldFee = fee;
-    fee = newFee;
-    emit FeeUpdated(oldFee, newFee);
-}
-```
+A contract holding value MUST have a pause mechanism to halt operations during an exploit. It SHOULD be time-limited or multisig-controlled.
 
-### 12.18 Wrong Indexed Fields
+### BC-075 — Emergency Withdrawal
 
-An event that indexes a non-address, non-ID field wastes gas and
-prevents filtering. Index the fields consumers filter on.
+**MUST**
 
-### 12.19 No Pause Mechanism
+A contract MUST have an emergency exit path to recover funds if the primary logic fails.
 
-A contract that cannot be paused during an exploit loses
-everything. A pause is a response tool. It should be time-limited
-or multisig-controlled.
+### BC-076 — Hardcoded Addresses
 
-### 12.20 Centralized Control
+**MUST NOT**
 
-A single admin key that can mint, pause, or upgrade. If it is
-compromised, everything is lost.
+Addresses (e.g., token addresses) MUST NOT be hardcoded for a specific chain. Constructor parameters or a chain-aware config MUST be used.
 
-### 12.21 No Emergency Withdrawal
+### BC-077 — Ether Transfer Handling
 
-A contract without an emergency exit traps funds if something
-goes wrong.
+**MUST**
 
-### 12.22 Hardcoded Addresses
+A payable function MUST either accept plain ether transfers (via `receive`/`fallback`) or explicitly document the rejection.
 
-BAD: A token address hardcoded for one chain.
+### BC-078 — Mapping Iteration
 
-GOOD: Constructor parameters or a chain-aware config.
+**MUST NOT**
 
-### 12.23 No Minimum Receive Check
+Mappings are not iterable. Iterating requires a parallel array that grows with writes. This pattern MUST be used with extreme caution to avoid unbounded gas costs.
 
-A payable function without a `receive` or `fallback` rejects plain
-ether transfers. Either accept them or document the rejection.
+### BC-079 — Chain ID in Signatures
 
-### 12.24 Loop Over Mappings
+**MUST**
 
-Mappings are not iterable. Iterating requires a parallel array that
-grows with writes. Use with caution.
+Signatures MUST include `chainId` and the contract address to prevent cross-chain replay attacks.
 
-### 12.25 Storage Collision in Proxy
+### BC-080 — Integer Division Rounding
 
-Covered in 8.1.
+**MUST NOT**
 
-### 12.26 Reentrancy Through ERC-777 or ERC-1155
+Solidity integer division truncates. Calculations that accumulate rounding errors MUST use fixed-point math libraries (e.g., PRBMath, Solmate) for financial calculations.
 
-Covered in 3.6.
+### BC-081 — Zero-Address Check
 
-### 12.27 No Chain ID in Signatures
+**MUST**
 
-A signature valid on one chain is replayed on another (fork replay).
-Include `chainId` and the contract address in the signed payload.
+Functions setting critical addresses (e.g., treasury, owner) MUST check for `address(0)` to prevent accidental burning of funds or loss of control.
 
-BAD:
-```solidity
-bytes32 hash = keccak256(abi.encodePacked(message));
-```
+### BC-082 — `ecrecover` Return Check
 
-GOOD:
-```solidity
-bytes32 hash = keccak256(abi.encodePacked(
-    message,
-    block.chainid,
-    address(this)
-));
-```
+**MUST**
 
-### 12.28 Integer Division Rounding
+`ecrecover` returns `address(0)` on invalid signatures. The return value MUST be checked against `address(0)` before comparing to the expected signer. OpenZeppelin's ECDSA library SHOULD be used.
 
-Solidity integer division truncates. A calculation that rounds
-down can accumulate error. Use fixed-point math (PRBMath, Solmate)
-for financial calculations.
+### BC-083 — Malleable Signatures
 
-### 12.29 Missing Zero-Address Check
+**MUST NOT**
 
-BAD:
-```solidity
-function setTreasury(address _treasury) external onlyOwner {
-    treasury = _treasury;
-}
-```
+`ecrecover` accepts two valid `(s, v)` pairs for the same signature. Malleability MUST be prevented using OpenZeppelin's ECDSA with `s` range checks, or a scheme without malleability.
 
-If `_treasury` is `address(0)`, funds sent to the treasury are
-burned.
+### BC-084 — `delegatecall` Failure Check
 
-GOOD:
-```solidity
-require(_treasury != address(0), "zero address");
-treasury = _treasury;
-```
+**MUST**
 
-### 12.30 Unchecked `ecrecover` Return
+`delegatecall` returns a boolean. Ignoring it hides failures. The return value MUST be checked and required to be true.
 
-`ecrecover` returns `address(0)` on invalid signatures.
+### BC-085 — Unbounded `approve` Allowance
 
-BAD:
-```solidity
-address signer = ecrecover(hash, v, r, s);
-require(signer == expected);
-```
+**SHOULD NOT**
 
-GOOD:
-```solidity
-address signer = ecrecover(hash, v, r, s);
-require(signer != address(0), "invalid signature");
-require(signer == expected, "wrong signer");
-```
+An `approve` with `type(uint256).max` SHOULD NOT be used if the spender is not fully trusted. Limited allowances SHOULD be preferred.
 
-Or use OpenZeppelin's ECDSA library.
+### BC-086 — Signature Deadlines
 
-### 12.31 Malleable Signatures
+**MUST**
 
-`ecrecover` accepts two valid `(s, v)` pairs for the same signature.
-Use OpenZeppelin's ECDSA with `s` range checks, or a scheme without
-malleability.
+Signed messages MUST include and check a deadline. A signature without a deadline can be executed at any future time.
 
-### 12.32 Silent `delegatecall` Failure
+### BC-087 — Testnet-Only Testing
 
-`delegatecall` returns a boolean. Ignoring it hides the failure.
+**MUST NOT**
 
-BAD:
-```solidity
-target.delegatecall(data);
-```
+Testing only on a testnet without fork-testing on the target chain with real state is prohibited. Testnet conditions differ.
 
-GOOD:
-```solidity
-(bool ok, ) = target.delegatecall(data);
-require(ok, "delegatecall failed");
-```
+### BC-088 — Chain-Specific Behavior
 
-### 12.33 Unbounded `approve` Allowance
+**MUST**
 
-An `approve` with `type(uint256).max` is a risk if the spender is
-compromised. Use limited allowances where possible.
+Different EVM chains have different gas costs, precompiles, and opcode availability. Contracts MUST be tested on the target chain.
 
-### 12.34 No Deadline on Signature-Based Actions
+### BC-089 — Post-Deployment Monitoring
 
-A signed message without a deadline can be executed at any future
-time. Include and check a deadline.
+**MUST**
 
-### 12.35 Unverified Contracts
+A contract in production MUST be monitored (events, balances, anomalies). An exploit MUST NOT be discovered by users before the team.
 
-A deployed contract without verified source cannot be audited by
-users. Always verify.
+### BC-090 — `blockhash` 256 Block Limit
 
-### 12.36 Testnet-Only Testing
+**MUST NOT**
 
-A contract that passes on a testnet but was never tested on a fork
-of the target chain with real state. Testnet conditions differ.
+`blockhash(n)` returns `0` for blocks older than 256. Trusting `blockhash` beyond this boundary fails silently and MUST NOT be used.
 
-### 12.37 Ignoring Chain-Specific Behavior
+## AI-Specific Blockchain Discipline
 
-Different EVM chains have different gas costs, precompiles, and
-opcode availability. Test on the target chain.
+### BC-091 — Smart Contract API Verification
 
-### 12.38 No Monitoring After Deploy
+**MUST**
 
-A contract in production without monitoring of its events and
-balances. An exploit is discovered by users, not the team.
+Before using a smart contract standard interface (e.g., ERC-20, ERC-721) or a library function (e.g., OpenZeppelin, Solmate), the assistant MUST verify the method signature and behavior in the installed version. Invented methods or incorrect signatures lead to permanent loss of funds or bricked contracts.
 
-### 12.39 Trusting `blockhash` for Anything After 256 Blocks
+See MAS-036 in `_universal/00-master-anti-slop.md`.
 
-`blockhash(n)` returns `0` for blocks older than 256. A check
-against `blockhash` fails silently at that boundary.
+### BC-092 — Existing Contract Discovery
 
-### 12.40 No Minimum Deposit
+**MUST**
 
-A contract that accepts any deposit amount allows dust attacks and
-griefing. Enforce a minimum where appropriate.
+Before deploying a new smart contract or token, the assistant MUST search the project's registry or deployment scripts for an existing equivalent. Inventing parallel tokens or vaults fragments liquidity and confuses users.
 
-## 13. Response to Violation
+See MAS-035 in `_universal/00-master-anti-slop.md`.
 
-If a previous response violated a rule here:
+### BC-093 — Cryptographic Primitive Verification
 
-```
-In the previous response, [specific rule] was violated. Correction:
-[corrected code]
-```
+**MUST**
 
-No justification. No apology paragraph. Fix and move on.
+Before implementing custom cryptographic checks (e.g., signature verification, hash preimages), the assistant MUST verify that a battle-tested library (e.g., OpenZeppelin ECDSA) does not already provide it. Custom cryptography in smart contracts is a primary source of critical exploits.
+
+See MAS-038 in `_universal/00-master-anti-slop.md`.
+
+## Response to Violation
+
+When a rule in this file is violated, report:
+
+Violation: BC-{NNN}
+Reason: {one-line reason}
+Correction: {smallest fix}
+
+For multiple violations, report each rule ID separately.
+
+Do not replace a technical correction with a generic explanation.

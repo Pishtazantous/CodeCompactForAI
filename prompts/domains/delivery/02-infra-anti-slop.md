@@ -2,138 +2,138 @@
 id: 02-infra-anti-slop
 title: "Infrastructure Anti-Slop Layer"
 lang: en
-depends_on: [00-master-anti-slop]
+depends_on: ["_universal/00-style-guide.md", "_universal/00-master-anti-slop.md"]
 category: domain
 domain_type: delivery
-version: 1
+version: 2
 ---
 
 # Infrastructure Anti-Slop Layer
 
-Layered under `_universal/00-master-anti-slop.md`. Universal rules
-(fabrication, fake completion, over-engineering, silent assumptions,
-security anti-patterns, output format) are NOT repeated here.
+This file defines behavioral contracts specific to infrastructure-as-code (IaC). It sits in the delivery layer, below the universal anti-slop rules and above application deployment or CI/CD pipeline patterns. It covers state management, drift, idempotency, plan review, module design, and the discipline of treating infrastructure changes as production changes. It applies to Terraform, Pulumi, CloudFormation, CDK, and their equivalents. It does not cover application-level deployment rules (see `02-devops-anti-slop.md`) or pipeline definitions (see `02-cicd-anti-slop.md`).
 
-This file covers rules specific to infrastructure-as-code: state
-management, drift, idempotency, plan review, and the discipline of
-treating infrastructure changes as production changes. It applies to
-Terraform, Pulumi, CloudFormation, CDK, and their equivalents.
-Application-level deployment rules live in
-`domains/delivery/02-devops-anti-slop.md`. Pipeline rules live in
-`domains/delivery/02-cicd-anti-slop.md`.
+Infrastructure is the foundation of the runtime environment. Every configuration change is a production change.
 
-## 1. Stack Assumptions
+## Scope
 
-This layer applies to:
+This file applies to infrastructure-as-code tools including Terraform, OpenTofu, Pulumi (TypeScript, Python, Go, C#), AWS CloudFormation, CDK, Google Cloud Deployment Manager, Azure Bicep, ARM templates, and Ansible. The principles are tool-agnostic. The examples use Terraform/HCL syntax where illustrative.
 
-- Terraform and OpenTofu
-- Pulumi (TypeScript, Python, Go, C#)
-- AWS CloudFormation and CDK
-- Google Cloud Deployment Manager
-- Azure Bicep and ARM templates
-- Ansible and similar configuration tools
+## Rule Severity
 
-The principles are tool-agnostic. The syntax varies.
+Severity follows `_universal/00-style-guide.md`.
 
-## 2. State Management
+## Contracts
 
-### 2.1 Remote State
+Infrastructure-as-code commits to seven contracts. The table below maps each contract to the rules that enforce it.
 
-State is never stored on a developer's laptop. It lives in a remote
-backend:
+| Contract | Description | Enforced By |
+|---|---|---|
+| State Integrity | State is remote, locked, encrypted, and separated by environment. | INF-001 to INF-005, INF-034 |
+| Plan Discipline | Every change is planned, reviewed, and cost-checked before application. | INF-006 to INF-010, INF-039, INF-041 |
+| Modularity | Infrastructure is composed of single-responsibility, versioned modules. | INF-011 to INF-015, INF-032, INF-040 |
+| Idempotency | Applying the same configuration twice produces no changes. | INF-016 to INF-018 |
+| Drift Management | Drift is detected regularly and reconciled through code, not ignored. | INF-019 to INF-022 |
+| Security & Least Privilege | Networks, IAM, and storage follow least privilege and encryption by default. | INF-026 to INF-030, INF-037 |
+| Secret Management | Secrets are never in code, state, or logs. | INF-003, INF-023 to INF-025 |
 
-- Terraform: S3 + DynamoDB lock, GCS, Terraform Cloud.
-- Pulumi: Pulumi Cloud or a self-hosted backend.
-- CloudFormation: managed by AWS automatically.
+## State Management
 
-Local state loses track of reality the moment two people work on the
-same stack.
+### INF-001 — Remote State Requirement
 
-### 2.2 State Locking
+**MUST**
 
-The remote backend supports locking. Without locking, two concurrent
-`apply` runs corrupt the state file.
+State MUST NEVER be stored on a developer's laptop. It MUST live in a remote backend (e.g., S3 + DynamoDB lock, GCS, Terraform Cloud, Pulumi Cloud). Local state loses track of reality the moment two people work on the same stack.
 
-For Terraform + S3, use DynamoDB for locks. For other backends, use
-the tool's native locking.
+### INF-002 — State Locking
 
-### 2.3 State Is Sensitive
+**MUST**
 
-State files contain secrets (database passwords, private keys, API
-tokens). The backend bucket is encrypted and access-controlled.
-Never commit state files to Git.
+The remote backend MUST support locking. Without locking, two concurrent `apply` runs corrupt the state file. Native tool locking or external locks (e.g., DynamoDB for S3) MUST be used.
 
-### 2.4 Separate State Per Environment
+### INF-003 — State Secrecy
 
-Production, staging, and development have separate state files, in
-separate backends (or separate prefixes). A `terraform apply` in one
-environment must never touch another.
+**MUST NOT**
 
-### 2.5 Never Edit State by Hand
+State files contain secrets (database passwords, private keys, API tokens). The backend bucket MUST be encrypted and access-controlled. State files MUST NEVER be committed to Git.
 
-`terraform state rm`, `mv`, `import` are the escape hatches. Direct
-file edits are not. If the state is wrong, use the tool's commands,
-not a text editor.
+### INF-004 — Environment State Separation
 
-## 3. Plan Before Apply
+**MUST**
 
-### 3.1 Always Review the Plan
+Production, staging, and development MUST have separate state files, in separate backends or separate prefixes. An apply in one environment MUST NEVER touch another.
 
-`terraform plan` (or the equivalent) before every `apply`. A change
-that was not planned is a change that was not reviewed.
+### INF-005 — State Mutation Discipline
 
-### 3.2 Read the Plan Carefully
+**MUST NOT**
 
-Look for:
+State MUST NOT be edited by hand using a text editor. Tool commands (e.g., `terraform state rm`, `mv`, `import`) MUST be used as escape hatches.
+
+## Plan Before Apply
+
+### INF-006 — Mandatory Plan Review
+
+**MUST**
+
+A plan (e.g., `terraform plan`) MUST be executed and reviewed before every `apply`. A change that was not planned is a change that was not reviewed.
+
+### INF-007 — Plan Inspection
+
+**MUST**
+
+The plan output MUST be inspected carefully for:
 
 - Resources marked for destruction (`-` or `-/+`).
 - Resources marked for replacement (forces new resource).
 - Unexpected changes to unrelated resources.
 - Changes to IAM, security groups, or networking.
 
-If the plan shows something you did not intend, stop. Do not apply.
+If the plan shows unintended changes, the apply MUST be stopped.
 
-### 3.3 No Auto-Approve in Production
+### INF-008 — Production Auto-Approve Prohibition
 
-BAD: `terraform apply -auto-approve` in a production pipeline.
-GOOD: A manual approval gate, or an explicit non-interactive mode
-with human sign-off upstream.
+**MUST NOT**
 
-### 3.4 Saved Plans
+Auto-approve flags (e.g., `terraform apply -auto-approve`) MUST NOT be used in production pipelines. A manual approval gate or an explicit non-interactive mode with human sign-off upstream MUST be used.
 
-For large changes, save the plan (`-out=tfplan`) and apply the saved
-plan. This guarantees the applied change matches the reviewed change.
+### INF-009 — Saved Plan Execution
 
-### 3.5 Cost Preview
+**SHOULD**
 
-Where available (Infracost, AWS Cost Explorer preview), show the cost
-delta before applying. A "small" change can quintuple the bill.
+For large changes, the plan SHOULD be saved (e.g., `-out=tfplan`) and the saved plan applied. This guarantees the applied change matches the reviewed change exactly.
 
-## 4. Module Design
+### INF-010 — Cost Preview
 
-### 4.1 One Module, One Responsibility
+**SHOULD**
 
-A module that creates a VPC, an EKS cluster, a database, and an
-S3 bucket is four modules. Compose them.
+Where available (e.g., Infracost, AWS Cost Explorer preview), the cost delta SHOULD be shown before applying. A "small" change can quintuple the cloud bill.
 
-### 4.2 Inputs Are Explicit
+## Module Design
 
-Every module input has:
+### INF-011 — Module Single Responsibility
 
-- A type.
-- A description.
-- A validation rule where applicable.
-- A default only when the default is genuinely the common case.
+**MUST**
 
-### 4.3 Outputs Are the Public API
+A module MUST have one responsibility. A module that creates a VPC, an EKS cluster, a database, and an S3 bucket is four modules and MUST be split and composed.
 
-Only output what consumers actually need. Do not expose internal
-resource IDs unless a consumer requires them.
+### INF-012 — Explicit Module Inputs
 
-### 4.4 Versioned Modules
+**MUST**
 
-Reference modules by version:
+Every module input MUST have a type, a description, and a validation rule where applicable. Defaults MUST only be provided when they are genuinely the common case.
 
+### INF-013 — Minimal Module Outputs
+
+**MUST**
+
+Only what consumers actually need MUST be outputted. Internal resource IDs MUST NOT be exposed unless a consumer explicitly requires them.
+
+### INF-014 — Module Version Pinning
+
+**MUST**
+
+Modules MUST be referenced by explicit version. `main` or `latest` is not a version.
+
+Example (illustrative, HCL):
 ```hcl
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
@@ -141,212 +141,187 @@ module "vpc" {
 }
 ```
 
-`main` or `latest` is not a version.
+### INF-015 — Root Module Abstraction
 
-### 4.5 No Resources at the Root
+**SHOULD**
 
-The root module calls modules. It does not directly create resources.
-The exception is trivial one-resource stacks, and even then a module
-is cleaner.
+The root module SHOULD call other modules and SHOULD NOT directly create resources. The exception is trivial one-resource stacks.
 
-## 5. Idempotency
+## Idempotency
 
-### 5.1 Apply Twice, Same Result
+### INF-016 — Idempotent Application
 
-Running `apply` on an unchanged configuration produces no changes.
-If it does, the configuration is non-deterministic.
+**MUST**
 
-Common causes:
+Running `apply` on an unchanged configuration MUST produce no changes. If it produces changes, the configuration is non-deterministic and MUST be fixed. Common causes include timestamps in tags, random IDs generated at apply time, or ordering dependent on parallel execution.
 
-- Timestamps in resource names or tags.
-- Random IDs generated at apply time.
-- Ordering that depends on parallel execution.
+### INF-017 — Conditional Script Execution
 
-### 5.2 No Scripts That Always Run
+**MUST NOT**
 
-A `null_resource` with a `local-exec` that always fires will run on
-every apply. Use `triggers` or a marker file if the script must run
-once.
+Scripts (e.g., `null_resource` with `local-exec`) MUST NOT always run on every apply. Triggers or marker files MUST be used if the script must run only once or on specific changes.
 
-### 5.3 Deterministic Naming
+### INF-018 — Deterministic Resource Naming
 
-Resource names come from inputs, not from `timestamp()` or
-`random_id` that regenerates. If a name must be unique, derive it
-from a stable identifier.
+**MUST NOT**
 
-## 6. Drift Detection
+Resource names MUST come from inputs, not from functions that regenerate on every run (e.g., `timestamp()` or `random_id`). If a name must be unique, it MUST be derived from a stable identifier. Regenerating names breaks references and forces recreation.
 
-### 6.1 Plan Regularly
+## Drift Detection
 
-A weekly or daily `plan` against production detects drift. A console
-change made by a person is drift.
+### INF-019 — Scheduled Drift Detection
 
-### 6.2 No Console Changes in Production
+**MUST**
 
-BAD: An engineer resizes an instance in the console "just this once".
-GOOD: The change goes through code, PR, plan, apply.
+A regular (weekly or daily) `plan` against production MUST be scheduled to detect drift. Console changes made by humans constitute drift.
 
-Console changes are invisible to the state, and the next apply
-reverts them or produces a conflict.
+### INF-020 — Console Change Prohibition
 
-### 6.3 Import, Do Not Recreate
+**MUST NOT**
 
-A resource that exists but is not in state is imported:
+Production infrastructure MUST NOT be changed via the cloud provider's web console. All changes MUST go through code, PR, plan, and apply. Console changes are invisible to the state and cause conflicts on the next apply.
 
-```bash
-terraform import aws_s3_bucket.example my-bucket-name
-```
+### INF-021 — Resource Import Discipline
 
-Recreating it destroys the existing resource and any data.
+**MUST**
 
-### 6.4 Reconcile, Do Not Ignore
+A resource that exists but is not in state MUST be imported (e.g., `terraform import`). It MUST NOT be recreated, as recreation destroys the existing resource and its data.
 
-When drift is detected, reconcile the configuration or the resource.
-Do not add an `ignore_changes` block to hide the drift.
+### INF-022 — Drift Reconciliation
 
-## 7. Secrets
+**MUST NOT**
 
-### 7.1 No Secrets in Code
+When drift is detected, the configuration or the resource MUST be reconciled. Adding an `ignore_changes` block to hide the drift is prohibited. A growing list of `ignore_changes` blocks means the configuration no longer describes reality.
 
-Never `variable "password" { default = "..." }`. Never a resource
-attribute with a hardcoded secret.
+## Secrets
 
-Use:
+### INF-023 — Code Secret Prohibition
 
-- A secret manager (Vault, AWS Secrets Manager, GCP Secret Manager).
-- A data source that reads from the manager at apply time.
-- Environment variables for the pipeline.
+**MUST NOT**
 
-### 7.2 Mark Sensitive Outputs
+Secrets MUST NEVER be hardcoded in code (e.g., `variable "password" { default = "..." }` or hardcoded resource attributes). A secret manager (Vault, AWS Secrets Manager), a data source that reads from the manager at apply time, or pipeline environment variables MUST be used.
 
-Terraform: `sensitive = true` on outputs and variables that carry
-secrets. Pulumi: `pulumi.secret()` on values.
+### INF-024 — Sensitive Output Masking
 
-This prevents the value from appearing in plan output and logs.
+**MUST**
 
-### 7.3 Rotate Secrets Through Code
+Outputs and variables that carry secrets MUST be marked as sensitive (e.g., `sensitive = true` in Terraform, `pulumi.secret()` in Pulumi). This prevents the value from appearing in plan output and logs.
 
-A secret rotation is a code change with a plan and a review, not a
-manual console action.
+### INF-025 — Code-Driven Secret Rotation
 
-## 8. Network and Security
+**MUST**
 
-### 8.1 No `0.0.0.0/0` on Non-Public Ports
+Secret rotation MUST be a code change with a plan and a review. Manual console actions for rotation are prohibited.
 
-BAD: A security group with `cidr_blocks = ["0.0.0.0/0"]` on port
-5432 (Postgres) or 22 (SSH).
-GOOD: A specific CIDR or a bastion host or SSM Session Manager.
+## Network and Security
 
-Only port 80 and 443 of a public load balancer accept traffic from
-the world.
+### INF-026 — Public Port Restriction
 
-### 8.2 Least Privilege IAM
+**MUST NOT**
 
-- A role has only the actions it needs.
-- The resource list is specific (a bucket ARN, not `"*"`).
-- Wildcards require a comment explaining why.
+Security groups MUST NOT allow `0.0.0.0/0` on non-public ports (e.g., 5432 for Postgres, 22 for SSH). Specific CIDRs, bastion hosts, or SSM Session Manager MUST be used. Only ports 80 and 443 of a public load balancer MAY accept traffic from the world.
 
-### 8.3 Encryption by Default
+### INF-027 — IAM Least Privilege
 
-- S3 buckets: server-side encryption enabled.
-- RDS: storage encrypted, backups encrypted.
-- EBS volumes: encrypted.
-- Secrets: encrypted at rest.
+**MUST**
 
-Encryption is not optional. If it requires a flag, set the flag.
+IAM roles MUST have only the actions they need. Resource lists MUST be specific (e.g., a bucket ARN, not `"*"`). Wildcards MUST require a comment explaining why.
 
-### 8.4 Logging and Audit
+### INF-028 — Default Encryption
 
-- CloudTrail (AWS), Cloud Audit Logs (GCP), Activity Log (Azure)
-  enabled.
-- VPC flow logs for network traffic.
-- S3 access logging where the bucket holds sensitive data.
+**MUST**
 
-### 8.5 Public Access Blocks
+Encryption MUST be enabled by default for all storage and databases (e.g., S3 server-side encryption, RDS storage and backups, EBS volumes). Secrets MUST be encrypted at rest. If it requires a flag, the flag MUST be set.
 
-S3 buckets: `block_public_acls`, `block_public_policy`,
-`ignore_public_acls`, `restrict_public_buckets` all enabled unless
-the bucket is explicitly a public website.
+### INF-029 — Audit and Flow Logging
 
-## 9. Infrastructure-Specific Anti-Patterns
+**MUST**
 
-### 9.1 Local State
+Cloud audit logs (CloudTrail, Cloud Audit Logs, Activity Log) MUST be enabled. VPC flow logs MUST be enabled for network traffic. S3 access logging MUST be enabled where the bucket holds sensitive data.
 
-Covered in 2.1. The single most common infrastructure mistake.
+### INF-030 — S3 Public Access Blocks
 
-### 9.2 No Locking
+**MUST**
 
-Covered in 2.2.
+S3 buckets MUST have `block_public_acls`, `block_public_policy`, `ignore_public_acls`, and `restrict_public_buckets` enabled, unless the bucket is explicitly configured as a public website.
 
-### 9.3 `ignore_changes` Everywhere
+## AI-Specific Infrastructure Discipline
 
-A growing list of `ignore_changes` blocks means the configuration no
-longer describes reality. Remove the block, reconcile the resource.
+### INF-042 — Provider API Verification
 
-### 9.4 Console-Driven Infrastructure
+**MUST**
 
-Covered in 6.2.
+Before using a cloud provider resource or attribute, the assistant MUST verify it exists in the pinned version of the provider. Provider APIs change between major versions. Invented attributes produce plan-time errors or silent misconfigurations.
 
-### 9.5 Monolithic State
+See MAS-036 in `_universal/00-master-anti-slop.md`.
 
-A single state file that manages VPC, EKS, IAM, and applications.
-Any change touches everything, and a failed plan blocks all work.
+### INF-043 — Existing Module Discovery
 
-Split by lifecycle: networking changes rarely, applications change
-daily. Separate states.
+**MUST**
 
-### 9.6 Copy-Pasted Configuration
+Before writing a new infrastructure module or cloud architecture pattern, the assistant MUST search the project's registry or existing codebase for an equivalent module. Inventing parallel VPC or database modules creates configuration drift and duplicated maintenance.
 
-The same 200-line VPC block in four environments. A bugfix in one is
-missed in the others. Extract a module.
+See MAS-035 in `_universal/00-master-anti-slop.md`.
 
-### 9.7 `random_id` for Resource Names
+### INF-044 — Infrastructure Restraint
 
-BAD: `name = "app-${random_id.suffix.hex}"`.
-GOOD: A stable name derived from the environment and purpose.
+**SHOULD**
 
-`random_id` regenerates when the resource is recreated, changing the
-name and breaking references.
+The assistant SHOULD NOT introduce complex multi-cloud setups, obscure managed services, or advanced networking topologies unless the project already uses them and the scale explicitly requires them.
 
-### 9.8 Hardcoded Account IDs and Regions
+See MAS-038 in `_universal/00-master-anti-slop.md`.
 
-BAD: `account_id = "123456789012"` in every module.
-GOOD: A data source or a variable set per environment.
+## Anti-Patterns
 
-### 9.9 No State Backup
+### INF-031 — State Splitting by Lifecycle
 
-Even with remote state, the backend needs versioning and backups. A
-corrupted state with no history is unrecoverable.
+**MUST**
 
-### 9.10 Apply Without Plan
+Monolithic state files that manage networking, databases, and applications together MUST NOT be used. State MUST be split by lifecycle (e.g., networking changes rarely, applications change daily) to prevent a failed plan from blocking all work.
 
-Covered in 3.1.
+### INF-032 — Configuration DRY Principle
 
-### 9.11 `-target` as a Habit
+**MUST NOT**
 
-`terraform apply -target=...` is an escape hatch for emergencies. As a
-workflow, it produces state that diverges from the configuration.
+Copy-pasted configuration blocks across environments MUST NOT be used. A bugfix in one will be missed in the others. Modules MUST be extracted and reused.
 
-### 9.12 Depends_on as a Crutch
+### INF-033 — Dynamic Account and Region Resolution
 
-Explicit `depends_on` is sometimes necessary. When it appears
-frequently, the resource graph is not expressing dependencies
-naturally. Investigate.
+**MUST NOT**
 
-### 9.13 No Environments
+Account IDs and regions MUST NOT be hardcoded in modules. Data sources or variables set per environment MUST be used.
 
-BAD: One stack that serves as both staging and production.
-GOOD: Separate environments, separate state, separate credentials.
+### INF-034 — State Backend Versioning and Backup
 
-### 9.14 Shared Credentials
+**MUST**
 
-BAD: One AWS access key used by CI, developers, and production.
-GOOD: Separate IAM roles per actor, with least privilege.
+Even with remote state, the backend MUST have versioning and backups enabled. A corrupted state with no history is unrecoverable.
 
-### 9.15 Provider Version Unpinned
+### INF-035 — Targeted Apply Restriction
 
-BAD: No `required_providers` block.
-GOOD:
+**MUST NOT**
+
+Targeted applies (e.g., `terraform apply -target=...`) MUST NOT be used as a regular workflow. They are escape hatches for emergencies. Using them habitually produces state that diverges from the configuration.
+
+### INF-036 — Implicit Dependency Preference
+
+**SHOULD**
+
+Explicit `depends_on` SHOULD NOT be used as a crutch. When it appears frequently, the resource graph is not expressing dependencies naturally and the configuration SHOULD be investigated and refactored.
+
+### INF-037 — Credential Isolation
+
+**MUST NOT**
+
+Credentials MUST NOT be shared across actors. CI, developers, and production MUST use separate IAM roles with least privilege.
+
+### INF-038 — Provider Version Pinning
+
+**MUST**
+
+Provider versions MUST be pinned in a `required_providers` block. An unpinned provider can change behavior between applies.
+
+Example (illustrative, HCL):
 ```hcl
 terraform {
   required_providers {
@@ -358,31 +333,32 @@ terraform {
 }
 ```
 
-An unpinned provider can change behavior between applies.
+### INF-039 — Plan Warning Inspection
 
-### 9.16 Ignoring the Plan Warning
+**MUST**
 
-A plan that says `~ update in-place` on an RDS instance may mean a
-restart. Read the plan, not just its exit code.
+Plan warnings and in-place update notices (e.g., `~ update in-place` on an RDS instance) MUST be read and understood. They may indicate an impending restart or downtime. The plan text MUST be read, not just its exit code.
 
-### 9.17 No Documentation
+### INF-040 — Module Documentation
 
-A module with no README is a module that only its author understands.
-Every module has a README with purpose, inputs, outputs, and examples.
+**MUST**
 
-### 9.18 Time-of-Check to Time-of-Use Gaps
+Every module MUST have a README documenting its purpose, inputs, outputs, and examples. A module without documentation is a module that only its author understands.
 
-A plan run at 10:00 and an apply at 14:00 will not see changes made
-in between. For critical infrastructure, re-plan immediately before
-apply.
+### INF-041 — TOCTOU Plan Freshness
 
-## 10. Response to Violation
+**MUST**
 
-If a previous response violated a rule here:
+For critical infrastructure, the plan MUST be re-run immediately before apply to prevent Time-of-Check to Time-of-Use (TOCTOU) gaps. A plan run hours ago will not see changes made in the interim.
 
-```
-In the previous response, [specific rule] was violated. Correction:
-[corrected code]
-```
+## Response to Violation
 
-No justification. No apology paragraph. Fix and move on.
+When a rule in this file is violated, report:
+
+Violation: INF-{NNN}
+Reason: {one-line reason}
+Correction: {smallest fix}
+
+For multiple violations, report each rule ID separately.
+
+Do not replace a technical correction with a generic explanation.

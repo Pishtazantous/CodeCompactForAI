@@ -2,50 +2,54 @@
 id: 02-devops-anti-slop
 title: "DevOps Anti-Slop Layer"
 lang: en
-depends_on: [00-master-anti-slop]
+depends_on: ["_universal/00-style-guide.md", "_universal/00-master-anti-slop.md"]
 category: domain
 domain_type: delivery
-version: 1
+version: 2
 ---
 
 # DevOps Anti-Slop Layer
 
-Layered under `_universal/00-master-anti-slop.md`. Universal rules
-(fabrication, fake completion, over-engineering, silent assumptions,
-security anti-patterns, output format) are NOT repeated here.
+This file defines behavioral contracts specific to deployment, containerization, orchestration, and operational concerns. It sits in the delivery layer, below the universal anti-slop rules and above infrastructure-as-code or CI/CD pipeline patterns. It covers Docker, Kubernetes, deployment strategy, secrets management, health checks, observability, and rollback. It does not cover infrastructure-as-code tools like Terraform or Pulumi (see `02-infra-anti-slop.md`), CI/CD pipeline definitions (see `02-cicd-anti-slop.md`), or application-level code (see other delivery files).
 
-This file covers rules specific to deployment, containerization,
-infrastructure, and operational concerns: Docker, Kubernetes,
-deployment strategy, secrets, health checks, and rollback. Rules
-specific to infrastructure-as-code tools (Terraform, Pulumi) live in
-`domains/delivery/02-infra-anti-slop.md`. CI/CD pipeline rules live in
-`domains/delivery/02-cicd-anti-slop.md`.
+A deployment is the bridge between code and production. Every configuration, image, and manifest is a contract with the runtime environment.
 
-## 1. Stack Assumptions
+## Scope
 
-This layer applies to:
+This file applies to applications deployed as containers (Docker, Podman), orchestrated with Kubernetes, Docker Swarm, or managed platforms (ECS, Cloud Run, Fly.io), traditional deployments (systemd, PM2, bare metal), and serverless deployments (Lambda, Cloud Functions). The rules below are the minimum for any deployment. The examples use Docker and Kubernetes syntax where illustrative.
 
-- Applications deployed as containers (Docker, Podman).
-- Applications orchestrated with Kubernetes, Docker Swarm, or a
-  managed platform (ECS, Cloud Run, Fly.io).
-- Traditional deployments (systemd, PM2, bare metal).
-- Serverless deployments (Lambda, Cloud Functions).
+## Rule Severity
 
-The rules below are the minimum for any deployment. Pick the ones
-that apply to the project's target.
+Severity follows `_universal/00-style-guide.md`.
 
-## 2. Containers
+## Contracts
 
-### 2.1 One Process Per Container
+A DevOps pipeline and runtime environment commit to six contracts. The table below maps each contract to the rules that enforce it.
 
-A container runs one process. Not nginx + app + cron. If multiple
-processes are needed, they are separate containers (or separate
-services).
+| Contract | Description | Enforced By |
+|---|---|---|
+| Container Discipline | Containers are isolated, minimal, and run as non-root. | OPS-001 to OPS-009 |
+| Orchestration Safety | Resources are bounded, probes are separated, and rollouts are safe. | OPS-010 to OPS-016 |
+| Deployment Predictability | Artifacts are immutable, rollouts are controlled, and rollbacks are documented. | OPS-017 to OPS-022 |
+| Secret Management | Secrets are never in code, images, or logs. | OPS-023 to OPS-026, OPS-029 |
+| Observability | Logs are structured, metrics are collected, and alerts are actionable. | OPS-027 to OPS-032 |
+| Recovery | Backups exist, are tested, and disaster recovery is documented. | OPS-033 to OPS-037 |
 
-### 2.2 Multi-Stage Builds When Appropriate
+## Containers
 
-A build stage with the compiler and a runtime stage with the artifact:
+### OPS-001 — Single Process Container
 
+**MUST**
+
+A container MUST run one process. Combining multiple processes (e.g., nginx + app + cron) in a single container is prohibited. If multiple processes are needed, they MUST be separate containers or separate services.
+
+### OPS-002 — Multi-Stage Build Discipline
+
+**SHOULD**
+
+Multi-stage builds SHOULD be used to separate the build environment (compiler, dev dependencies) from the runtime environment (artifact only). For trivial scripts (e.g., 10 lines), a single stage is acceptable. Over-engineering MUST be avoided.
+
+Example (illustrative, Dockerfile):
 ```dockerfile
 FROM node:20 AS build
 WORKDIR /app
@@ -61,146 +65,143 @@ COPY --from=build /app/node_modules ./node_modules
 CMD ["node", "dist/main.js"]
 ```
 
-For a 10-line script, a single stage is fine. Do not over-engineer.
+### OPS-003 — Base Image Pinning
 
-### 2.3 Pin Base Image Versions
+**MUST**
 
-BAD: `FROM node:latest`.
-GOOD: `FROM node:20.11.1-alpine`.
+Base image versions MUST be pinned to a specific version and tag (e.g., `node:20.11.1-alpine`). Using `latest` or unpinned tags is prohibited, as they move unpredictably and break reproducibility.
 
-`latest` moves under your feet. Pin to a specific version and update
-deliberately.
+### OPS-004 — Non-Root User
 
-### 2.4 Non-Root User
+**MUST**
 
-BAD: `USER root` (or no `USER` directive, which defaults to root).
-GOOD:
+Containers MUST NOT run as root. A dedicated non-root user MUST be created and used via the `USER` directive. Running as root inside a container is a privilege escalation risk.
+
+Example (illustrative, Dockerfile):
 ```dockerfile
 RUN addgroup --system app && adduser --system app --ingroup app
 USER app
 ```
 
-Running as root inside a container is a privilege escalation risk.
+### OPS-005 — Dockerignore Requirement
 
-### 2.5 `.dockerignore`
+**MUST**
 
-Every project has a `.dockerignore` that excludes:
+Every project MUST have a `.dockerignore` file that excludes `.git`, `node_modules`, `dist` (if built inside), `.env`, test files, and local data. Copying the entire working directory into the image causes slow builds and leak risks.
 
-- `.git`
-- `node_modules`
-- `dist` (if built inside)
-- `.env`
-- Test files
-- Local data
+### OPS-006 — Layer Caching Order
 
-Copying the entire working directory into the image is a slow build
-and a leak risk.
+**MUST**
 
-### 2.6 Layer Caching
+Dockerfile instructions MUST be ordered from least-frequently-changed to most-frequently-changed to maximize layer caching.
 
-Order Dockerfile instructions from least-frequently-changed to
-most-frequently-changed:
-
+Example (illustrative, Dockerfile):
 ```dockerfile
 COPY package*.json ./    # rarely changes
 RUN npm ci               # cached if package.json unchanged
 COPY . .                 # changes often
 ```
 
-Reversing this invalidates the install cache on every code change.
+### OPS-007 — Image Secret Prohibition
 
-### 2.7 No Secrets in the Image
+**MUST NOT**
 
-Never `COPY .env` or `ARG SECRET=...`. Secrets come from the runtime
-environment or a secret manager. See section 5.
+Secrets MUST NEVER be copied into the image (e.g., `COPY .env` or `ARG SECRET=...`). Secrets MUST come from the runtime environment or a secret manager.
 
-### 2.8 Health Check
+### OPS-008 — Container Health Check
 
-Add a `HEALTHCHECK` directive (or the platform's equivalent). The
-health check verifies the process is alive, not that every dependency
-is healthy.
+**MUST**
 
-### 2.9 Log to stdout/stderr
+A `HEALTHCHECK` directive (or the platform's equivalent) MUST be added. The health check MUST verify the process is alive, not that every external dependency is healthy.
 
-Containers do not have a reliable filesystem. Logs go to stdout and
-stderr. The orchestrator collects them.
+### OPS-009 — Standard Output Logging
 
-## 3. Kubernetes
+**MUST**
 
-### 3.1 Do Not Use Kubernetes for One Container
+Containers do not have a reliable filesystem. Logs MUST go to stdout and stderr. The orchestrator or container runtime collects them.
 
-A single container on a single server does not need Kubernetes. Docker
-Compose, a systemd unit, or a managed platform is simpler and
-sufficient.
+## Kubernetes
 
-Kubernetes is for orchestration at scale: multiple services,
-horizontal scaling, self-healing, and rolling deployments.
+### OPS-010 — Kubernetes Scale Justification
 
-### 3.2 Resource Requests and Limits
+**SHOULD NOT**
 
-Every container has:
+Kubernetes SHOULD NOT be used for a single container on a single server. Docker Compose, a systemd unit, or a managed platform is simpler and sufficient. Kubernetes is for orchestration at scale: multiple services, horizontal scaling, self-healing, and rolling deployments.
+
+### OPS-011 — Resource Requests and Limits
+
+**MUST**
+
+Every container MUST have resource requests and limits defined:
 
 - `resources.requests.cpu` and `.memory`: the minimum needed.
 - `resources.limits.cpu` and `.memory`: the maximum allowed.
 
-Without requests, the scheduler overcommits. Without limits, one pod
-can starve the node.
+Without requests, the scheduler overcommits. Without limits, one pod can starve the node.
 
-### 3.3 Liveness, Readiness, Startup Probes
+See MAS-040 in `_universal/00-master-anti-slop.md`.
+
+### OPS-012 — Probe Separation
+
+**MUST**
+
+Startup, readiness, and liveness probes MUST be separated and configured correctly:
 
 - **Startup**: has the process finished initializing?
 - **Readiness**: is the process ready to receive traffic?
 - **Liveness**: is the process still healthy?
 
-Do not use the same check for all three. Liveness failures restart
-the pod; readiness failures remove it from the load balancer.
+The same check MUST NOT be used for all three. Liveness failures restart the pod; readiness failures remove it from the load balancer.
 
-### 3.4 No `latest` Tags
+### OPS-013 — Kubernetes Tag Pinning
 
-BAD: `image: myapp:latest`.
-GOOD: `image: myapp:1.4.2`.
+**MUST NOT**
 
-The `latest` tag in Kubernetes with `imagePullPolicy: Always` causes
-unpredictable rollouts.
+The `latest` tag MUST NOT be used in Kubernetes manifests. Unpredictable rollouts occur when `imagePullPolicy: Always` is combined with `latest`. Specific version tags (e.g., `myapp:1.4.2`) MUST be used.
 
-### 3.5 Graceful Shutdown
+### OPS-014 — Graceful Shutdown Configuration
 
-Set `terminationGracePeriodSeconds`. The app handles `SIGTERM` and
-finishes in-flight requests before exiting.
+**MUST**
 
-### 3.6 ConfigMaps and Secrets
+`terminationGracePeriodSeconds` MUST be set. The application MUST handle `SIGTERM` and finish in-flight requests before exiting.
 
-- ConfigMaps for non-sensitive configuration.
-- Secrets for sensitive values. Prefer an external secret manager
-  (Vault, AWS Secrets Manager) integrated via an operator or CSI
-  driver over Kubernetes `Secret` objects.
-- Do not commit Secrets to Git.
+### OPS-015 — External Secret Management
 
-### 3.7 Pod Disruption Budget
+**SHOULD**
 
-For any service with more than one replica, define a
-`PodDisruptionBudget`. This prevents the cluster from taking down
-all replicas at once during a node drain.
+ConfigMaps MUST be used for non-sensitive configuration. For sensitive values, an external secret manager (Vault, AWS Secrets Manager) integrated via an operator or CSI driver SHOULD be preferred over native Kubernetes `Secret` objects. Secrets MUST NOT be committed to Git.
 
-## 4. Deployments
+### OPS-016 — Pod Disruption Budget
 
-### 4.1 Immutable Deployments
+**MUST**
 
-Every deployment is a new artifact. Never patch a running container.
+For any service with more than one replica, a `PodDisruptionBudget` MUST be defined. This prevents the cluster from taking down all replicas at once during a node drain.
 
-### 4.2 Rolling Deployments
+## Deployments
 
-For stateless services, roll out one instance at a time. `maxSurge`
-and `maxUnavailable` control the pace.
+### OPS-017 — Immutable Artifacts
 
-### 4.3 Blue-Green or Canary
+**MUST**
 
-For critical services, deploy alongside the current version, shift
-traffic gradually (canary), or switch entirely (blue-green).
+Every deployment MUST be a new artifact. Patching a running container in place is prohibited.
 
-### 4.4 Rollback Plan
+### OPS-018 — Rolling Deployment Pace
 
-Every deployment has a documented rollback:
+**MUST**
+
+For stateless services, rollouts MUST occur one instance at a time. `maxSurge` and `maxUnavailable` MUST be configured to control the pace.
+
+### OPS-019 — Advanced Deployment Strategy
+
+**SHOULD**
+
+For critical services, advanced strategies SHOULD be used: deploy alongside the current version and shift traffic gradually (canary), or switch entirely (blue-green).
+
+### OPS-020 — Rollback Plan Documentation
+
+**MUST**
+
+Every deployment MUST have a documented rollback plan detailing:
 
 - How to revert to the previous version.
 - How long it takes.
@@ -209,250 +210,271 @@ Every deployment has a documented rollback:
 
 A deployment without a rollback plan is a bet.
 
-### 4.5 Database Migrations Before Code
+### OPS-021 — Migration Before Code
 
-The safe order:
+**MUST**
+
+The safe deployment order for database changes MUST be followed:
 
 1. Deploy the migration (add column, add index).
 2. Deploy the code that uses it.
 3. Remove the old column in a later migration.
 
-Reversing this order causes runtime errors when new code hits an old
-schema.
+Reversing this order causes runtime errors when new code hits an old schema.
 
-### 4.6 Feature Flags
+### OPS-022 — Feature Flag Lifecycle
 
-A feature flag decouples deployment from release. The code ships
-disabled, and the flag enables it. Use them for:
+**MUST**
 
-- Large features that ship in increments.
-- Behavior changes that need a kill switch.
-- A/B tests.
+Feature flags MUST be used to decouple deployment from release for large features, behavior changes needing a kill switch, or A/B tests. Flags MUST NOT be left in the codebase forever; they MUST be removed when the feature is stable.
 
-Do not leave flags forever. Remove them when the feature is stable.
+## Secrets Management
 
-## 5. Secrets Management
+### OPS-023 — Repository Secret Prohibition
 
-### 5.1 Never in the Repository
+**MUST NOT**
 
-Covered in `00-master-anti-slop.md` section 2.4. Repeating: secrets
-in Git history are secrets forever. Rotate on exposure.
+Secrets MUST NEVER be committed to the repository. Secrets in Git history are secrets forever and MUST be rotated on exposure.
 
-### 5.2 Environment Variables at Runtime
+See MAS-009 in `_universal/00-master-anti-slop.md`.
+
+### OPS-024 — Runtime Secret Injection
+
+**MUST**
+
+Secrets MUST be injected at runtime:
 
 - Local: `.env` file, gitignored, loaded by the shell or the app.
 - CI/CD: secret store provided by the platform.
-- Production: a secret manager (Vault, AWS Secrets Manager, GCP
-  Secret Manager).
+- Production: a secret manager (Vault, AWS Secrets Manager, GCP Secret Manager).
 
-### 5.3 Secret Rotation
+### OPS-025 — Secret Rotation Policy
 
-Every secret has a rotation policy:
+**MUST**
+
+Every secret MUST have a rotation policy:
 
 - API keys: rotate every 90 days or per policy.
 - Database passwords: rotate on a schedule.
 - Certificates: rotate before expiry, automatically where possible.
 
-### 5.4 Least Privilege
+### OPS-026 — Least Privilege Access
 
-- A service account has only the permissions it needs.
-- Database users have only the tables and operations they use.
-- Cloud IAM roles are scoped to specific resources.
+**MUST**
 
-## 6. Logging and Monitoring
+Service accounts MUST have only the permissions they need. Database users MUST have access only to the tables and operations they use. Cloud IAM roles MUST be scoped to specific resources.
 
-### 6.1 Structured Logs
+## Logging and Monitoring
 
-Logs are JSON. Fields include `timestamp`, `level`, `service`,
-`requestId`, `userId`, `message`, and context-specific fields.
+### OPS-027 — Structured Logging
+
+**MUST**
+
+Logs MUST be structured (typically JSON). Fields MUST include `timestamp`, `level`, `service`, `requestId`, `userId`, `message`, and context-specific fields. String interpolation for logs is prohibited.
+
+Example (illustrative):
 
 BAD: `console.log("user " + userId + " did " + action)`.
 GOOD: `logger.info({ userId, action }, "user action")`.
 
-### 6.2 Log Levels
+### OPS-028 — Production Log Levels
+
+**MUST**
+
+Log levels MUST be used correctly:
 
 - `error`: something failed that needs attention.
 - `warn`: something unexpected happened but the system recovered.
 - `info`: normal operations (startup, shutdown, key events).
 - `debug`: details for development.
 
-Production runs at `info` or `warn`. `debug` is for local.
+Production MUST run at `info` or `warn`. `debug` is for local development.
 
-### 6.3 Never Log Secrets
+### OPS-029 — Log Secret Redaction
 
-Covered in `00-master-anti-slop.md` section 2.4. Repeating: tokens,
-passwords, and PII never appear in logs. Log redaction is
-configured at the logger level, not trusted to every call site.
+**MUST NOT**
 
-### 6.4 Metrics
+Tokens, passwords, and PII MUST NEVER appear in logs. Log redaction MUST be configured at the logger level, not trusted to every call site.
 
-Collect:
+See MAS-009 in `_universal/00-master-anti-slop.md`.
+
+### OPS-030 — Core Metrics Collection
+
+**MUST**
+
+Core metrics MUST be collected and exported to the project's chosen system (Prometheus, StatsD, CloudWatch):
 
 - Request rate, error rate, duration (RED).
 - Saturation, utilization, errors (USE).
 - Business metrics (signups, orders, revenue).
 
-Export to Prometheus, StatsD, CloudWatch, or the project's chosen
-system.
+### OPS-031 — Distributed Tracing
 
-### 6.5 Tracing
+**SHOULD**
 
-For multi-service systems, distributed tracing (OpenTelemetry) shows
-the path of a request across services. Instrument at the boundaries.
+For multi-service systems, distributed tracing (e.g., OpenTelemetry) SHOULD be used to show the path of a request across services. Instrumentation MUST occur at the boundaries.
 
-### 6.6 Alerts
+### OPS-032 — Actionable Alerts
 
-An alert is a signal to a human. Rules:
+**MUST**
 
-- Every alert has a runbook.
-- Every alert is actionable. If it cannot be acted on, it is noise.
-- Alert on symptoms (error rate, latency), not causes (CPU usage).
-- Alert fatigue kills response. Fewer, better alerts.
+Every alert MUST be a signal to a human and follow these rules:
 
-## 7. Backups and Recovery
+- Every alert MUST have a runbook.
+- Every alert MUST be actionable. If it cannot be acted on, it is noise.
+- Alerts MUST target symptoms (error rate, latency), not causes (CPU usage).
+- Alert fatigue kills response. Fewer, better alerts MUST be preferred.
 
-### 7.1 Backups Are Mandatory
+## Backups and Recovery
 
-For any data that cannot be recreated, there is a backup. No
-exceptions.
+### OPS-033 — Mandatory Backups
 
-### 7.2 Backups Are Tested
+**MUST**
 
-A backup that has never been restored is not a backup. Test the
-restore path regularly.
+For any data that cannot be recreated, a backup MUST exist. No exceptions.
 
-### 7.3 Backups Are Off-Site
+### OPS-034 — Backup Restore Testing
 
-A backup in the same region as the primary is not a backup against
-regional failure. Store in a different region or a different provider.
+**MUST**
 
-### 7.4 Retention Policy
+A backup that has never been restored is not a backup. The restore path MUST be tested regularly.
 
-Define how long backups are kept:
+### OPS-035 — Off-Site Backup Storage
+
+**MUST**
+
+A backup in the same region as the primary is not a backup against regional failure. Backups MUST be stored in a different region or a different provider.
+
+### OPS-036 — Retention Policy Definition
+
+**MUST**
+
+A retention policy MUST be defined and matched to the business requirement:
 
 - Daily: 7 to 30 days.
 - Weekly: 3 months.
 - Monthly: 1 year.
 - Yearly: 7 years (if required by compliance).
 
-Match the policy to the business requirement.
+### OPS-037 — Disaster Recovery Documentation
 
-### 7.5 Disaster Recovery Plan
+**MUST**
 
-Document:
+A disaster recovery plan MUST be documented, detailing:
 
 - What to do when the primary region fails.
 - Who has the authority to declare a disaster.
 - How long recovery takes (RTO).
 - How much data can be lost (RPO).
 
-## 8. DevOps-Specific Anti-Patterns
+## AI-Specific DevOps Discipline
 
-### 8.1 Deploying Without Testing
+### OPS-060 — Manifest and Image Verification
 
-BAD: `git push` to main triggers a deploy with no CI.
-GOOD: CI runs tests; deploy only on green.
+**MUST**
 
-### 8.2 Manual Deployments
+Before generating or modifying Kubernetes manifests, Dockerfiles, or cloud configurations, the assistant MUST verify that the base images, API versions, and resource quotas exist and are valid for the target environment. Invented API versions or image tags cause deployment failures that are invisible until runtime.
 
-BAD: SSH into the server and `git pull`.
-GOOD: A deployment pipeline that is reproducible.
+See MAS-036 in `_universal/00-master-anti-slop.md`.
 
-### 8.3 Config Drift
+### OPS-061 — Existing Pipeline Discovery
 
-The server was set up manually, and now nobody knows what is on it.
-Infrastructure-as-code prevents this (see `02-infra-anti-slop.md`).
+**MUST**
 
-### 8.4 No Health Check
+Before creating a new deployment script, CI/CD job, or infrastructure module, the assistant MUST search the project for an existing equivalent. Inventing parallel deployment paths creates configuration drift and security blind spots.
 
-BAD: A container without a health check.
-GOOD: A `/health` endpoint or a `HEALTHCHECK` directive.
+See MAS-035 in `_universal/00-master-anti-slop.md`.
 
-### 8.5 No Graceful Shutdown
+### OPS-062 — Infrastructure Restraint
 
-BAD: `kill -9` on deploy.
-GOOD: `SIGTERM`, wait for in-flight requests, then exit.
+**SHOULD**
 
-### 8.6 Running as Root in Container
+The assistant SHOULD NOT introduce complex orchestration tools (service meshes, advanced operators, multi-cluster setups) unless the project already uses them and the scale explicitly requires them.
 
-Covered in 2.4.
+See MAS-038 in `_universal/00-master-anti-slop.md`.
 
-### 8.7 Secrets in Environment Variables on Shared Hosts
+## Anti-Patterns
 
-BAD: `SECRET=...` in a shared CI variable visible to all jobs.
-GOOD: Scoped secrets per environment, per job.
+### OPS-040 — Untested Deployment
 
-### 8.8 Long-Lived `latest` Tags
+**MUST NOT**
 
-Covered in 3.4.
+Deploying without testing (e.g., `git push` to main triggers a deploy with no CI) is prohibited. CI MUST run tests; deployment MUST only occur on green.
 
-### 8.9 No Resource Limits
+### OPS-041 — Manual Deployment
 
-Covered in 3.2.
+**MUST NOT**
 
-### 8.10 Single Point of Failure
+Manual deployments (e.g., SSH into the server and `git pull`) are prohibited. A reproducible deployment pipeline MUST be used.
 
-BAD: One replica of the critical service.
-GOOD: At least two replicas, behind a load balancer.
+### OPS-042 — Configuration Drift
 
-### 8.11 Unbounded Log Retention
+**MUST NOT**
 
-BAD: Logs kept forever with no rotation.
-GOOD: A retention policy (30 days hot, 90 days cold, archive after).
+Servers or environments configured by hand lead to configuration drift. Infrastructure-as-code MUST be used to prevent this.
 
-### 8.12 Over-Monitoring for a Small Service
+### OPS-043 — Shared Host Secret Exposure
 
-BAD: Five tools (Prometheus, Grafana, Loki, Sentry, UptimeRobot) for
-a 100-user app.
-GOOD: Two appropriate tools.
+**MUST NOT**
 
-### 8.13 Alert on Every Error
+Secrets in environment variables on shared hosts (e.g., a shared CI variable visible to all jobs) are prohibited. Secrets MUST be scoped per environment and per job.
 
-BAD: A page for every 500 response.
-GOOD: Alert on error rate above a threshold, for a sustained period.
+### OPS-044 — Single Point of Failure
 
-### 8.14 Snowflake Servers
+**MUST NOT**
 
-A server configured by hand and never rebuilt. When it dies, nobody
-knows how to recreate it. Everything is code.
+A single replica of a critical service is a single point of failure and MUST NOT be used. At least two replicas behind a load balancer MUST be deployed.
 
-### 8.15 `sudo` in Entrypoint
+### OPS-045 — Unbounded Log Retention
 
-BAD: `ENTRYPOINT ["sudo", "node", "app.js"]`.
-GOOD: The container runs as a non-root user; no sudo needed.
+**MUST NOT**
 
-### 8.16 No Rollback Strategy
+Logs kept forever with no rotation cause storage exhaustion. A retention policy (e.g., 30 days hot, 90 days cold, archive after) MUST be defined and enforced.
 
-Covered in 4.4.
+### OPS-046 — Tooling Overkill
 
-### 8.17 Deploying on Friday
+**SHOULD NOT**
 
-Not a technical rule, but a cultural one: deploy when people are
-available to respond to failures. If the deployment process is safe,
-any day works. If not, fix the process.
+Over-monitoring a small service (e.g., five different observability tools for a 100-user app) SHOULD be avoided. Appropriate, minimal tooling SHOULD be selected.
 
-### 8.18 Docker Image Over 1 GB
+### OPS-047 — Alert Fatigue
 
-A bloated image has slow pulls, slow deploys, and a large attack
-surface. Review layers and remove unused tools.
+**MUST NOT**
 
-### 8.19 Copying Source Without `.dockerignore`
+Alerting on every error (e.g., paging for every 500 response) is prohibited. Alerts MUST trigger on error rates above a threshold for a sustained period.
 
-Covered in 2.5.
+### OPS-048 — Snowflake Server
 
-### 8.20 No Logs From a Container
+**MUST NOT**
 
-BAD: The app writes to a file inside the container.
-GOOD: The app writes to stdout/stderr. The container runtime captures
-it.
+A server configured by hand and never rebuilt (a "snowflake" server) is prohibited. When it dies, nobody knows how to recreate it. Everything MUST be code.
 
-## 9. Response to Violation
+### OPS-049 — Entrypoint Sudo
 
-If a previous response violated a rule here:
+**MUST NOT**
 
-```
-In the previous response, [specific rule] was violated. Correction:
-[corrected code]
-```
+Using `sudo` in a container entrypoint (e.g., `ENTRYPOINT ["sudo", "node", "app.js"]`) is prohibited. The container MUST run as a non-root user; no sudo is needed.
 
-No justification. No apology paragraph. Fix and move on.
+### OPS-050 — Bloated Image
+
+**SHOULD NOT**
+
+Docker images over 1 GB have slow pulls, slow deploys, and a large attack surface. Layers SHOULD be reviewed and unused tools removed.
+
+### OPS-051 — Deployment Timing Discipline
+
+**SHOULD**
+
+Deployments SHOULD occur when people are available to respond to failures (e.g., avoiding Friday evenings). If the deployment process is fully automated and safe, any day works. If not, the process MUST be fixed.
+
+## Response to Violation
+
+When a rule in this file is violated, report:
+
+Violation: OPS-{NNN}
+Reason: {one-line reason}
+Correction: {smallest fix}
+
+For multiple violations, report each rule ID separately.
+
+Do not replace a technical correction with a generic explanation.

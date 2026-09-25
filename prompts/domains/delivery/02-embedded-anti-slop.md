@@ -2,96 +2,49 @@
 id: 02-embedded-anti-slop
 title: "Embedded Anti-Slop Layer"
 lang: en
-depends_on: [00-master-anti-slop]
+depends_on: ["_universal/00-style-guide.md", "_universal/00-master-anti-slop.md"]
 category: domain
 domain_type: delivery
-version: 2
+version: 3
 ---
 
 # Embedded Anti-Slop Layer
 
-Layered under `_universal/00-master-anti-slop.md`. Universal rules
-(fabrication, fake completion, over-engineering, silent assumptions,
-generic security, dependency addition, output format) are NOT
-repeated here.
+This file defines behavioral contracts specific to embedded systems. It sits in the delivery layer, below the universal anti-slop rules and above language-specific patterns. It covers memory discipline, real-time constraints, interrupt handling, concurrency, power management, communication protocols, firmware updates, and on-target debugging. It does not cover language rules (see language files, especially C, C++, and Rust), framework rules, or security and performance concerns in detail (see concern files).
 
-This file covers rules specific to embedded systems: memory
-discipline, real-time constraints, interrupt handling, concurrency,
-power management, communication protocols, firmware updates, and
-on-target debugging. It does NOT cover language rules (see the
-language files, especially C and C++), framework rules, or security
-and performance concerns in detail (see the concern files).
+An embedded system runs on hardware the user cannot inspect, cannot reboot at will, and often cannot update. A bug is not a stack trace; it is a device that stops working in the field.
 
-An embedded system runs on hardware the user cannot inspect, cannot
-reboot at will, and often cannot update. A bug is not a stack trace;
-it is a device that stops working in the field. The rules below
-reflect that constraint.
+## Scope
 
-## 1. Stack Assumptions
+This file applies to bare-metal firmware (C, C++, Rust, assembly), RTOS-based systems (FreeRTOS, Zephyr, RT-Thread, ThreadX), embedded Linux (Yocto, Buildroot), microcontrollers (ARM Cortex-M, ESP32, AVR, RISC-V, PIC), and SoC platforms (Raspberry Pi, Jetson, custom boards). The examples use C and C++ syntax where illustrative. Hardware-specific register names and HAL APIs are placeholders; the project's actual APIs MUST be substituted.
 
-This file applies to:
+## Rule Severity
 
-- Bare-metal firmware (C, C++, Rust, assembly).
-- RTOS-based systems (FreeRTOS, Zephyr, RT-Thread, ThreadX).
-- Embedded Linux (Yocto, Buildroot).
-- Microcontrollers (ARM Cortex-M, ESP32, AVR, RISC-V, PIC).
-- SoC platforms (Raspberry Pi, Jetson, custom boards).
+Severity follows `_universal/00-style-guide.md`.
 
-The examples use C and C++. The principles are language-agnostic.
-Language-specific rules (undefined behavior in C++, unsafe in Rust)
-live in the language files. Hardware-specific register names and
-HAL APIs are placeholders; substitute the project's actual APIs.
+## Contracts
 
-## 2. Delivery Contracts
+An embedded system commits to seven contracts. The table below maps each contract to the rules that enforce it.
 
-An embedded system commits to seven contracts. Every section below
-enforces one or more of these.
+| Contract | Description | Enforced By |
+|---|---|---|
+| Bounded Memory | Firmware fits in RAM and flash with margin. No unbounded allocation. | EMB-001 to EMB-006 |
+| Deterministic Timing | Tasks and ISRs complete within budget. WCET is known and respected. | EMB-007 to EMB-011 |
+| Safe Concurrency | Shared state between ISRs and tasks is synchronized. No race conditions. | EMB-018 to EMB-023 |
+| Power Discipline | Device sleeps when idle, wakes on defined events, and preserves battery. | EMB-024 to EMB-029 |
+| Communication Robustness | Links have framing, checksums, timeouts, and resynchronization. | EMB-030 to EMB-035 |
+| Recoverable Updates | Firmware updates are atomic, signed, and reversible. | EMB-036 to EMB-040 |
+| Field Diagnosability | Device reports state, reset reason, and fault history without physical access. | EMB-045 to EMB-047 |
 
-### 2.1 Bounded Memory
+## Memory Discipline
 
-The firmware fits in the device's RAM and flash with margin. No
-allocation grows without bound. No stack overflow is possible.
+### EMB-001 — No Dynamic Allocation After Initialization
 
-### 2.2 Deterministic Timing
+**MUST NOT**
 
-Every task and interrupt handler completes within its budget. The
-worst-case execution time (WCET) is known and respected.
+After the initialization phase, dynamic allocation (`malloc`, `new`, `Box::new`) MUST NOT be used. Heap fragmentation and allocation failure cause silent crashes in the field. If dynamic allocation is strictly unavoidable, a fixed-size pool allocator with a hard cap and a documented failure path MUST be used.
 
-### 2.3 Safe Concurrency
-
-Shared state between interrupts and tasks is synchronized with
-atomics, critical sections, or lock-free structures. No race
-conditions.
-
-### 2.4 Power Discipline
-
-The device sleeps when idle, wakes on defined events, and does not
-drain the battery unnecessarily.
-
-### 2.5 Communication Robustness
-
-Every serial, I2C, SPI, CAN, or radio link has framing, checksums,
-timeouts, and resynchronization. A noisy bus does not crash the
-device.
-
-### 2.6 Recoverable Updates
-
-Firmware updates are atomic, signed, and reversible. A power loss
-during an update does not brick the device.
-
-### 2.7 Field Diagnosability
-
-A device in the field can report its state, its reset reason, and
-its fault history. Debugging a failure does not require physical
-access.
-
-## 3. Memory Discipline
-
-### 3.1 No Dynamic Allocation After Initialization
-
-After the initialization phase, no `malloc`, `new`, `Box::new`, or
-equivalent. Heap fragmentation and allocation failure cause silent
-crashes in the field.
+Example (illustrative, C):
 
 BAD:
 ```c
@@ -105,105 +58,80 @@ void handle_event(void) {
 GOOD:
 ```c
 static char buffer[256]; // fixed at compile time
-
-void handle_event(void) {
-    // use buffer
-}
+void handle_event(void) { /* use buffer */ }
 ```
 
-If dynamic allocation is unavoidable, use a fixed-size pool
-allocator with a hard cap and a documented failure path.
+### EMB-002 — Static Allocation for Long-Lived Objects
 
-### 3.2 Static Allocation for Long-Lived Objects
+**MUST**
 
-Buffers, queues, and state machines are statically allocated at
-compile time or during a bounded initialization phase.
+Buffers, queues, and state machines MUST be statically allocated at compile time or during a bounded initialization phase.
 
-### 3.3 Stack Size Is a Budget
+### EMB-003 — Stack Size Budgeting
 
-Every task or thread has a defined stack size. Overflow is silent
-and corrupts adjacent memory.
+**MUST**
 
-BAD: A task with 1 KB stack and 10 levels of recursion.
+Every task or thread MUST have a defined stack size. Stack overflow is silent and corrupts adjacent memory. The stack size MUST be based on a measured high-water mark with a margin of at least 30%.
 
-GOOD: A task with a measured high-water mark and a margin of at
-least 30%.
+### EMB-004 — Recursion Bound Prohibition
 
-### 3.4 No Recursion Without a Proven Bound
+**MUST NOT**
 
-Deep recursion on a small stack overflows. Prefer iteration, or
-prove the maximum depth is safe.
+Deep recursion on a small stack overflows. Recursion MUST NOT be used without a mathematically proven maximum depth bound. Iteration MUST be preferred.
 
-BAD:
-```c
-int factorial(int n) {
-    if (n <= 1) return 1;
-    return n * factorial(n - 1); // stack grows with n
-}
-```
+### EMB-005 — Memory Measurement
 
-GOOD:
-```c
-int factorial(int n) {
-    int result = 1;
-    for (int i = 2; i <= n; i++) result *= i;
-    return result;
-}
-```
+**MUST**
 
-### 3.5 Measure, Do Not Guess
+Memory usage MUST be determined via `sizeof`, linker maps, and runtime watermark tracking. Guesswork produces field failures.
 
-`sizeof`, linker maps, and runtime watermark tracking determine
-memory usage. Guesswork produces field failures.
+### EMB-006 — Linker Script as Design
 
-### 3.6 Linker Scripts Are Part of the Design
+**MUST**
 
-The memory layout (flash, RAM, stack, heap, reserved regions) is
-documented. A change to the linker script is a change to the
-system, not a build detail.
+The memory layout (flash, RAM, stack, heap, reserved regions) MUST be documented in the linker script. A change to the linker script is a change to the system, not a build detail.
 
-## 4. Real-Time Constraints
+## Real-Time Constraints
 
-### 4.1 Deadlines Are Hard
+### EMB-007 — Hard Deadlines
 
-A missed deadline is a failure, not a slowdown. Identify the
-deadline for every task and prove it is met.
+**MUST**
 
-### 4.2 Worst-Case Execution Time
+A missed deadline is a failure, not a slowdown. The deadline for every task MUST be identified and proven to be met.
 
-Analyze the worst case, not the average. A function that usually
-takes 10 microseconds may take 100 under a cache miss or an
-interrupt storm.
+### EMB-008 — Worst-Case Execution Time (WCET)
 
-### 4.3 Priority Inversion
+**MUST**
 
-A low-priority task holding a lock blocks a high-priority task.
-Use priority inheritance mutexes or lock-free designs.
+The worst-case execution time MUST be analyzed, not the average. A function that usually takes 10 microseconds may take 100 under a cache miss or an interrupt storm.
 
-BAD: A high-priority task waits on a mutex held by a low-priority
-task that is preempted by a medium-priority task.
+### EMB-009 — Priority Inversion Prevention
 
-GOOD: Use the RTOS's priority-inheriting mutex, or restructure so
-the high-priority task does not depend on the lock.
+**MUST**
 
-### 4.4 Interrupt Latency
+Priority inversion MUST be prevented. A low-priority task holding a lock MUST NOT block a high-priority task. Priority inheritance mutexes or lock-free designs MUST be used.
 
-The time between an interrupt firing and its handler running is
-bounded. Long critical sections in other code delay it. Measure
-and cap the maximum disabled-interrupt window.
+### EMB-010 — Interrupt Latency Bounding
 
-### 4.5 Determinism
+**MUST**
 
-A real-time system produces the same timing behavior on every run.
-Non-deterministic caches, DMA contention, or bus arbitration
-violate this.
+The time between an interrupt firing and its handler running MUST be bounded. Long critical sections in other code delay it. The maximum disabled-interrupt window MUST be measured and capped.
 
-## 5. Interrupt Handling
+### EMB-011 — Timing Determinism
 
-### 5.1 Interrupt Handlers Are Short
+**MUST**
 
-An ISR captures data, signals a task, and returns. Complex
-processing happens in a task.
+A real-time system MUST produce the same timing behavior on every run. Non-deterministic caches, DMA contention, or bus arbitration that violate this MUST be mitigated.
+
+## Interrupt Handling
+
+### EMB-012 — Short Interrupt Handlers
+
+**MUST**
+
+An Interrupt Service Routine (ISR) MUST only capture data, signal a task, and return. Complex processing MUST happen in a task context.
+
+Example (illustrative, C):
 
 BAD:
 ```c
@@ -217,7 +145,6 @@ void ADC_IRQHandler(void) {
 GOOD:
 ```c
 volatile uint16_t g_adc_sample;
-
 void ADC_IRQHandler(void) {
     g_adc_sample = ADC_Read();
     BaseType_t woken = pdFALSE;
@@ -226,527 +153,412 @@ void ADC_IRQHandler(void) {
 }
 ```
 
-### 5.2 No Blocking in ISRs
+### EMB-013 — No Blocking in ISRs
 
-No `malloc`, no `printf`, no mutex acquisition, no waiting. These
-may deadlock or take unbounded time.
+**MUST NOT**
 
-### 5.3 `volatile` for Shared Data
+Blocking operations (`malloc`, `printf`, mutex acquisition, waiting, `delay_ms`) MUST NOT be used in ISRs. They may deadlock or take unbounded time.
 
-A variable shared between an ISR and a task is `volatile` (in C)
-or an atomic (in Rust).
+### EMB-014 — `volatile` and Atomics for Shared Data
 
-BAD:
-```c
-int g_flag = 0; // compiler may cache the read in a register
+**MUST**
 
-while (!g_flag) { /* spin */ }
-```
+A variable shared between an ISR and a task MUST be declared `volatile` (in C/C++) or as an atomic type (in Rust/C11).
 
-GOOD:
-```c
-volatile int g_flag = 0;
+### EMB-015 — Minimal Critical Sections
 
-while (!g_flag) { /* spin */ }
-```
+**MUST**
 
-### 5.4 Critical Sections Are Minimal
+Interrupts MUST be disabled only for the shortest possible window. Atomic operations or lock-free queues MUST be preferred. The maximum disabled window MUST be measured and documented.
 
-Disable interrupts only for the shortest possible window. Prefer
-atomic operations or lock-free queues. Measure the maximum disabled
-window and document it.
+### EMB-016 — Intentional Interrupt Priority
 
-### 5.5 Interrupt Priority Assignment
+**MUST**
 
-Higher-priority interrupts preempt lower-priority ones. The
-priority assignment is intentional, not accidental. A priority
-that conflicts with the RTOS's requirements (for example,
-`configMAX_SYSCALL_INTERRUPT_PRIORITY` in FreeRTOS) causes crashes.
+Interrupt priority assignment MUST be intentional. A priority that conflicts with the RTOS's requirements (e.g., `configMAX_SYSCALL_INTERRUPT_PRIORITY` in FreeRTOS) causes crashes.
 
-### 5.6 Clear the Interrupt Source
+### EMB-017 — Interrupt Source Clearing
 
-An ISR that does not clear the flag re-enters immediately. The
-device locks in an interrupt storm.
+**MUST**
 
-## 6. Concurrency
+An ISR MUST clear the interrupt flag. An ISR that does not clear the flag re-enters immediately, locking the device in an interrupt storm.
 
-### 6.1 One Writer Per Shared Variable
+## Concurrency
 
-Shared data has one writer. Multiple writers require explicit
-synchronization.
+### EMB-018 — Single Writer Principle
 
-### 6.2 Lock-Free Queues for ISR-to-Task
+**MUST**
 
-A single-producer single-consumer ring buffer is the standard
-pattern. Never a mutex in an ISR.
+Shared data MUST have one writer. Multiple writers require explicit synchronization.
 
-### 6.3 Watchdog
+### EMB-019 — Lock-Free ISR-to-Task Queues
 
-A hardware watchdog resets the system when a task hangs. The
-watchdog is fed by the healthy path, not by the hung path.
+**MUST**
 
-BAD: Feeding the watchdog from a high-priority task that runs
-regardless of whether the application logic is healthy.
+A single-producer single-consumer ring buffer MUST be used for ISR-to-task communication. A mutex MUST NEVER be used in an ISR.
 
-GOOD: Feeding the watchdog from a "supervisor" task that checks
-each subsystem's heartbeat.
+### EMB-020 — Hardware Watchdog
 
-### 6.4 No Busy-Wait in Tasks
+**MUST**
 
-A busy-wait consumes CPU and power. Use the RTOS's sleep or event
-mechanisms.
+A hardware watchdog MUST reset the system when a task hangs. The watchdog MUST be fed by the healthy path (e.g., a "supervisor" task checking subsystem heartbeats), not by a high-priority task that runs regardless of application health.
 
-BAD:
-```c
-while (!flag) { /* spin, burning power */ }
-```
+### EMB-021 — No Busy-Wait in Tasks
 
-GOOD:
-```c
-ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-```
+**MUST NOT**
 
-### 6.5 Atomic Access for Multi-Byte Variables
+Busy-waiting consumes CPU and power. The RTOS's sleep or event mechanisms MUST be used instead of spinning.
 
-A 32-bit variable modified by both an ISR and a task on an 8-bit
-MCU requires atomic access. Use `ATOMIC_BLOCK`, disable interrupts
-briefly, or use atomics.
+### EMB-022 — Atomic Multi-Byte Access
 
-### 6.6 Avoid Shared State When Possible
+**MUST**
 
-A design where each task owns its data and communicates via queues
-is simpler than one that shares state with locks.
+A multi-byte variable modified by both an ISR and a task on an architecture that does not guarantee atomic access (e.g., 32-bit variable on an 8-bit MCU) MUST use atomic operations, `ATOMIC_BLOCK`, or brief interrupt disabling.
 
-## 7. Power Management
+### EMB-023 — Shared State Avoidance
 
-### 7.1 Sleep When Idle
+**SHOULD**
 
-Between events, the CPU sleeps. The idle task enters the lowest
-power mode consistent with wake-up latency requirements.
+A design where each task owns its data and communicates via queues SHOULD be preferred over sharing state with locks.
 
-### 7.2 Wake-Up Sources Are Explicit
+## Power Management
 
-Every wake-up source is enumerated (timer, GPIO, radio). An
-unexpected wake-up wastes power and indicates a bug.
+### EMB-024 — Sleep When Idle
 
-### 7.3 Radio Duty Cycle
+**MUST**
 
-For battery-powered radios, minimize transmit time. Batch data
-where possible.
+Between events, the CPU MUST sleep. The idle task MUST enter the lowest power mode consistent with wake-up latency requirements.
 
-### 7.4 Measure Power
+### EMB-025 — Explicit Wake-Up Sources
 
-Estimated power consumption is a guess. Measure it with a meter or
-the platform's power profiler. A firmware change that doubles
-consumption is invisible without measurement.
+**MUST**
 
-### 7.5 Disable Unused Peripherals
+Every wake-up source (timer, GPIO, radio) MUST be explicitly enumerated. An unexpected wake-up wastes power and indicates a bug.
 
-A peripheral left in its default state consumes power. Disable
-every peripheral the application does not use.
+### EMB-026 — Radio Duty Cycle Minimization
 
-BAD: Leaving the ADC running when only the GPIO is needed.
+**MUST**
 
-GOOD: Disabling the ADC clock and powering it down until needed.
+For battery-powered radios, transmit time MUST be minimized. Data MUST be batched where possible.
 
-### 7.6 Handle Brown-Out
+### EMB-027 — Power Measurement
 
-A low-voltage condition corrupts memory. Enable brown-out detection
-and handle it (safe reset, safe state restoration).
+**MUST**
 
-## 8. Communication
+Power consumption MUST be measured with a meter or the platform's power profiler. Estimated power consumption is a guess.
 
-### 8.1 Framing and Checksums
+### EMB-028 — Unused Peripheral Disabling
 
-Every protocol has:
+**MUST**
 
-- A framing scheme (length prefix, delimiter, fixed size).
-- A checksum (CRC, not parity alone).
-- A timeout for incomplete frames.
-- A resynchronization path after error.
+Every peripheral the application does not use MUST be disabled (clock gated and powered down). A peripheral left in its default state consumes power.
 
-BAD:
-```c
-while (UART_Available()) {
-    process_byte(UART_Read()); // no framing, no checksum
-}
-```
+### EMB-029 — Brown-Out Handling
 
-GOOD:
-```c
-typedef struct {
-    uint8_t  start;
-    uint16_t length;
-    uint8_t  payload[MAX_PAYLOAD];
-    uint16_t crc;
-} Frame;
-// Parse with state machine, validate CRC, drop on timeout.
-```
+**MUST**
 
-### 8.2 No Byte-Order Assumptions
+Brown-out detection MUST be enabled. A low-voltage condition corrupts memory; the system MUST handle it via safe reset or safe state restoration.
 
-Endianness varies between MCUs. Convert explicitly.
+## Communication
 
-### 8.3 Interrupt or DMA for High-Throughput
+### EMB-030 — Protocol Framing and Checksums
 
-Polling a UART at high baud rates wastes cycles. Use
-interrupt-driven or DMA-based I/O.
+**MUST**
 
-### 8.4 Flow Control
+Every communication protocol MUST have a framing scheme (length prefix, delimiter, fixed size), a checksum (CRC, not parity alone), a timeout for incomplete frames, and a resynchronization path after error.
 
-A fast sender overwhelms a slow receiver. Use hardware or software
-flow control.
+### EMB-031 — Explicit Byte-Order Conversion
 
-### 8.5 Error Handling Is Expected
+**MUST**
 
-A communication error is expected. Log it, retry, and continue.
-Never `while (true) { retry; }` in a task, which starves other
-tasks.
+Endianness varies between MCUs. Byte order MUST be converted explicitly before transmission and after reception.
 
-### 8.6 Bounded Buffers
+### EMB-032 — High-Throughput I/O
 
-Every buffer has a maximum size. A sender that exceeds it triggers
-a policy: drop oldest, drop newest, or disconnect.
+**MUST**
 
-## 9. Firmware Updates
+Polling a UART at high baud rates wastes cycles. Interrupt-driven or DMA-based I/O MUST be used for high-throughput communication.
 
-### 9.1 Signed Firmware
+### EMB-033 — Flow Control
 
-Every firmware image is signed. The bootloader verifies the
-signature before applying. An unsigned update path is a
-vulnerability.
+**MUST**
 
-### 9.2 Atomic Update
+Hardware or software flow control MUST be used to prevent a fast sender from overwhelming a slow receiver.
 
-A power loss during an update must not brick the device. Use A/B
-partitions or a bootloader that can recover.
+### EMB-034 — Expected Error Handling
 
-### 9.3 Rollback
+**MUST**
 
-A bad update must be revertible. Keep the previous image until the
-new one has proven itself (via a health check or a timeout).
+Communication errors MUST be expected, logged, and retried with bounds. An unbounded `while (true) { retry; }` in a task starves other tasks and MUST NOT be used.
 
-### 9.4 Version Compatibility
+### EMB-035 — Bounded Receive Buffers
 
-The new firmware works with the existing configuration and data.
-Migration is explicit.
+**MUST**
 
-### 9.5 Update Authorization
+Every receive buffer MUST have a maximum size. A sender that exceeds it MUST trigger a defined policy: drop oldest, drop newest, or disconnect.
 
-An update is authorized by the device owner or a trusted server.
-An unauthenticated update path allows malicious firmware.
+## Firmware Updates
 
-## 10. Testing and Debugging
+### EMB-036 — Signed Firmware
 
-### 10.1 On-Target Testing
+**MUST**
 
-A test that runs only on a simulator is partial. Timing,
-interrupts, and peripherals behave differently on hardware.
+Every firmware image MUST be cryptographically signed. The bootloader MUST verify the signature before applying. An unsigned update path is a critical vulnerability.
 
-### 10.2 Hardware-in-the-Loop
+### EMB-037 — Atomic Updates
 
-For safety-critical or complex systems, HIL testing exercises the
-real hardware.
+**MUST**
 
-### 10.3 No `printf` in Production
+A power loss during an update MUST NOT brick the device. A/B partitions or a recoverable bootloader MUST be used.
 
-`printf` blocks, uses the heap, and is slow. Use a lightweight
-logging mechanism with a ring buffer.
+### EMB-038 — Rollback Capability
 
-BAD:
-```c
-printf("sensor: %d\n", value); // blocking, heap-allocating
-```
+**MUST**
 
-GOOD:
-```c
-log_push(LOG_SENSOR, value); // ring buffer, non-blocking
-```
+A bad update MUST be revertible. The previous image MUST be kept until the new one has proven itself via a health check or a timeout.
 
-### 10.4 Watchpoints and Trace
+### EMB-039 — Version Compatibility
 
-Use the platform's debugger and trace facilities (SWO, ETM, SWD,
-JTAG). `printf` debugging is a last resort.
+**MUST**
 
-### 10.5 Fault Handlers Capture State
+The new firmware MUST work with the existing configuration and data. Migration MUST be explicit.
 
-A HardFault (or the platform's equivalent) captures:
+### EMB-040 — Update Authorization
 
-- The faulting instruction address.
-- The register state.
-- A stack trace.
-- The reset reason.
+**MUST**
 
-Without this, a field crash is undebuggable.
+An update MUST be authorized by the device owner or a trusted server. An unauthenticated update path allows malicious firmware.
 
-BAD:
-```c
-void HardFault_Handler(void) {
-    while (1); // silent hang
-}
-```
+## Testing and Debugging
 
-GOOD:
-```c
-void HardFault_Handler(void) {
-    save_fault_context();   // to non-volatile memory
-    log_fault();
-    NVIC_SystemReset();
-}
-```
+### EMB-041 — On-Target Testing
 
-### 10.6 Reset Reason Tracking
+**MUST**
 
-The device records why it reset (power-on, watchdog, brown-out,
-software). Without it, an unexpected reset is a mystery.
+Tests MUST run on the target hardware. Timing, interrupts, and peripherals behave differently on hardware than on a simulator.
 
-### 10.7 Persistent Logs
+### EMB-042 — Hardware-in-the-Loop (HIL)
 
-Crash logs are stored in non-volatile memory (flash, FRAM, backup
-SRAM). A log that dies with the reset is useless.
+**SHOULD**
 
-## 11. Anti-Patterns
+For safety-critical or complex systems, HIL testing SHOULD be used to exercise the real hardware in simulated environments.
 
-### 11.1 `malloc` After Init
+### EMB-043 — No `printf` in Production
 
-Covered in 3.1.
+**MUST NOT**
 
-### 11.2 `printf` in an ISR
+`printf` blocks, uses the heap, and is slow. A lightweight logging mechanism with a non-blocking ring buffer MUST be used in production.
 
-Covered in 5.2.
+### EMB-044 — Watchpoints and Trace
 
-### 11.3 Missing `volatile`
+**SHOULD**
 
-Covered in 5.3.
+The platform's debugger and trace facilities (SWO, ETM, SWD, JTAG) SHOULD be used. `printf` debugging MUST be a last resort.
 
-### 11.4 Deep Recursion
+### EMB-045 — Fault Handler State Capture
 
-Covered in 3.4.
+**MUST**
 
-### 11.5 Busy-Wait Delays
+A HardFault (or platform equivalent) handler MUST capture the faulting instruction address, register state, stack trace, and reset reason to non-volatile memory before resetting.
 
-BAD: `for (i = 0; i < 1000000; i++) {}`.
+### EMB-046 — Reset Reason Tracking
 
-GOOD: A hardware timer or the RTOS's sleep function.
+**MUST**
 
-A busy-wait blocks the CPU and wastes power.
+The device MUST record why it reset (power-on, watchdog, brown-out, software). Without it, an unexpected reset is a mystery.
 
-### 11.6 Stack Overflow
+### EMB-047 — Persistent Logs
 
-Covered in 3.3.
+**MUST**
 
-### 11.7 Unbounded Loops in Tasks
+Crash logs MUST be stored in non-volatile memory (flash, FRAM, backup SRAM). A log that dies with the reset is useless.
 
-A task that loops on an error without yielding starves other tasks.
+## AI-Specific Embedded Discipline
 
-BAD:
-```c
-while (spi_write(data) != OK) {
-    // retry forever
-}
-```
+### EMB-060 — HAL and Register API Verification
 
-GOOD:
-```c
-int retries = 0;
-while (spi_write(data) != OK && retries < 3) {
-    vTaskDelay(pdMS_TO_TICKS(10));
-    retries++;
-}
-if (retries >= 3) handle_spi_failure();
-```
+**MUST**
 
-### 11.8 Global Mutable State
+Before writing hardware abstraction layer (HAL) calls or direct register manipulations, the assistant MUST verify the register names, bitmasks, and HAL function signatures against the specific MCU's datasheet and reference manual. Invented register names or incorrect bit shifts cause silent hardware misbehavior or permanent damage.
 
-Shared globals without `volatile` or atomics. Races produce
-non-deterministic bugs.
+See MAS-036 in `_universal/00-master-anti-slop.md`.
 
-### 11.9 No Watchdog
+### EMB-061 — RTOS API Verification
 
-Covered in 6.3.
+**MUST**
 
-### 11.10 Missing Errata Workarounds
+Before using an RTOS API, the assistant MUST verify the function signature, required macro definitions, and ISR-safe variants (e.g., `xQueueSendFromISR` instead of `xQueueSend`). Using task-level APIs inside an ISR causes immediate system crashes.
 
-Silicon errata are documented. Ignoring them causes intermittent
-failures. Read the errata sheet for every peripheral used.
+See MAS-036 in `_universal/00-master-anti-slop.md`.
 
-### 11.11 No Reset Reason Tracking
+### EMB-062 — Existing Peripheral Driver Discovery
 
-Covered in 10.6.
+**MUST**
 
-### 11.12 Interrupt Storm
+Before writing a new peripheral driver or communication protocol handler, the assistant MUST search the project or the RTOS's native subsystem for an existing driver. Inventing parallel I2C or SPI drivers creates resource contention and timing violations.
 
-An interrupt fires continuously due to a stuck condition. The CPU
-starves. Debounce and clear the source.
+See MAS-035 in `_universal/00-master-anti-slop.md`.
 
-### 11.13 Timing Assumptions Without Measurement
+## Anti-Patterns
 
-BAD: "This loop takes 1 microsecond."
+### EMB-048 — Busy-Wait Delays
 
-GOOD: Measured with a logic analyzer or an oscilloscope. Compiler
-optimization and cache state change the timing.
+**MUST NOT**
 
-### 11.14 No Brown-Out Detection
+Busy-wait loops (e.g., `for (i = 0; i < 1000000; i++) {}`) block the CPU and waste power. A hardware timer or the RTOS's sleep function MUST be used.
 
-Covered in 7.6.
+### EMB-049 — Unbounded Loops in Tasks
 
-### 11.15 Floating Point in ISRs
+**MUST NOT**
 
-FPU context save/restore in an ISR is slow and error-prone. Use
-fixed-point or defer the computation.
+A task that loops on an error without yielding starves other tasks. Retries MUST be bounded and include a delay (e.g., `vTaskDelay`).
 
-### 11.16 Non-Atomic Multi-Byte Access
+### EMB-050 — Global Mutable State
 
-Covered in 6.5.
+**MUST NOT**
 
-### 11.17 Overwriting Flash Without Erase
+Shared globals without `volatile` or atomics produce non-deterministic race conditions and MUST NOT be used.
 
-Flash must be erased before writing. Writing without erasing
-corrupts data silently.
+### EMB-051 — Missing Errata Workarounds
 
-### 11.18 No Power-On Self-Test
+**MUST**
 
-A device that boots with corrupted RAM behaves unpredictably. A
-POST catches this early.
+Silicon errata MUST be read for every peripheral used. Ignoring documented errata causes intermittent failures.
 
-### 11.19 Firmware Update Without Fallback
+### EMB-052 — Interrupt Storm Prevention
 
-Covered in 9.2 and 9.3.
+**MUST**
 
-### 11.20 No Clock Configuration Verification
+An interrupt that fires continuously due to a stuck condition starves the CPU. The source MUST be debounced and cleared.
 
-The MCU runs at the wrong frequency because the clock tree is
-misconfigured. Timing is off by 10%. Verify the clock against a
-known reference.
+### EMB-053 — Timing Measurement Requirement
 
-### 11.21 Uninitialized Peripherals
+**MUST NOT**
 
-A peripheral is left in a default state that consumes power or
-drives an output. Initialize every peripheral explicitly.
+Timing assumptions without measurement (e.g., "This loop takes 1 microsecond") are prohibited. Timing MUST be measured with a logic analyzer or oscilloscope, as compiler optimization and cache state change execution time.
 
-BAD: A GPIO pin left floating with no pull-up or pull-down.
+### EMB-054 — Floating Point in ISRs
 
-GOOD: Configure every pin as input with pull, output with a defined
-level, or analog, based on the schematic.
+**MUST NOT**
 
-### 11.22 DMA Without Cache Coherency
+FPU context save/restore in an ISR is slow and error-prone. Fixed-point math MUST be used, or the computation MUST be deferred to a task.
 
-DMA transfers bypass the CPU cache. Buffers shared with DMA
-require cache maintenance (invalidate before read, clean before
-write).
+### EMB-055 — Flash Erase Before Write
 
-### 11.23 No Production Debug Interface
+**MUST NOT**
 
-The debug interface is left enabled in production. It exposes
-memory and execution. Disable it or lock it.
+Flash MUST be erased before writing. Writing without erasing corrupts data silently.
 
-### 11.24 Ignoring Temperature and Voltage
+### EMB-056 — Power-On Self-Test (POST)
 
-Code that works at 25°C fails at -40°C or 85°C. Test across the
-operating range.
+**MUST**
 
-### 11.25 `volatile` on Structs Without Atomicity
+A device that boots with corrupted RAM behaves unpredictably. A POST MUST be executed to catch hardware faults early.
 
-`volatile` prevents compiler caching but does not make a
-multi-field struct atomic. A struct updated by an ISR and read by a
-task requires a lock or a double-buffer pattern.
+### EMB-057 — Clock Configuration Verification
 
-### 11.26 Reading a Multi-Byte Value Non-Atomically
+**MUST**
 
-BAD:
-```c
-uint32_t now = g_tick_count; // may read a torn value if ISR updates
-```
+The MCU clock tree MUST be verified against a known reference. A misconfigured clock tree causes timing to be off by significant margins.
 
-GOOD:
-```c
-uint32_t now;
-do {
-    uint32_t before = g_tick_count;
-    now = before;
-} while (now != g_tick_count); // or disable interrupts briefly
-```
+### EMB-058 — Explicit Peripheral Initialization
 
-### 11.27 ISR Priority Set Below RTOS Threshold
+**MUST**
 
-A priority at or below the RTOS's `configMAX_SYSCALL_INTERRUPT_PRIORITY`
-may call RTOS APIs. Above that threshold, calling `xQueueSendFromISR`
-crashes.
+Every peripheral MUST be initialized explicitly. A GPIO pin MUST NOT be left floating; it MUST be configured as input with pull, output with a defined level, or analog, based on the schematic.
 
-### 11.28 `Delay` in an ISR
+### EMB-059 — DMA Cache Coherency
 
-`delay_ms`, `sleep`, or any blocking call in an ISR halts the
-system.
+**MUST**
 
-### 11.29 Not Handling Watchdog Reset
+DMA transfers bypass the CPU cache. Buffers shared with DMA MUST have cache maintenance applied (invalidate before read, clean before write).
 
-A device that resets repeatedly because the watchdog was not fed
-during a long operation. Feed the watchdog from the appropriate
-task, or restructure the operation.
+### EMB-063 — Production Debug Interface
 
-### 11.30 Unbounded Buffers in the Receive Path
+**MUST NOT**
 
-A UART receive buffer without a maximum size overflows when the
-sender is faster than the consumer.
+The debug interface (JTAG/SWD) MUST NOT be left enabled in production. It exposes memory and execution. It MUST be disabled or locked.
 
-### 11.31 No Version in Firmware
+### EMB-064 — Operating Range Testing
 
-The device does not report its firmware version. Field debugging
-cannot tell which build is running.
+**MUST**
 
-### 11.32 Missing CRC on Configuration
+Code MUST be tested across the specified operating temperature and voltage range. Code that works at 25°C may fail at -40°C or 85°C.
 
-Configuration stored in flash without a CRC. A corrupted
-configuration loads silently and misconfigures the device.
+### EMB-065 — Struct Atomicity
 
-### 11.33 Unprotected Flash Writes
+**MUST NOT**
 
-Flash writes during a power loss can corrupt the sector. Write to a
-backup sector first, then swap.
+`volatile` prevents compiler caching but does not make a multi-field struct atomic. A struct updated by an ISR and read by a task MUST use a lock or a double-buffer pattern.
 
-### 11.34 No Safe Mode
+### EMB-066 — Watchdog Reset Handling
 
-A device that boots into a broken state with no recovery path. A
-safe mode (minimal configuration, waiting for update) allows
-recovery.
+**MUST**
 
-### 11.35 Ignoring Brown-Out Reset Cause
+A device that resets repeatedly because the watchdog was not fed during a long operation MUST be restructured. The watchdog MUST be fed from the appropriate task.
 
-A brown-out reset is treated as a power-on. The device boots with
-potentially corrupted configuration.
+### EMB-067 — Firmware Version Reporting
 
-### 11.36 No Factory Reset Path
+**MUST**
 
-A device without a factory reset is unrecoverable if configuration
-becomes corrupt.
+The device MUST report its firmware version. Field debugging cannot identify the running build without it.
 
-### 11.37 Testing Only on the Dev Board
+### EMB-068 — Configuration CRC
 
-The dev board has more RAM, a stable power supply, and a debugger.
-The production device has none of these.
+**MUST**
 
-### 11.38 Ignoring Errata on the First Silicon Revision
+Configuration stored in flash MUST have a CRC. A corrupted configuration MUST NOT load silently.
 
-Early silicon revisions have more errata. Production uses the final
-revision, which may still have errata. Read both sheets.
+### EMB-069 — Protected Flash Writes
 
-### 11.39 No Field Firmware Version Negotiation
+**MUST**
 
-The device accepts any firmware the server sends. An incompatible
-version is applied and bricks the device. Negotiate compatibility
-before accepting an update.
+Flash writes during a power loss can corrupt the sector. Data MUST be written to a backup sector first, then swapped.
 
-### 11.40 Power Loss During Flash Write
+### EMB-070 — Safe Mode
 
-Covered in 11.33.
+**MUST**
 
-## 12. Response to Violation
+A device that boots into a broken state MUST have a safe mode (minimal configuration, waiting for update) to allow recovery.
 
-If a previous response violated a rule here:
+### EMB-071 — Brown-Out Reset Cause
 
-```
-In the previous response, [specific rule] was violated. Correction:
-[corrected code]
-```
+**MUST NOT**
 
-No justification. No apology paragraph. Fix and move on.
+A brown-out reset MUST NOT be treated as a normal power-on. The device boots with potentially corrupted configuration and MUST handle it explicitly.
+
+### EMB-072 — Factory Reset Path
+
+**MUST**
+
+A device MUST have a factory reset path. A device without one is unrecoverable if configuration becomes corrupt.
+
+### EMB-073 — Production Hardware Testing
+
+**MUST NOT**
+
+Testing only on the development board is prohibited. The production device has different RAM, power supply, and debug constraints.
+
+### EMB-074 — First Silicon Errata
+
+**MUST**
+
+Early silicon revisions have more errata. Both the early and final revision errata sheets MUST be read.
+
+### EMB-075 — Field Firmware Version Negotiation
+
+**MUST**
+
+The device MUST negotiate compatibility before accepting an update. Accepting any firmware the server sends risks applying an incompatible version and bricking the device.
+
+## Response to Violation
+
+When a rule in this file is violated, report:
+
+Violation: EMB-{NNN}
+Reason: {one-line reason}
+Correction: {smallest fix}
+
+For multiple violations, report each rule ID separately.
+
+Do not replace a technical correction with a generic explanation.

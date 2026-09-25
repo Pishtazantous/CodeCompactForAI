@@ -2,208 +2,185 @@
 id: 02-cli-anti-slop
 title: "CLI Anti-Slop Layer"
 lang: en
-depends_on: [00-master-anti-slop]
+depends_on: ["_universal/00-style-guide.md", "_universal/00-master-anti-slop.md"]
 category: domain
 domain_type: delivery
-version: 2
+version: 3
 ---
 
 # CLI Anti-Slop Layer
 
-Layered under `_universal/00-master-anti-slop.md`. Universal rules
-(fabrication, fake completion, over-engineering, silent assumptions,
-generic security, dependency addition, output format) are NOT
-repeated here.
+This file defines behavioral contracts specific to command-line tools. It sits in the delivery layer, below the universal anti-slop rules and above framework-specific parser patterns. It covers command design, argument parsing, exit codes, standard streams, signals, help text, configuration, and distribution. It does not cover application code (see other delivery files), language rules (see language files), framework rules (see framework files), or security and performance concerns in detail (see concern files).
 
-This file covers rules specific to command-line tools: command
-design, argument parsing, exit codes, standard streams, signals,
-help text, configuration, and distribution. It does NOT cover
-application code (see other delivery files), language rules (see
-the language files), framework rules (see the framework files), or
-security and performance concerns (see the concern files).
+A CLI is a program that runs unattended in scripts, in CI, and from a shell. Every behavior is a contract with the caller. The contract is the tool's public API.
 
-A CLI is a program that runs unattended in scripts, in CI, and from
-a shell. Every behavior is a contract with the caller. The
-contract is the tool's public API.
+## Scope
 
-## 1. Stack Assumptions
+This file applies to CLIs distributed as standalone binaries (Go, Rust, C, C++), Node.js scripts, Python scripts, shell scripts, and bundled scripts via `pkg`, `pyinstaller`, `nexe`, or similar. The examples use POSIX shell conventions where illustrative. Parser library choices (commander, click, cobra, clap) live in framework files. Language-specific rules live in language files.
 
-This file applies to CLIs distributed as:
+## Rule Severity
 
-- Standalone binaries (Go, Rust, C, C++).
-- Node.js scripts (`#!/usr/bin/env node`).
-- Python scripts (`#!/usr/bin/env python3`).
-- Shell scripts.
-- Bundled scripts via `pkg`, `pyinstaller`, `nexe`, or similar.
+Severity follows `_universal/00-style-guide.md`.
 
-The examples use POSIX shell conventions. The principles are
-language-agnostic. Parser library choices (commander, click, cobra,
-clap) live in the framework files. Language-specific rules live in
-the language files.
+## Contracts
 
-## 2. Delivery Contracts
+A CLI commits to seven contracts. The table below maps each contract to the rules that enforce it.
 
-A CLI commits to seven contracts. Every section below enforces one
-or more of these.
+| Contract | Description | Enforced By |
+|---|---|---|
+| Command Interface Stability | Once a flag, subcommand, or output format is documented, consumers depend on it. | CLI-001, CLI-002, CLI-079 |
+| Exit Code Correctness | Exit codes carry success or failure. Scripts depend on this. | CLI-018 to CLI-021 |
+| Stream Separation | Data goes to stdout. Diagnostics, progress, and errors go to stderr. | CLI-022 to CLI-027 |
+| Non-Interactive by Default | A command in a script does not block waiting for input unless explicitly interactive. | CLI-045 to CLI-048 |
+| Signal Safety | The tool handles SIGINT and SIGTERM by cleaning up and exiting conventionally. | CLI-034 to CLI-039 |
+| Configuration Determinism | Given the same flags, environment, config, and inputs, the command produces the same output. | CLI-014 to CLI-017 |
+| Reproducible Distribution | The installed version matches the source. The version is queryable. | CLI-028, CLI-053 to CLI-058 |
 
-### 2.1 Command Interface Stability
+## Command Design
 
-Once a flag, subcommand, or output format is documented, consumers
-depend on it. Changing it requires a major version bump.
+### CLI-001 — Single Responsibility Command
 
-### 2.2 Exit Code Correctness
+**MUST**
 
-Exit codes carry success or failure. A zero exit means success; a
-non-zero exit means failure. Scripts depend on this.
+A CLI MUST do one thing. A binary that runs migrations, sends emails, and generates reports is three tools and MUST be split. Each subcommand MUST do one job.
 
-### 2.3 Stream Separation
+### CLI-002 — Conventional Subcommand Structure
 
-Data goes to stdout. Diagnostics, progress, and errors go to
-stderr. The separation allows piping without corruption.
+**MUST**
 
-### 2.4 Non-Interactive by Default
+Subcommands MUST follow the conventional structure: `tool [global-flags] <command> [command-flags] [args]`. Global flags MUST precede the command. Command flags MUST follow it. Every subcommand MUST have its own `--help`.
 
-A command that runs in a script does not block waiting for input
-unless explicitly in interactive mode.
+### CLI-003 — Verb-Noun Subcommand Names
 
-### 2.5 Signal Safety
+**MUST**
 
-The tool handles SIGINT and SIGTERM by cleaning up and exiting
-with the conventional code.
+Subcommands MUST be verbs or verb-noun pairs. The name MUST tell the user what the command does.
 
-### 2.6 Configuration Determinism
-
-Given the same flags, environment, config files, and inputs, the
-command produces the same output.
-
-### 2.7 Reproducible Distribution
-
-The installed version matches the source version. The version is
-queryable with `--version`.
-
-## 3. Command Design
-
-### 3.1 One Command, One Job
-
-A CLI does one thing. `git` is a suite of commands, each doing one
-thing. A binary named `mytool` that runs migrations, sends emails,
-and generates reports is three tools.
-
-### 3.2 Conventional Subcommand Structure
-
-`tool [global-flags] <command> [command-flags] [args]`.
-
-Global flags precede the command. Command flags follow it. Every
-subcommand has its own `--help`. This structure matches `git`,
-`docker`, and `kubectl`, so it is already familiar.
-
-### 3.3 Verb-Noun Subcommand Names
-
-Subcommands are verbs or verb-noun pairs.
+Example (illustrative):
 
 BAD: `tool users`, `tool data`, `tool thing`.
 
 GOOD: `tool list-users`, `tool export-data`, `tool create-thing`.
 
-The name tells the user what the command does.
+### CLI-004 — No Overloaded Commands
 
-### 3.4 No Overloaded Commands
+**MUST NOT**
 
-A subcommand that behaves differently based on multiple flags is
-hard to document and hard to test.
+A subcommand that behaves differently based on multiple flags is hard to document and test. Separate commands MUST be used instead.
+
+Example (illustrative):
 
 BAD: `tool sync --from x --to y --mode full --direction both`.
 
-GOOD: `tool sync-full` and `tool sync-incremental` as separate
-commands, with shared config.
+GOOD: `tool sync-full` and `tool sync-incremental` as separate commands.
 
-## 4. Argument Parsing
+## Argument Parsing
 
-### 4.1 Use a Parser Library
+### CLI-005 — Parser Library Usage
 
-Hand-parsing `process.argv` or `sys.argv` beyond trivial cases
-leads to inconsistent help, missing validation, and bugs.
+**MUST**
 
-Use the language's standard or de-facto parser: `commander`,
-`yargs`, `cac`, `argparse`, `click`, `typer`, `cobra`, `pflag`,
-`clap`, `optparse`.
+Hand-parsing `process.argv` or `sys.argv` beyond trivial cases MUST NOT be used. The language's standard or de-facto parser (`commander`, `yargs`, `click`, `typer`, `cobra`, `clap`, etc.) MUST be used.
 
-### 4.2 Follow POSIX and GNU Conventions
+See MAS-036 in `_universal/00-master-anti-slop.md`.
+
+### CLI-006 — POSIX and GNU Convention Compliance
+
+**MUST**
+
+POSIX and GNU conventions MUST be followed:
 
 - Short flags: `-h`, `-v`, `-f value`.
-- Long flags: `--help`, `--verbose`, `--file value` or
-  `--file=value`.
+- Long flags: `--help`, `--verbose`, `--file value` or `--file=value`.
 - Combined short flags: `-vf` only for flags that take no value.
 - `--` terminates flag parsing; the rest are positional arguments.
 
-Do not invent a new convention. Users expect POSIX.
+A new convention MUST NOT be invented. Users expect POSIX.
 
-### 4.3 Short Flags for Common Options
+### CLI-007 — Conventional Short Flags
 
-The conventional short flags:
+**MUST**
+
+Conventional short flags MUST be used for common options:
 
 - `-h` for `--help`.
-- `-v` for `--verbose` (or `--version` in some tools).
+- `-v` for `--verbose` (or `--version`).
 - `-V` for `--version` when `-v` is verbose.
 - `-q` for `--quiet`.
-- `-f` for `--file` or `--force` (do not use both in one tool).
+- `-f` for `--file` or `--force` (not both in one tool).
 - `-o` for `--output`.
 - `-n` for `--dry-run` or `--no-...` (context-dependent).
 
-### 4.4 Long Flags for Everything Else
+### CLI-008 — Long Flags for Non-Conventional Options
 
-A flag not in the conventional list has only a long form.
-`--max-retries` does not need a short form.
+**MUST**
 
-### 4.5 Kebab-Case Flag Names
+A flag not in the conventional list MUST have only a long form. `--max-retries` does not need a short form.
+
+### CLI-009 — Kebab-Case Flag Names
+
+**MUST**
+
+Flag names MUST be kebab-case. camelCase, PascalCase, or snake_case MUST NOT be used. GNU convention uses kebab-case.
+
+Example (illustrative):
 
 BAD: `--maxRetries`, `--MaxRetries`, `--max_retries`.
 
 GOOD: `--max-retries`.
 
-GNU convention uses kebab-case.
+### CLI-010 — Boolean Flag Semantics
 
-### 4.6 Boolean Flags Are Flags, Not Options
+**MUST**
+
+Boolean flags MUST be flags, not options. A boolean flag is present or absent. A `--no-` prefix MUST negate it.
+
+Example (illustrative):
 
 BAD: `--verbose true`, `--verbose=false`.
 
 GOOD: `--verbose`, `--no-verbose`.
 
-A boolean flag is present or absent. A `--no-` prefix negates it.
+### CLI-011 — Argument Bracket Convention
 
-### 4.7 Required Arguments Have No Brackets
+**MUST**
 
-In help text:
+Help text MUST match the standard bracket convention:
 
 - `<file>` = required.
 - `[file]` = optional.
 - `<file...>` = one or more.
 - `[file...]` = zero or more.
 
-Match the convention. Do not invent.
+## Validation and Defaults
 
-## 5. Validation and Defaults
+### CLI-012 — Argument Validation
 
-### 5.1 Validate All Arguments
+**MUST**
 
-Arguments come from the user. Validate:
+Arguments come from the user and MUST be validated:
 
 - Required arguments are present.
-- Types match (number where a number is expected).
+- Types match.
 - Enumerated values are in the allowed set.
 - File paths exist when they must.
 - Mutually exclusive flags are not both set.
 
-An invalid argument produces a clear error and exits with code 2.
+An invalid argument MUST produce a clear error and exit with code 2.
 
-### 5.2 Sensible Defaults
+See MAS-037 in `_universal/00-master-anti-slop.md`.
 
-A tool that requires ten flags to do anything is unfriendly. Default
-to the common case. Expose flags for the uncommon case.
+### CLI-013 — Sensible Defaults
 
-### 5.3 Configuration Precedence
+**SHOULD**
 
-Standard precedence, highest to lowest:
+A tool SHOULD default to the common case. A tool that requires ten flags to do anything is unfriendly. Flags SHOULD be exposed for the uncommon case.
+
+### CLI-014 — Configuration Precedence
+
+**MUST**
+
+Configuration MUST follow standard precedence, highest to lowest:
 
 1. Command-line flags.
 2. Environment variables.
@@ -211,28 +188,33 @@ Standard precedence, highest to lowest:
 4. User config file (`~/.config/mytool/config`).
 5. Built-in defaults.
 
-Document the precedence in `--help`. Follow it consistently.
+The precedence MUST be documented in `--help` and followed consistently.
 
-### 5.4 Environment Variable Names
+### CLI-015 — Environment Variable Naming
 
-- Uppercase with a consistent prefix: `MYTOOL_API_KEY`.
-- Never collide with common variables (`PATH`, `HOME`, `USER`,
-  `EDITOR`).
-- Document every env var in the help text.
+**MUST**
 
-### 5.5 Explicit Config Paths
+Environment variable names MUST be uppercase with a consistent prefix (e.g., `MYTOOL_API_KEY`). They MUST NOT collide with common variables (`PATH`, `HOME`, `USER`, `EDITOR`). Every env var MUST be documented in the help text.
 
-The config file has a documented default location. `--config
-<path>` overrides it. `--no-config` disables loading entirely.
+### CLI-016 — Explicit Config Paths
 
-### 5.6 No Silent Config Loading
+**MUST**
 
-Loading a config file from a surprising location confuses users.
-Print the loaded config path to stderr in verbose mode.
+The config file MUST have a documented default location. `--config <path>` MUST override it. `--no-config` MUST disable loading entirely.
 
-## 6. Exit Codes
+### CLI-017 — Visible Config Loading
 
-### 6.1 Zero for Success, Non-Zero for Failure
+**MUST NOT**
+
+Loading a config file from a surprising location confuses users. In verbose mode, the loaded config path MUST be printed to stderr.
+
+## Exit Codes
+
+### CLI-018 — Success and Failure Codes
+
+**MUST**
+
+Exit codes MUST follow the standard convention:
 
 - `0`: success.
 - `1`: general error.
@@ -243,26 +225,39 @@ Print the loaded config path to stderr in verbose mode.
 - `130`: terminated by SIGINT (128 + 2).
 - `143`: terminated by SIGTERM (128 + 15).
 
-### 6.2 Exit Codes Are Public API
+### CLI-019 — Exit Code Stability
 
-Scripts depend on exit codes. Changing an exit code from `1` to `2`
-breaks callers. Treat exit codes as documented contract.
+**MUST**
 
-### 6.3 Distinct Codes for Distinct Failures
+Scripts depend on exit codes. Changing an exit code from `1` to `2` breaks callers. Exit codes MUST be treated as a documented contract.
+
+### CLI-020 — Distinct Failure Codes
+
+**MUST**
+
+Distinct failures MUST produce distinct codes.
+
+Example (illustrative):
 
 BAD: `1` for both "file not found" and "invalid JSON".
 
-GOOD: `1` for general error, `2` for usage error, and a documented
-set of additional codes for specific failures.
+GOOD: `1` for general error, `2` for usage error, and a documented set of additional codes for specific failures.
 
-### 6.4 Document the Codes
+### CLI-021 — Exit Code Documentation
 
-The help text lists the exit codes the tool produces. Callers should
-not have to read the source.
+**MUST**
 
-## 7. Standard Streams
+The help text MUST list the exit codes the tool produces. Callers should not have to read the source.
 
-### 7.1 stdout for Data, stderr for Everything Else
+## Standard Streams
+
+### CLI-022 — Stream Separation
+
+**MUST**
+
+Program output that a caller might pipe MUST go to stdout. Logs, progress, and errors MUST go to stderr. A pipe between two tools MUST NOT receive progress messages.
+
+Example (illustrative, Bash):
 
 BAD:
 ```bash
@@ -274,49 +269,49 @@ GOOD:
 echo "Processing file..." >&2
 ```
 
-Program output that a caller might pipe goes to stdout. Logs,
-progress, and errors go to stderr. A pipe between two tools must
-not receive progress messages.
+### CLI-023 — Valid stderr on Success
 
-### 7.2 Exit 0 With stderr Output Is Valid
+**MUST**
 
-A successful run may still produce warnings on stderr. Do not treat
-any stderr output as failure.
+A successful run may still produce warnings on stderr. stderr output MUST NOT be treated as failure by itself. Exit code `0` with stderr output is valid.
 
-### 7.3 Respect `isatty`
+### CLI-024 — TTY Awareness
 
-When stdout is a TTY, use colored output, progress bars, and
-spinners. When stdout is not a TTY, use plain output, no progress,
-no colors.
+**MUST**
 
-A JSON output piped to `jq` with ANSI codes is a bug.
+When stdout is a TTY, colored output, progress bars, and spinners MAY be used. When stdout is not a TTY, plain output with no progress and no colors MUST be used. ANSI codes in piped JSON output is a bug.
 
-### 7.4 `--no-color` and `NO_COLOR`
+### CLI-025 — NO_COLOR Compliance
 
-Respect the `NO_COLOR` environment variable (see
-https://no-color.org/). Also provide `--no-color` as a flag. The
-flag overrides the environment.
+**MUST**
 
-### 7.5 No Secrets on stdout or stderr
+The `NO_COLOR` environment variable (https://no-color.org/) MUST be respected. A `--no-color` flag MUST also be provided. The flag MUST override the environment.
 
-Passwords, tokens, and keys never appear on either stream, even in
-debug mode. Redact them in log output.
+### CLI-026 — Secret Redaction
 
-### 7.6 Buffering
+**MUST NOT**
 
-stdout is line-buffered when connected to a terminal and
-block-buffered when piped. A tool that writes a progress line and
-expects it to appear immediately must flush or write to stderr.
+Passwords, tokens, and keys MUST NEVER appear on either stdout or stderr, even in debug mode. They MUST be redacted in log output.
 
-## 8. Help and Documentation
+### CLI-027 — Stream Buffering
 
-### 8.1 Every Command Has `--help`
+**MUST**
 
-`tool --help` shows the top-level commands and global flags.
-`tool <command> --help` shows the command's flags and arguments.
-Both exit with code 0.
+stdout is line-buffered when connected to a terminal and block-buffered when piped. A tool that writes a progress line and expects it to appear immediately MUST flush or write to stderr.
 
-### 8.2 Help Text Structure
+## Help and Documentation
+
+### CLI-028 — Mandatory Help Command
+
+**MUST**
+
+`tool --help` MUST show the top-level commands and global flags. `tool <command> --help` MUST show the command's flags and arguments. Both MUST exit with code 0.
+
+### CLI-029 — Help Text Structure
+
+**MUST**
+
+Help text MUST include:
 
 - One-line summary.
 - Usage line.
@@ -326,394 +321,366 @@ Both exit with code 0.
 - Exit codes.
 - Environment variables that affect behavior.
 
-### 8.3 No Help That Lies
+### CLI-030 — Help Text Accuracy
 
-If a flag is documented, it works. If a flag works, it is
-documented. Help text and behavior drift; test them together.
+**MUST**
 
-### 8.4 `--version`
+If a flag is documented, it MUST work. If a flag works, it MUST be documented. Help text and behavior drift MUST be tested together.
 
-`tool --version` prints the version and exits 0. The format is
-consistent across releases. A common format is `tool 1.4.2`.
+### CLI-031 — Version Query
 
-### 8.5 Examples That Work
+**MUST**
 
-Every example in help text must actually run against the current
-version. Stale examples are worse than no examples.
+`tool --version` MUST print the version and exit 0. The format MUST be consistent across releases (common format: `tool 1.4.2`).
 
-### 8.6 Man Pages for Complex Tools
+### CLI-032 — Working Examples
 
-A tool with subcommands or many flags ships a man page. The man
-page is generated from the same source as `--help` when possible.
+**MUST**
 
-## 9. Signals and Interruption
+Every example in help text MUST actually run against the current version. Stale examples are worse than no examples.
 
-### 9.1 Handle SIGINT Gracefully
+### CLI-033 — Man Pages for Complex Tools
 
-On Ctrl+C, the tool cleans up (temp files, locks, partial output)
-and exits with code 130.
+**SHOULD**
 
-### 9.2 Handle SIGTERM
+A tool with subcommands or many flags SHOULD ship a man page. The man page SHOULD be generated from the same source as `--help` when possible.
 
-On SIGTERM, the same cleanup runs and the tool exits with code 143.
+## Signals and Interruption
 
-### 9.3 Never Ignore Signals
+### CLI-034 — SIGINT Handling
 
-Ignoring SIGINT traps the user in a hanging process. Never do it.
-A tool that must complete a critical section defers the signal, not
-ignores it.
+**MUST**
 
-### 9.4 Clean Up on Exit
+On Ctrl+C (SIGINT), the tool MUST clean up (temp files, locks, partial output) and exit with code 130.
 
-A tool that creates temp files, acquires locks, or opens
-connections cleans up in a `finally` block or a signal handler.
+See MAS-040 in `_universal/00-master-anti-slop.md`.
 
-### 9.5 Atomic Writes
+### CLI-035 — SIGTERM Handling
 
-A command that writes a file either writes it completely or leaves
-the original unchanged. Write to a temp file, then rename.
+**MUST**
 
-BAD: Write directly to `output.json`; a crash mid-write leaves a
-corrupt file.
+On SIGTERM, the same cleanup MUST run and the tool MUST exit with code 143.
+
+### CLI-036 — Signal Non-Ignore
+
+**MUST NOT**
+
+Ignoring SIGINT traps the user in a hanging process. It MUST NOT be ignored. A tool that must complete a critical section MUST defer the signal, not ignore it.
+
+### CLI-037 — Exit Cleanup
+
+**MUST**
+
+A tool that creates temp files, acquires locks, or opens connections MUST clean up in a `finally` block or a signal handler.
+
+### CLI-038 — Atomic Writes
+
+**MUST**
+
+A command that writes a file MUST either write it completely or leave the original unchanged. It MUST write to a temp file, then rename.
+
+Example (illustrative):
+
+BAD: Write directly to `output.json`; a crash mid-write leaves a corrupt file.
 
 GOOD: Write to `output.json.tmp`, then `rename` to `output.json`.
 
-### 9.6 Idempotent Cleanup
+### CLI-039 — Idempotent Cleanup
 
-A signal handler that runs twice must not break. Signal handlers
-are not reentrant; use a flag to mark "cleanup in progress".
+**MUST**
 
-## 10. Long-Running Operations
+A signal handler that runs twice MUST NOT break. Signal handlers are not reentrant; a flag MUST be used to mark "cleanup in progress".
 
-### 10.1 Progress to stderr
+## Long-Running Operations
 
-Progress bars, spinners, and status messages go to stderr. Never
-stdout. The stdout stream belongs to the actual output.
+### CLI-040 — Progress on stderr
 
-### 10.2 Progress Only on TTY
+**MUST**
 
-When stderr is not a TTY, do not emit progress. Logs replace
-progress in CI environments.
+Progress bars, spinners, and status messages MUST go to stderr, never stdout. The stdout stream belongs to the actual output.
 
-### 10.3 Report Start and End
+### CLI-041 — Progress TTY-Only
 
-A long-running command prints a "starting..." line at the start and
-a "done" line at the end. The lines go to stderr. This allows a
-caller to see in logs what happened.
+**MUST NOT**
 
-### 10.4 Interruptible Work
+When stderr is not a TTY, progress MUST NOT be emitted. Logs MUST replace progress in CI environments.
 
-A long-running loop checks for interruption between iterations.
-SIGINT cancels the loop, not just the current operation.
+### CLI-042 — Start and End Reporting
 
-### 10.5 Timeout for Network Operations
+**MUST**
 
-Every network call has a timeout. `--timeout <seconds>` overrides
-the default. A command that hangs forever is a bug.
+A long-running command MUST print a "starting..." line at the start and a "done" line at the end on stderr. This allows a caller to see in logs what happened.
 
-## 11. Non-Interactive by Default
+### CLI-043 — Interruptible Work
 
-### 11.1 No Interactive Prompts
+**MUST**
 
-A command runs to completion without user input. Interactive
-prompts are opt-in.
+A long-running loop MUST check for interruption between iterations. SIGINT MUST cancel the loop, not just the current operation.
+
+### CLI-044 — Network Operation Timeouts
+
+**MUST**
+
+Every network call MUST have a timeout. `--timeout <seconds>` MUST override the default. A command that hangs forever is a bug.
+
+See MAS-040 in `_universal/00-master-anti-slop.md`.
+
+## Non-Interactive by Default
+
+### CLI-045 — No Interactive Prompts
+
+**MUST**
+
+A command MUST run to completion without user input. Interactive prompts MUST be opt-in.
+
+Example (illustrative):
 
 BAD: A command that asks for confirmation in CI.
 
-GOOD: A command that requires `--force` for destructive actions,
-and only prompts when stdin is a TTY and `--no-input` is not set.
+GOOD: A command that requires `--force` for destructive actions, and only prompts when stdin is a TTY and `--no-input` is not set.
 
-### 11.2 `--no-input` Flag
+### CLI-046 — Global --no-input Flag
 
-A global `--no-input` flag disables all prompts. In its presence,
-the command uses defaults or fails clearly.
+**MUST**
 
-### 11.3 Destructive Actions Require Confirmation
+A global `--no-input` flag MUST disable all prompts. In its presence, the command MUST use defaults or fail clearly.
 
-A destructive command (`delete`, `drop`, `overwrite`) requires one
-of:
+### CLI-047 — Destructive Action Confirmation
+
+**MUST**
+
+A destructive command (`delete`, `drop`, `overwrite`) MUST require one of:
 
 - `--force` for non-interactive confirmation.
 - A prompt when interactive.
 - `--dry-run` as a default, with `--apply` to execute.
 
-### 11.4 `--dry-run` for Every Destructive Command
+### CLI-048 — Mandatory Dry-Run
 
-A destructive command provides `--dry-run`. It prints what would
-happen without doing it. This is the safest way to preview.
+**MUST**
 
-## 12. Configuration and Environment
+A destructive command MUST provide `--dry-run`. It MUST print what would happen without doing it. This is the safest way to preview.
 
-### 12.1 No Hidden Config
+## Configuration and Environment
 
-The tool does not read configuration from surprising places. Every
-config source is documented in `--help`.
+### CLI-049 — Visible Configuration Sources
 
-### 12.2 Environment Overrides Are Visible
+**MUST**
 
-If an environment variable overrides a flag, the help text says so.
-Users debug faster when the source of a value is visible.
+The tool MUST NOT read configuration from surprising places. Every config source MUST be documented in `--help`.
 
-### 12.3 Sensible Working Directory Behavior
+### CLI-050 — Visible Environment Overrides
 
-The tool operates on the current directory by default. If it must
-operate elsewhere, provide `--dir` or `-C` (matching `git` and
-`make`).
+**MUST**
 
-### 12.4 No Global State Mutation
+If an environment variable overrides a flag, the help text MUST say so. Users debug faster when the source of a value is visible.
 
-A CLI invocation does not modify the user's shell environment,
-`PATH`, or files outside the project. If it must, ask first.
+### CLI-051 — Sensible Working Directory
 
-## 13. Distribution and Packaging
+**MUST**
 
-### 13.1 Single Binary When Possible
+The tool MUST operate on the current directory by default. If it must operate elsewhere, `--dir` or `-C` MUST be provided (matching `git` and `make`).
 
-- Go, Rust, and C++ compile to a single binary.
-- Node.js CLIs bundle via `pkg`, `bun build --compile`, or `nexe`,
-  or ship with a `node_modules`.
-- Python CLIs ship via `pipx`, `uv tool`, `pex`, or `zipapp`.
+### CLI-052 — No Global State Mutation
 
-The user should not need to install a runtime separately if
-avoidable.
+**MUST NOT**
 
-### 13.2 Versioned Releases
+A CLI invocation MUST NOT modify the user's shell environment, `PATH`, or files outside the project. If it must, it MUST ask first.
 
-Every release has a version number. The version is queryable with
-`--version`.
+## Distribution and Packaging
 
-### 13.3 Changelog
+### CLI-053 — Single Binary Preference
 
-Every release documents what changed. Users need to know before
-upgrading.
+**SHOULD**
 
-### 13.4 No Auto-Update Without Consent
+When possible, the tool SHOULD distribute as a single binary. Go, Rust, and C++ compile to a single binary. Node.js CLIs SHOULD bundle via `pkg`, `bun build --compile`, or `nexe`. Python CLIs SHOULD ship via `pipx`, `uv tool`, `pex`, or `zipapp`. The user SHOULD NOT need to install a runtime separately.
 
-If the tool auto-updates, it does so with the user's consent, or
-on an explicit `tool update` command. Silent updates are hostile.
+### CLI-054 — Versioned Releases
 
-### 13.5 Install Path
+**MUST**
 
-Document where the binary is installed (`/usr/local/bin`, a package
-manager's prefix, or a user directory). A tool that installs to a
-surprising location confuses users.
+Every release MUST have a version number. The version MUST be queryable with `--version`.
 
-### 13.6 Uninstall
+### CLI-055 — Changelog Documentation
 
-Provide an uninstall path or document the package manager's
-uninstall. Do not leave files behind.
+**MUST**
 
-## 14. Anti-Patterns
+Every release MUST document what changed. Users need to know before upgrading.
 
-### 14.1 No `--help`
+### CLI-056 — No Auto-Update Without Consent
 
-A CLI without `--help` is unusable without reading the source.
+**MUST NOT**
 
-### 14.2 Exit Code Always 0
+If the tool auto-updates, it MUST do so with the user's consent, or on an explicit `tool update` command. Silent updates are hostile and MUST NOT be used.
 
-BAD: A failing command that exits 0 "to not scare users".
+### CLI-057 — Documented Install Path
 
-GOOD: Exit non-zero on failure. Scripts depend on this.
+**MUST**
 
-### 14.3 Errors to stdout
+The binary install location (`/usr/local/bin`, a package manager's prefix, or a user directory) MUST be documented. A tool that installs to a surprising location confuses users.
 
-BAD: `console.log("Error: file not found")`.
+### CLI-058 — Clean Uninstall
 
-GOOD: `console.error("Error: file not found")`.
+**MUST**
 
-Piped output that includes error text is a bug.
+An uninstall path MUST be provided or the package manager's uninstall MUST be documented. Files MUST NOT be left behind.
 
-### 14.4 Colors When Piped
+## AI-Specific CLI Discipline
 
-BAD: ANSI codes in a JSON output meant for `jq`.
+### CLI-077 — Command Discovery Before Creation
 
-GOOD: Detect `isatty`, disable colors when piped.
+**MUST**
 
-### 14.5 Silent Failure
+Before creating a new subcommand or top-level CLI tool, the assistant MUST search the project for an existing equivalent. Inventing parallel commands creates interface fragmentation and user confusion.
 
-BAD: A command that fails without any message.
+See MAS-035 in `_universal/00-master-anti-slop.md`.
 
-GOOD: Print the error to stderr and exit non-zero.
+### CLI-078 — Parser Library API Verification
 
-### 14.6 Interactive by Default
+**MUST**
 
-BAD: A command that prompts for input in CI.
+Before using a parser library method (flag definition, subcommand registration, middleware hook), the assistant MUST verify the API exists in the installed version. Different versions of `commander`, `clap`, `click`, and `cobra` have different APIs. Invented methods produce runtime errors that are invisible at compile time.
 
-GOOD: Non-interactive by default. Interactive only via
-`--interactive`.
+See MAS-036 in `_universal/00-master-anti-slop.md`.
 
-### 14.7 Inconsistent Flag Names
+### CLI-079 — Flag Conflict Verification
 
-BAD: `--output` in one command, `--out` in another, `-o` in a
-third.
+**MUST**
 
-GOOD: One name across all commands.
+Before adding a new flag or short option, the assistant MUST verify no conflict with existing global or command-level flags. Flag collisions produce silent misbehavior that is difficult to debug.
 
-### 14.8 Destructive Without Confirmation
+## Anti-Patterns
 
-BAD: `tool clean` deletes the cache without asking.
+### CLI-060 — Schema-Validated Config
 
-GOOD: `tool clean` asks, or requires `--force`, or defaults to
-`--dry-run`.
+**MUST NOT**
 
-### 14.9 Progress Bars on Piped Output
+A config that accepts any key, silently ignoring typos, MUST NOT be used. A schema MUST be validated at startup. Unknown keys MUST be errors or warnings.
 
-BAD: A spinner written to stdout that ends up in a JSON file.
+### CLI-061 — Deterministic Output
 
-GOOD: Progress on stderr, and only when stderr is a TTY.
+**MUST NOT**
 
-### 14.10 Config File Without a Schema
+Non-deterministic output (e.g., order depending on filesystem iteration) MUST NOT be produced. Output MUST be sorted deterministically.
 
-BAD: A config that accepts any key, silently ignoring typos.
+### CLI-062 — Shell Agnosticism
 
-GOOD: A schema, validated at startup. Unknown keys are errors or
-warnings.
+**MUST NOT**
 
-### 14.11 Version Without a Query
+A tool MUST NOT assume a specific shell. It MUST work from any shell on the supported platforms (bash, zsh, fish, PowerShell where applicable).
 
-BAD: The user cannot tell which version is installed.
+### CLI-063 — Clear Error Messages
 
-GOOD: `--version` prints the version in a parseable format.
+**MUST**
 
-### 14.12 Non-Deterministic Output
+Error messages MUST include the path, the operation, and the reason. Generic errors like `Error: ENOENT` are prohibited.
 
-BAD: A command whose output order depends on filesystem iteration
-order.
-
-GOOD: Sort output deterministically.
-
-### 14.13 Assuming a Shell
-
-BAD: A tool that only works in bash on Linux.
-
-GOOD: A tool that works from any shell on the supported platforms.
-
-### 14.14 Unclear Error Messages
+Example (illustrative):
 
 BAD: `Error: ENOENT`.
 
 GOOD: `Error: config file not found at /path/to/.toolrc`.
 
-Include the path, the operation, and the reason.
+### CLI-064 — Position-Independent Global Flags
 
-### 14.15 No `--dry-run`
+**MUST**
 
-BAD: A destructive command with no way to preview.
+Global flags MUST work before or after the subcommand. Position-dependent flags are a bug.
 
-GOOD: `--dry-run` prints what would happen without doing it.
+Example (illustrative):
 
-### 14.16 Argument Reordering
+BAD: `tool --verbose cmd arg1 arg2` where `--verbose` must come after `cmd`.
 
-BAD: `tool --verbose cmd arg1 arg2` where `--verbose` must come
-after `cmd`.
+GOOD: Global flags work in either position.
 
-GOOD: Global flags work before or after the subcommand.
+### CLI-065 — Documented Hidden Flags
 
-### 14.17 Hidden Global Flags
+**MUST NOT**
 
-BAD: A `--config` flag that only works when placed before the
-subcommand, undocumented.
+Hidden global flags (e.g., `--config` that only works in one position, undocumented) MUST NOT exist. Placement MUST be documented, or flags MUST be position-independent.
 
-GOOD: Document placement, or make flags position-independent.
+### CLI-066 — Stdin Convention Compliance
 
-### 14.18 Environment Variables Without Prefix
+**MUST**
 
-BAD: An env var `API_KEY` that collides with other tools.
+A command MUST use an explicit `-` for stdin, matching `cat`, `grep`, and other Unix tools. Silently reading stdin when no file argument is given is prohibited.
 
-GOOD: `MYTOOL_API_KEY`.
+### CLI-067 — Trailing Newline
 
-### 14.19 Reading stdin Without a Flag
+**MUST**
 
-BAD: A command that silently reads stdin when no file argument is
-given.
+Every line of output MUST end with `\n`. Output without a trailing newline breaks shell pipelines.
 
-GOOD: An explicit `-` for stdin, matching `cat`, `grep`, and other
-Unix tools.
+### CLI-068 — Pipe-Safe Exit Codes
 
-### 14.20 Output Without a Trailing Newline
+**SHOULD**
 
-BAD: A command that prints a value with no newline, breaking shell
-pipelines.
+When documenting pipeline patterns, `set -o pipefail` SHOULD be mentioned, or a `--log <path>` flag SHOULD be provided that writes to a file without a pipe to preserve exit codes.
 
-GOOD: Every line ends with `\n`.
+### CLI-069 — Machine-Readable Output Format
 
-### 14.21 Losing Exit Code Through a Pipe
+**MUST**
 
-BAD: `tool | tee log.txt` where the exit code of `tee` masks the
-exit code of `tool`.
+A command that produces human-readable output by default MUST also provide a machine-readable format (`--format json` or `--format tsv`) for scripts.
 
-GOOD: Document the pattern with `set -o pipefail`, or provide a
-`--log <path>` flag that writes to a file without a pipe.
+### CLI-070 — Backward-Compatible Flag Renames
 
-### 14.22 Mixed stdout and stderr
+**MUST NOT**
 
-BAD: A command that writes some output to stdout and some to
-stderr, with no rule.
+Flag renames MUST NOT occur in minor versions. The old flag MUST be kept as an alias, deprecated, and removed only in the next major version.
 
-GOOD: A documented rule: data to stdout, everything else to
-stderr.
-
-### 14.23 Human-Readable Default, No Machine Format
-
-BAD: A command that only outputs aligned text.
-
-GOOD: A `--format json` (or `tsv`) for scripts. Default can stay
-human-readable.
-
-### 14.24 Breaking Flag Renames in Minor Versions
+Example (illustrative):
 
 BAD: Renaming `--output` to `--out` in a minor release.
 
-GOOD: Add `--out` as an alias, deprecate `--output`, remove it in
-the next major.
+GOOD: Add `--out` as an alias, deprecate `--output`, remove in next major.
 
-### 14.25 Overloaded `--force`
+### CLI-071 — Single-Meaning Flags
 
-BAD: `--force` means "overwrite", "skip confirmation", and
-"continue on error" in different commands.
+**MUST**
 
-GOOD: One flag, one meaning. Add `--continue-on-error` if needed.
+A flag MUST have one meaning across all commands. `--force` MUST NOT mean "overwrite", "skip confirmation", and "continue on error" in different commands. Additional behavior MUST use additional flags (e.g., `--continue-on-error`).
 
-### 14.26 Unbounded Recursion on Symlinks
+### CLI-072 — Bounded Symlink Recursion
 
-BAD: A `tool sync` that follows symlinks and recurses infinitely.
+**MUST NOT**
 
-GOOD: Do not follow symlinks unless `--follow-symlinks` is set.
+Unbounded recursion on symlinks is prohibited. Symlinks MUST NOT be followed unless `--follow-symlinks` is set.
 
-### 14.27 No Progress for Long Operations
+### CLI-073 — Wrapped Help Text
 
-BAD: A command that runs for 10 minutes with no output. The user
-thinks it is hung.
+**MUST**
 
-GOOD: Progress to stderr, or at least a "working..." line at the
-start.
+Help text MUST be wrapped to 80 columns and indented consistently. Lines over 120 characters that wrap badly in terminals are prohibited.
 
-### 14.28 Help Text That Fits the Terminal
+### CLI-074 — Stdin/Stdout Dash Support
 
-BAD: Help text with lines over 120 characters that wrap badly.
+**MUST**
 
-GOOD: Help text wrapped to 80 columns, indented consistently.
+A command MUST support `-` as stdin and stdout where applicable, matching Unix conventions. `tool parse -` MUST read stdin; `tool export -` MUST write stdout.
 
-### 14.29 No Support for `-` as stdin/stdout
+### CLI-075 — Parseable Version Output
 
-BAD: A command that only accepts file paths.
+**MUST**
 
-GOOD: `tool parse -` reads stdin; `tool export -` writes stdout.
-This matches Unix conventions.
+`tool --version` MUST print a single line, parseable by a script. Empty or non-parseable version output is prohibited.
 
-### 14.30 Publishing Without Version in Output
+### CLI-076 — Silent Failure Prohibition
 
-BAD: `tool --version` prints nothing or a non-parseable string.
+**MUST NOT**
 
-GOOD: `tool --version` prints a single line, parseable by a script.
+A command MUST NOT fail without any message. The error MUST be printed to stderr and the process MUST exit non-zero.
 
-## 15. Response to Violation
+See MAS-037 in `_universal/00-master-anti-slop.md`.
 
-If a previous response violated a rule here:
+## Response to Violation
 
-```
-In the previous response, [specific rule] was violated. Correction:
-[corrected code]
-```
+When a rule in this file is violated, report:
 
-No justification. No apology paragraph. Fix and move on.
+Violation: CLI-{NNN}
+Reason: {one-line reason}
+Correction: {smallest fix}
+
+For multiple violations, report each rule ID separately.
+
+Do not replace a technical correction with a generic explanation.

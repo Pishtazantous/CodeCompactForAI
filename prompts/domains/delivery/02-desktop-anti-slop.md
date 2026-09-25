@@ -2,340 +2,371 @@
 id: 02-desktop-anti-slop
 title: "Desktop App Anti-Slop Layer"
 lang: en
-depends_on: [00-master-anti-slop]
+depends_on: ["_universal/00-style-guide.md", "_universal/00-master-anti-slop.md"]
 category: domain
 domain_type: delivery
-version: 1
+version: 2
 ---
 
 # Desktop App Anti-Slop Layer
 
-Layered under `_universal/00-master-anti-slop.md`. Universal rules
-(fabrication, fake completion, over-engineering, silent assumptions,
-security anti-patterns, output format) are NOT repeated here.
+This file defines behavioral contracts specific to desktop applications. It sits in the delivery layer, below the universal anti-slop rules and above framework-specific patterns. It covers process architecture, security, file system access, native integration, state persistence, updates, and performance for Electron, Tauri, and native toolkits (Qt, GTK, WinUI, SwiftUI/AppKit). Framework-specific rules for Electron and Tauri live in `domains/framework/`. This file covers the platform-agnostic discipline. It does not cover general frontend rules (see `02-frontend-anti-slop.md`) or mobile-specific rules (see `02-mobile-anti-slop.md`).
 
-This file covers rules specific to desktop applications: Electron,
-Tauri, and native toolkits (Qt, GTK, WinUI, SwiftUI/AppKit). Framework-
-specific rules for Electron and Tauri live in
-`domains/framework/`. This file covers the platform-agnostic
-discipline.
+A desktop app runs with elevated OS privileges and direct file system access. A security flaw is not just a data leak; it is remote code execution on the user's machine.
 
-## 1. Stack Assumptions
+## Scope
 
-This layer applies to:
+This file applies to Electron (Chromium + Node.js), Tauri (Rust + system webview), Qt (C++ / Python), GTK (C / Python / Rust), WinUI / WPF (.NET), AppKit / SwiftUI (macOS), and cross-platform frameworks (Flutter desktop, .NET MAUI). The principles are framework-agnostic. The examples use JavaScript/Electron syntax where illustrative.
 
-- Electron (Chromium + Node.js)
-- Tauri (Rust + system webview)
-- Qt (C++ / Python)
-- GTK (C / Python / Rust)
-- WinUI / WPF (.NET)
-- AppKit / SwiftUI (macOS)
-- Cross-platform (Flutter desktop, .NET MAUI)
+## Rule Severity
 
-## 2. Process Architecture
+Severity follows `_universal/00-style-guide.md`.
 
-### 2.1 Separation of Concerns
+## Contracts
 
-Desktop apps separate:
+A desktop application commits to six contracts. The table below maps each contract to the rules that enforce it.
 
-- **UI process** (renderer, webview): displays content, handles user
-  input.
-- **Main process** (or native core): file system, OS integration,
-  networking, privileged operations.
+| Contract | Description | Enforced By |
+|---|---|---|
+| Process Isolation | UI and Main processes are strictly separated; IPC is minimal and validated. | DSK-001 to DSK-003 |
+| Security Baseline | Context isolation, CSP, and signed updates prevent RCE and compromise. | DSK-004 to DSK-010, DSK-031, DSK-043 |
+| File System Safety | Paths are validated, sandboxed, symlink-safe, and streamed. | DSK-011 to DSK-014, DSK-042 |
+| Native Convention | Menus, shortcuts, dialogs, and notifications follow OS guidelines. | DSK-015 to DSK-019, DSK-034, DSK-037, DSK-041 |
+| State and Persistence | Data is stored in OS-specific directories, migrated safely, and secrets are encrypted. | DSK-020 to DSK-022 |
+| Update Discipline | Updates are signed, consensual, rollback-capable, and documented. | DSK-023 to DSK-026, DSK-039 |
 
-The UI process has no direct access to the OS. It requests via IPC.
+## Process Architecture
 
-### 2.2 Never Trust the UI Process
+### DSK-001 — Process Separation
 
-The UI process may be compromised by a cross-site scripting bug in a
-loaded page. The main process validates every IPC request.
+**MUST**
 
-### 2.3 Minimal IPC Surface
+Desktop apps MUST separate the UI process (renderer, webview) from the Main process (native core). The UI process handles user input and displays content. The Main process handles file system, OS integration, networking, and privileged operations. The UI process MUST NOT have direct access to the OS.
 
-Every IPC channel exposes the smallest possible functionality:
+### DSK-002 — UI Process Trust Prohibition
+
+**MUST NOT**
+
+The UI process MUST NOT be trusted. It may be compromised by a cross-site scripting bug in a loaded page. The Main process MUST validate every IPC request as if it came from an untrusted remote client.
+
+### DSK-003 — Minimal IPC Surface
+
+**MUST**
+
+Every IPC channel MUST expose the smallest possible functionality. Generic execution channels are prohibited.
+
+Example (illustrative):
 
 - No `runCommand(cmd)` with arbitrary strings.
 - No `readFile(path)` without a path allowlist.
 - No `openUrl(url)` without a scheme and host allowlist.
 
-## 3. Security
+## Security
 
-### 3.1 Context Isolation
+### DSK-004 — Context Isolation
 
-Electron: `contextIsolation: true` is the default in modern versions.
-Never disable it.
+**MUST**
 
-### 3.2 Node Integration Off in Renderer
+Context isolation (e.g., `contextIsolation: true` in Electron) MUST be enabled. It MUST NEVER be disabled.
 
-Electron: `nodeIntegration: false`. The renderer does not have access
-to Node.js APIs directly.
+### DSK-005 — Node Integration Prohibition
 
-### 3.3 Preload Script With `contextBridge`
+**MUST NOT**
 
-Expose a minimal API via `contextBridge.exposeInMainWorld`:
+Direct Node.js API access in the renderer process (e.g., `nodeIntegration: true`) MUST NOT be enabled. A single XSS vulnerability with Node integration enabled results in Remote Code Execution (RCE).
 
+### DSK-006 — Preload Script Discipline
+
+**MUST**
+
+A minimal API MUST be exposed via a context bridge (e.g., `contextBridge.exposeInMainWorld`). The raw IPC module (e.g., `ipcRenderer`) MUST NEVER be exposed directly to the renderer.
+
+Example (illustrative, JavaScript):
 ```javascript
 contextBridge.exposeInMainWorld("api", {
   saveFile: (content) => ipcRenderer.invoke("save-file", content),
 });
 ```
 
-Never expose `ipcRenderer` directly.
+### DSK-007 — Remote Module Prohibition
 
-### 3.4 No `remote` Module
+**MUST NOT**
 
-Electron's `remote` module allows the renderer to call main-process
-modules directly. It is deprecated and dangerous. Do not use it.
+Deprecated and dangerous IPC modules that allow the renderer to call main-process modules directly (e.g., Electron's `remote` module) MUST NOT be used.
 
-### 3.5 Content Security Policy
+### DSK-008 — Strict Content Security Policy
 
-A strict CSP in every HTML file. No `unsafe-eval`. No remote scripts.
+**MUST**
 
-### 3.6 Navigation and `window.open` Restrictions
+A strict Content Security Policy (CSP) MUST be applied to every HTML file. `unsafe-eval` and remote scripts MUST NOT be allowed.
 
-Block navigation to untrusted origins:
+### DSK-009 — Navigation and Window Open Restrictions
 
+**MUST**
+
+Navigation to untrusted origins MUST be blocked. `window.open` MUST be intercepted and restricted to approved external handlers or denied.
+
+Example (illustrative, JavaScript):
 ```javascript
 webContents.on("will-navigate", (event, url) => {
   if (!isAllowed(url)) event.preventDefault();
 });
-
 webContents.setWindowOpenHandler(({ url }) => {
   shell.openExternal(url);
   return { action: "deny" };
 });
 ```
 
-### 3.7 Updates Are Signed
+### DSK-010 — Signed Updates
 
-Auto-updates are signed by the publisher. The app verifies the
-signature before applying.
+**MUST**
 
-## 4. File System
+Auto-updates MUST be cryptographically signed by the publisher. The app MUST verify the signature before applying the update.
 
-### 4.1 Path Validation
+## File System
 
-Every path from the UI is validated:
+### DSK-011 — Path Validation
 
-- Normalize the path.
-- Resolve to an absolute path.
-- Check it is inside an allowed directory.
+**MUST**
 
-BAD: `fs.readFile(userProvidedPath)` in the main process.
-GOOD: Validate the path against a sandbox root.
+Every file path received from the UI or external sources MUST be validated: normalized, resolved to an absolute path, and checked to ensure it resides inside an explicitly allowed sandbox directory.
 
-### 4.2 No Arbitrary Write Locations
+### DSK-012 — Write Location Restriction
 
-The app writes to:
+**MUST NOT**
 
-- User data directory (OS-specific).
-- Temporary directory.
-- Locations the user explicitly chooses via a file dialog.
+The app MUST NOT write to arbitrary locations or the installation directory. Writes MUST be restricted to the OS-specific user data directory, the temporary directory, or locations explicitly chosen by the user via a native file dialog.
 
-Never write to the installation directory.
+### DSK-013 — Symlink Resolution and Validation
 
-### 4.3 Symlink Handling
+**MUST**
 
-Symlinks can escape a sandbox. Resolve them and re-check.
+Symlinks can escape a sandbox. Every path MUST have symlinks resolved before the sandbox boundary check is applied.
 
-### 4.4 Large Files
+### DSK-014 — Large File Streaming
 
-Reading a 2 GB file into memory crashes the app. Stream.
+**MUST NOT**
 
-## 5. Native Integration
+Large files (e.g., > 100 MB) MUST NOT be read entirely into memory. They MUST be processed via streams to prevent application crashes.
 
-### 5.1 Menus
+## Native Integration
 
-- macOS: app menu, Edit menu, Window menu.
-- Windows/Linux: File, Edit, View, Help.
+### DSK-015 — Platform Menu Conventions
 
-Match the platform's conventions. Do not invent menus.
+**MUST**
 
-### 5.2 Keyboard Shortcuts
+Menus MUST match the platform's conventions (e.g., App/Edit/Window menus on macOS; File/Edit/View/Help on Windows/Linux). Inventing custom menu paradigms is prohibited.
 
-- Copy, Cut, Paste, Undo, Redo: platform defaults.
-- Cmd on macOS, Ctrl elsewhere.
-- Never override OS shortcuts (Cmd+Tab, Alt+Tab).
+### DSK-016 — Standard Keyboard Shortcuts
 
-### 5.3 File Associations
+**MUST**
 
-If the app opens files of a specific type, it registers as a handler
-and handles the "open with" event. The path comes from the OS, not
-from user input.
+Standard OS keyboard shortcuts (Copy, Cut, Paste, Undo, Redo) MUST be respected using the platform's modifier key (Cmd on macOS, Ctrl elsewhere). OS-level shortcuts (Cmd+Tab, Alt+Tab) MUST NOT be overridden.
 
-### 5.4 System Tray
+### DSK-017 — File Association Handling
 
-Use sparingly. A tray icon that adds no value is noise.
+**MUST**
 
-### 5.5 Notifications
+If the app registers as a handler for specific file types, it MUST handle the OS "open with" event correctly. The file path MUST be received from the OS event, not parsed from user input.
 
-Use the OS notification system, not a custom popup. Respect the
-user's Do Not Disturb settings.
+### DSK-018 — System Tray Discipline
 
-## 6. State and Persistence
+**SHOULD NOT**
 
-### 6.1 User Data Directory
+System tray icons SHOULD NOT be used unless they provide persistent, actionable value. A tray icon that adds no value is noise.
 
-Persist to the OS-specific user data directory:
+### DSK-019 — Native Notification Usage
 
-- macOS: `~/Library/Application Support/<AppName>`
-- Windows: `%APPDATA%/<AppName>`
-- Linux: `~/.config/<AppName>` or `~/.local/share/<AppName>`
+**MUST**
 
-Never to the app's installation directory.
+The OS notification system MUST be used instead of custom in-app popups. The user's Do Not Disturb settings MUST be respected.
 
-### 6.2 Schema Migration
+## State and Persistence
 
-Data persisted by v1 must be readable by v2. Provide migrations.
+### DSK-020 — OS-Specific User Data Directory
 
-### 6.3 Encrypted Storage for Secrets
+**MUST**
 
-OS keychains:
+Persistent application data MUST be stored in the OS-specific user data directory (e.g., `~/Library/Application Support/<AppName>` on macOS, `%APPDATA%/<AppName>` on Windows, `~/.config/<AppName>` on Linux). Data MUST NOT be stored in the app's installation directory.
 
-- macOS: Keychain
-- Windows: Credential Manager
-- Linux: libsecret / gnome-keyring
+### DSK-021 — Schema Migration
 
-Never store tokens in plain JSON in the user data directory.
+**MUST**
 
-## 7. Updates
+Data persisted by previous versions of the app MUST be readable by the current version. Explicit migration logic MUST be provided for schema changes.
 
-### 7.1 Auto-Update
+### DSK-022 — Encrypted Secret Storage
 
-Use the platform's mechanism (Squirrel on macOS/Windows, AppImage
-update, MSIX). The user is notified and can defer.
+**MUST NOT**
 
-### 7.2 Never Update Without Consent
+Tokens, passwords, and secrets MUST NOT be stored in plain text files (e.g., JSON) in the user data directory. The OS-native keychain (macOS Keychain, Windows Credential Manager, Linux libsecret/gnome-keyring) MUST be used.
 
-Forced updates are hostile. Offer a "remind me later" path.
+## Updates
 
-### 7.3 Rollback
+### DSK-023 — Platform Auto-Update Mechanism
 
-A bad update must be revertible. Keep the previous version.
+**MUST**
 
-### 7.4 Channel Support
+The platform's or framework's standard auto-update mechanism (e.g., Squirrel, AppImage update, MSIX) MUST be used. The user MUST be notified and allowed to defer the update.
 
-Beta and stable channels. Beta users accept instability.
+### DSK-024 — Update Consent
 
-## 8. Performance
+**MUST NOT**
 
-### 8.1 Cold Start Time
+Forced, silent updates are hostile. A "remind me later" or deferral path MUST be provided.
 
-Under 3 seconds for a simple app. Under 5 for a complex one. Profile
-startup.
+### DSK-025 — Update Rollback Capability
 
-### 8.2 Bundle Size
+**MUST**
 
-Electron apps bundle Chromium (100+ MB). Tauri uses the system
-webview (much smaller). Weigh the trade-off.
+A failed or buggy update MUST be revertible. The previous version MUST be retained or recoverable until the new version is verified stable.
 
-### 8.3 Memory
+### DSK-026 — Update Channel Support
 
-Desktop users notice memory growth. Monitor and cap.
+**SHOULD**
 
-### 8.4 Background Work
+Beta and stable channels SHOULD be supported to allow users to opt into instability for early access.
 
-Offload heavy tasks to worker threads or the main process, not the
-UI thread.
+## Performance
 
-## 9. Desktop-Specific Anti-Patterns
+### DSK-027 — Cold Start Budget
 
-### 9.1 `nodeIntegration: true` in Renderer
+**SHOULD**
 
-Covered in 3.2. A single XSS in the app is RCE.
+Cold start time SHOULD be under 3 seconds for a simple app and under 5 seconds for a complex one. Startup MUST be profiled and optimized.
 
-### 9.2 `contextIsolation: false`
+### DSK-028 — Bundle Size Awareness
 
-Covered in 3.1.
+**MUST**
 
-### 9.3 Arbitrary IPC
+The trade-off between framework bundle size (e.g., Electron bundling Chromium vs. Tauri using the system webview) MUST be evaluated against the application's requirements.
 
-Covered in 2.3.
+### DSK-029 — Memory Growth Monitoring
 
-### 9.4 Remote Content Loaded in the App
+**MUST**
 
-Loading `https://example.com` inside the app gives that page full
-access to the preload API. Only load content the app controls.
+Memory usage MUST be monitored and capped. Desktop users are highly sensitive to continuous memory growth (leaks).
 
-### 9.5 No CSP
+### DSK-030 — Background Work Offloading
 
-Covered in 3.5.
+**MUST NOT**
 
-### 9.6 Storing Secrets in JSON
+Heavy computational tasks MUST NOT run on the UI thread or the Main process's event loop. They MUST be offloaded to worker threads or background processes to prevent UI freezing.
 
-Covered in 6.3.
+## AI-Specific Desktop Discipline
 
-### 9.7 No Update Signature
+### DSK-060 — Desktop Framework API Verification
 
-Covered in 3.7. A compromised update server owns every user's machine.
+**MUST**
 
-### 9.8 Platform-Specific Code Without Guards
+Before using a desktop framework API (e.g., Electron `BrowserWindow` options, Tauri `invoke` commands, Qt signals), the assistant MUST verify the API signature and security defaults for the installed version. Invented APIs or deprecated security flags (e.g., `nodeIntegration`) cause silent security degradations or runtime crashes.
 
-BAD: `if (process.platform === "darwin")` scattered everywhere.
-GOOD: An abstraction with platform-specific implementations.
+See MAS-036 in `_universal/00-master-anti-slop.md`.
 
-### 9.9 Custom Titlebar Without Platform Support
+### DSK-061 — Existing IPC Channel Discovery
 
-A custom titlebar that works on macOS and breaks on Windows. Test on
-each platform.
+**MUST**
 
-### 9.10 Missing Menus on macOS
+Before creating a new IPC channel or native bridge method, the assistant MUST search the project's Main process code for an existing equivalent. Inventing parallel IPC channels fragments the security boundary and increases the attack surface.
 
-A macOS app with no app menu cannot be quit normally. Provide the
-standard menus.
+See MAS-035 in `_universal/00-master-anti-slop.md`.
 
-### 9.11 No Keyboard Shortcuts
+### DSK-062 — Platform Abstraction Restraint
 
-Users expect Cmd+C to copy. Without it, the app feels broken.
+**SHOULD**
 
-### 9.12 Badge Count Without a Notification Center
+The assistant SHOULD NOT introduce complex cross-platform abstraction layers for OS-specific features (e.g., custom menu frameworks, custom window managers) unless the project already uses them and native APIs are proven insufficient.
 
-A badge without a corresponding OS notification is confusing.
+See MAS-038 in `_universal/00-master-anti-slop.md`.
 
-### 9.13 Blocking the Main Process
+## Anti-Patterns
 
-A synchronous operation in the main process freezes every window.
+### DSK-031 — Remote Content Loading
 
-### 9.14 App Doesn't Quit
+**MUST NOT**
 
-Closing all windows does not quit on macOS (expected) but does on
-Windows/Linux. Handle both.
+Loading remote, untrusted web content (e.g., `https://example.com`) directly inside the desktop app's main window is prohibited. It gives that remote origin full access to the preload API. Only content the app controls and bundles MUST be loaded.
 
-### 9.15 No Single Instance Lock
+### DSK-032 — Platform-Specific Code Guards
 
-Multiple instances of the app compete for files and locks. Use the
-platform's single-instance mechanism.
+**MUST NOT**
 
-### 9.16 Auto-Update Without Release Notes
+Platform-specific code (e.g., `if (process.platform === "darwin")`) MUST NOT be scattered throughout the codebase. It MUST be encapsulated in an abstraction layer with platform-specific implementations.
 
-The user sees an update with no information. Provide a changelog.
+### DSK-033 — Cross-Platform Custom Titlebars
 
-### 9.17 Silent Crash
+**MUST**
 
-A crash without a log or a crash reporter. Users see a closed window
-and no explanation.
+Custom titlebars MUST be tested and supported on every target platform. A custom titlebar that works on macOS but breaks window management on Windows or Linux is prohibited.
 
-### 9.18 Native Dialogs for Everything
+### DSK-034 — Missing macOS App Menu
 
-Every save, every confirm is a native dialog. Too many dialogs fatigue
-the user.
+**MUST NOT**
 
-### 9.19 Cross-Platform Assumptions
+A macOS application MUST NOT omit the standard App menu. Without it, the user cannot access standard Quit, Hide, or About actions normally.
 
-A path like `C:\Users\...` hardcoded. Use the platform's path APIs.
+### DSK-035 — Orphaned Badge Counts
 
-### 9.20 No Code Signing
+**MUST NOT**
 
-An unsigned app triggers SmartScreen and Gatekeeper warnings. Sign
-for production.
+Displaying a badge count on the dock/taskbar without a corresponding OS notification or clear in-app indicator is confusing and MUST NOT be used.
 
-## 10. Response to Violation
+### DSK-036 — Main Process Blocking
 
-If a previous response violated a rule here:
+**MUST NOT**
 
-```
-In the previous response, [specific rule] was violated. Correction:
-[corrected code]
-```
+Synchronous I/O or heavy computation in the Main process event loop freezes every window and OS integration hook. It is strictly prohibited.
 
-No justification. No apology paragraph. Fix and move on.
+### DSK-037 — Cross-Platform Quit Behavior
+
+**MUST**
+
+The app MUST handle the "close all windows" event according to platform conventions: quitting the app on Windows/Linux, but keeping the app running in the dock on macOS (unless explicitly quit).
+
+### DSK-038 — Single Instance Lock
+
+**MUST**
+
+The platform's single-instance lock mechanism MUST be used. Multiple concurrent instances of the same desktop app competing for file locks and local databases cause data corruption.
+
+### DSK-039 — Update Release Notes
+
+**MUST**
+
+Auto-updates MUST be accompanied by release notes or a changelog. Presenting an update to the user with no information about what changed is hostile.
+
+### DSK-040 — Silent Crash Prohibition
+
+**MUST NOT**
+
+The app MUST NOT crash silently. A crash reporter or a persistent error log MUST be implemented so the user and developer know why the window closed.
+
+### DSK-041 — Native Dialog Fatigue
+
+**SHOULD NOT**
+
+Using native OS dialogs for every minor confirmation or save action fatigues the user. Custom in-app UI SHOULD be used for frequent, low-risk interactions, reserving native dialogs for critical OS-level file or permission requests.
+
+### DSK-042 — Cross-Platform Path Assumptions
+
+**MUST NOT**
+
+Hardcoded path separators or OS-specific path structures (e.g., `C:\Users\...`) MUST NOT be used. The platform's path manipulation APIs (e.g., Node `path.join`, Rust `PathBuf`) MUST be used.
+
+### DSK-043 — Production Code Signing
+
+**MUST**
+
+Production builds MUST be code-signed. Unsigned applications trigger OS-level security warnings (Windows SmartScreen, macOS Gatekeeper) and are often blocked from execution.
+
+## Response to Violation
+
+When a rule in this file is violated, report:
+
+Violation: DSK-{NNN}
+Reason: {one-line reason}
+Correction: {smallest fix}
+
+For multiple violations, report each rule ID separately.
+
+Do not replace a technical correction with a generic explanation.

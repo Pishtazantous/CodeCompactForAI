@@ -5,7 +5,7 @@ lang: en
 depends_on: ["_universal/00-style-guide.md", "_universal/00-master-anti-slop.md"]
 category: domain
 domain_type: delivery
-version: 4
+version: 5
 ---
 
 # Frontend Anti-Slop Layer
@@ -52,6 +52,8 @@ Before writing a new component, the assistant MUST:
 4. Only create a new component when nothing close exists.
 
 A duplicated `Button` is not a style preference. It is a future inconsistency.
+
+See MAS-035 in `_universal/00-master-anti-slop.md`.
 
 ### FE-002 — One Component Per File
 
@@ -255,6 +257,8 @@ if (error) return <ErrorState error={error} />;
 if (!data?.length) return <EmptyState />;
 return <Table rows={data} />;
 ```
+
+See MAS-037 in `_universal/00-master-anti-slop.md`.
 
 ### FE-017 — Query Keys Are Stable and Complete
 
@@ -534,6 +538,8 @@ useEffect(() => {
 }, []);
 ```
 
+See MAS-040 in `_universal/00-master-anti-slop.md`.
+
 ### FE-039 — No Data Fetching in Effects
 
 **MUST NOT**
@@ -690,6 +696,8 @@ An error in one component MUST NOT crash the whole page. Error boundaries MUST i
 
 An empty list MUST NOT be rendered as an error. An empty state MUST be rendered with a clear message and a next action.
 
+See MAS-037 in `_universal/00-master-anti-slop.md`.
+
 ## Configuration
 
 ### FE-058 — No Hardcoded URLs
@@ -742,11 +750,15 @@ Detailed accessibility rules live in `domains/concern/02-accessibility-critical-
 
 Every interactive element MUST be reachable and operable with keyboard only.
 
+See MAS-039 in `_universal/00-master-anti-slop.md`.
+
 ### FE-063 — Focus Visible
 
 **MUST**
 
 `:focus-visible` MUST show an indicator. `outline: none` without a replacement is forbidden.
+
+See MAS-039 in `_universal/00-master-anti-slop.md`.
 
 ### FE-064 — Labels
 
@@ -754,17 +766,23 @@ Every interactive element MUST be reachable and operable with keyboard only.
 
 Every input MUST have a `<label>` or an `aria-label`. Every icon-only button MUST have an `aria-label`.
 
+See MAS-039 in `_universal/00-master-anti-slop.md`.
+
 ### FE-065 — Alt Text
 
 **MUST**
 
 Every image MUST have `alt` text. Decorative images MUST use `alt=""`. Functional images MUST describe the action.
 
+See MAS-039 in `_universal/00-master-anti-slop.md`.
+
 ### FE-066 — No Color-Only Signals
 
 **MUST NOT**
 
 Color MUST NOT be the only signal of state. Pair with an icon, a label, or a shape.
+
+See MAS-039 in `_universal/00-master-anti-slop.md`.
 
 ### FE-067 — Semantic HTML
 
@@ -784,11 +802,15 @@ GOOD:
 <button onClick={handleClick}>Save</button>
 ```
 
+See MAS-039 in `_universal/00-master-anti-slop.md`.
+
 ### FE-068 — Modals Trap Focus
 
 **MUST**
 
 A modal MUST keep focus inside until it closes and MUST return focus to the trigger on close.
+
+See MAS-039 in `_universal/00-master-anti-slop.md`.
 
 ## AI-Specific Frontend Discipline
 
@@ -797,6 +819,8 @@ A modal MUST keep focus inside until it closes and MUST return focus to the trig
 **MUST**
 
 Before creating any new component, the assistant MUST search the project's existing component directories. If a similar component exists, it MUST be used or extended. Inventing parallel components creates visual inconsistency and maintenance burden.
+
+See MAS-035 in `_universal/00-master-anti-slop.md`.
 
 ### FE-070 — Hook Pattern Verification
 
@@ -808,11 +832,15 @@ BAD: Using `useAuth()` when the project exports `useSession()`.
 
 GOOD: Fetch the project's hooks directory first, then use the verified export.
 
+See MAS-036 in `_universal/00-master-anti-slop.md`.
+
 ### FE-071 — CSS Class Verification
 
 **MUST**
 
 Before using a CSS utility class or custom class, the assistant MUST verify the class exists in the project's stylesheet or Tailwind configuration. Invented classes produce no visual effect and are invisible at compile time.
+
+See MAS-036 in `_universal/00-master-anti-slop.md`.
 
 ### FE-072 — Existing Pattern Discovery
 
@@ -820,17 +848,23 @@ Before using a CSS utility class or custom class, the assistant MUST verify the 
 
 Before introducing a new pattern (state management, data fetching, styling), the assistant MUST search the project for an existing equivalent. If one exists, it MUST be used. Competing patterns fragment the codebase.
 
+See MAS-035 in `_universal/00-master-anti-slop.md`.
+
 ### FE-073 — Architecture Restraint
 
 **SHOULD**
 
 The assistant SHOULD NOT introduce architectural layers, design patterns, or abstractions that the project does not already use. A simple form does not need a state machine, a command pattern, or an event bus unless the project already uses them.
 
+See MAS-038 in `_universal/00-master-anti-slop.md`.
+
 ### FE-074 — Library API Verification
 
 **MUST**
 
 Before using a third-party library API, the assistant MUST verify the method exists in the installed version. Different library versions have different APIs. Invented methods produce runtime errors.
+
+See MAS-036 in `_universal/00-master-anti-slop.md`.
 
 ## Anti-Patterns
 

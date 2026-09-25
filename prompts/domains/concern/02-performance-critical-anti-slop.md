@@ -2,561 +2,478 @@
 id: 02-performance-critical-anti-slop
 title: "Performance-Critical Anti-Slop Layer"
 lang: en
-depends_on: [00-master-anti-slop]
+depends_on: ["_universal/00-style-guide.md", "_universal/00-master-anti-slop.md"]
 category: domain
 domain_type: concern
-version: 1
+version: 2
 ---
 
 # Performance-Critical Anti-Slop Layer
 
-Layered under `_universal/00-master-anti-slop.md`. Universal rules
-(fabrication, fake completion, over-engineering, silent assumptions,
-security anti-patterns, output format) are NOT repeated here.
+This file defines behavioral contracts specific to performance-critical systems. It sits in the concern layer, below the universal anti-slop rules and alongside other cross-cutting concerns. It covers measurement discipline, frontend and backend optimization, resource management, caching, concurrency, and budget enforcement. It does not cover baseline frontend performance (see `02-frontend-anti-slop.md`), baseline database query performance (see `02-database-anti-slop.md`), language-specific memory management (see language files), or framework-specific rendering optimizations (see framework files).
 
-This file is sent for projects where performance is a first-class
-requirement with a measurable budget: high-frequency trading, gaming,
-real-time collaboration, embedded systems, large data visualization,
-media processing, and any product where latency or throughput directly
-affects the user or the business.
+For most projects, the baseline performance rules in the delivery and framework layers are sufficient. This file is for the subset of projects where a specific metric must be met and optimization decisions have measurable business or user consequences.
 
-For most projects, the baseline performance rules in
-`domains/framework/02-react-anti-slop.md` and
-`domains/delivery/02-frontend-anti-slop.md` are sufficient. This file
-is for the subset of projects where a specific metric must be met and
-optimization decisions have consequences.
+## When This File Applies
 
-## 1. When This File Applies
+This file MUST be sent when at least one of the following objective criteria is met:
 
-Send this file when the project is:
+- The system is real-time or latency-sensitive (high-frequency trading, gaming, live collaboration, voice, video).
+- The system is throughput-sensitive (batch processing, data pipelines, log aggregation).
+- The system is resource-constrained (embedded, mobile, low-end edge devices).
+- The system operates at large scale (millions of concurrent users, petabytes of data).
+- The project is bound by a specific performance contract (SLO, SLA, frame budget, Core Web Vitals target).
 
-- Real-time or latency-sensitive (trading, gaming, live collaboration,
-  voice, video).
-- Throughput-sensitive (batch processing, data pipelines, log
-  aggregation).
-- Resource-constrained (embedded, mobile, low-end devices).
-- Large-scale (millions of users, petabytes of data).
-- Under a specific performance contract (SLO, SLA, frame budget).
+This file does NOT apply to: internal tools with no strict latency requirements, early-stage prototypes without defined SLOs, or projects where baseline delivery-layer performance rules suffice. Optimize when there is a measurement, not before.
 
-If the project has no defined performance requirement, this file is
-premature. Optimize when there is a measurement, not before.
+## Scope
 
-## 2. The Discipline: Measure, Then Change
+This file applies to frontend applications, backend services, databases, and system-level architectures where performance is a first-class requirement. The principles are tool-agnostic. The examples use JavaScript/TypeScript, Go, Python, and SQL syntax where illustrative. Language-specific primitives (e.g., Go channels, Rust lifetimes) live in language files. Framework-specific hooks (e.g., React `useMemo`) live in framework files.
 
-### 2.1 No Optimization Without Measurement
+## Concern Budgets
 
-BAD: "This code looks slow. Let me rewrite it."
-GOOD: A profiler trace showing where the time is spent.
+Performance-critical projects MUST operate within these measurable thresholds:
 
-The default state of any code is "not yet measured". Do not optimize
-what you have not measured. Do not optimize what the profile does not
-show as a bottleneck.
+| Concern | Threshold | Verification Method | Rule |
+|---|---|---|---|
+| LCP (Largest Contentful Paint) | < 2.5s | Lighthouse / WebPageTest | PERF-007 |
+| INP (Interaction to Next Paint) | < 200ms | Lighthouse / CWV | PERF-007 |
+| CLS (Cumulative Layout Shift) | < 0.1 | Lighthouse / CWV | PERF-007 |
+| Main Thread Task Duration | < 50ms | Chrome DevTools Performance | PERF-009 |
+| p99 API Latency | Defined per SLO (e.g., < 100ms) | APM / Distributed Tracing | PERF-018 |
+| Cache Hit Rate | >= 80% | Cache Telemetry | PERF-020 |
 
-### 2.2 Measure in the Real Environment
+## Rule Severity
 
-Profiling in development mode is misleading:
+Severity follows `_universal/00-style-guide.md`. Violations in this file typically result in degraded user experience, SLO breaches, or infrastructure cost overruns.
 
-- JavaScript builds are unminified and unbundled.
-- Python is often run with assertions on.
-- Go's race detector changes timings.
-- Caches are cold.
-- The dataset is small.
+## Contracts
 
-Measure in an environment that matches production: same build, same
-dataset size, same cache state, same concurrency.
+A performance-critical system commits to five contracts. The table below maps each contract to the rules that enforce it.
 
-### 2.3 Define the Budget Before Optimizing
+| Contract | Description | Enforced By |
+|---|---|---|
+| Measurement Discipline | Optimization is driven by profiler data in production-like environments, not assumptions. | PERF-001 to PERF-006 |
+| Frontend Performance | Core Web Vitals are met, main thread is unblocked, and assets are optimized. | PERF-007 to PERF-017 |
+| Backend Performance | Latency budgets are defined, queries are bounded, and concurrency is controlled. | PERF-018 to PERF-025 |
+| Resource Management | Memory, CPU, and connections are bounded; backpressure is enforced. | PERF-026 to PERF-033, PERF-041 |
+| Budget Enforcement | Performance budgets are enforced in CI and monitored in production. | PERF-034 to PERF-038 |
 
-A performance target is a number:
+## Measurement Discipline
 
-- "First contentful paint under 1.5s on a 4G connection."
-- "p99 latency under 100ms."
-- "60 FPS sustained during interaction."
-- "Memory under 256 MB."
-- "Throughput of 10,000 requests per second per node."
+### PERF-001 — No Optimization Without Measurement
 
-Without a number, "fast enough" is a feeling.
+**MUST NOT**
 
-### 2.4 Optimize the Bottleneck, Not the Code
+Code MUST NOT be optimized without a profiler trace showing where the time is spent. The default state of any code is "not yet measured". Optimizing what the profile does not show as a bottleneck is prohibited.
 
-A profile shows the distribution of time. Optimizing the top 5% may
-not matter if the top 1% is 80% of the time. Amdahl's law applies.
+### PERF-002 — Production-Like Measurement
 
-### 2.5 Measure After the Change
+**MUST**
 
-An optimization that is not measured after the change is a guess. The
-profile after must show the expected improvement, or the change is
-reverted.
+Profiling MUST occur in an environment that matches production: same build (minified/bundled), same dataset size, same cache state, and same concurrency. Profiling in development mode (unminified JS, assertions on, cold caches) is misleading.
 
-### 2.6 Cost of Optimization
+### PERF-003 — Explicit Budget Definition
 
-Every optimization trades simplicity for speed. Before applying:
+**MUST**
 
-- How much complexity is added?
-- How much of the speed is gained?
-- Will the next developer understand it?
-- Is the gain worth the cost?
+A performance target MUST be a specific number (e.g., "p99 latency under 100ms", "60 FPS sustained", "Memory under 256 MB"). "Fast enough" is not a valid target.
 
-A 5% speedup that makes the code unreadable is usually a net loss.
+### PERF-004 — Bottleneck Focus
 
-## 3. Frontend Performance
+**MUST**
 
-### 3.1 Core Web Vitals
+Optimization MUST target the bottleneck identified by the profile. Optimizing the top 5% of operations when the top 1% consumes 80% of the time violates Amdahl's law.
 
-- **LCP** (Largest Contentful Paint): under 2.5s.
-- **INP** (Interaction to Next Paint): under 200ms.
-- **CLS** (Cumulative Layout Shift): under 0.1.
+### PERF-005 — Post-Change Measurement
 
-These are the metrics Google uses. If the project is a web frontend,
-they are the baseline.
+**MUST**
 
-### 3.2 Other Metrics
+An optimization MUST be measured after the change. The profile after the change MUST show the expected improvement; otherwise, the change MUST be reverted.
 
-- **TTFB** (Time to First Byte): server responsiveness.
-- **FCP** (First Contentful Paint): first visible content.
-- **TBT** (Total Blocking Time): main-thread congestion.
-- **Bundle size**: JavaScript transferred to the client.
+### PERF-006 — Optimization Cost Evaluation
 
-Each metric has a target. Define them for the project.
+**SHOULD**
 
-### 3.3 Rendering
+Before applying an optimization, the trade-off between added complexity and speed gained SHOULD be evaluated. A marginal speedup that makes the code unreadable is usually a net loss.
 
-- Do not block the main thread with long tasks (>50ms).
-- Break long tasks with `requestIdleCallback`, `scheduler.yield`, or
-  chunking.
-- Use `content-visibility: auto` for off-screen content.
-- Use CSS containment (`contain: layout style paint`) for isolated
-  subtrees.
-- Avoid synchronous layout thrashing (read then write in a loop).
+## Frontend Performance
 
-### 3.4 Images
+### PERF-007 — Core Web Vitals Baseline
 
-- Serve modern formats (WebP, AVIF) with fallbacks.
-- Specify `width` and `height` to prevent CLS.
-- Use `loading="lazy"` for off-screen images.
-- Use `srcset` and `sizes` for responsive images.
-- Do not serve a 4K image for a 200px thumbnail.
+**MUST**
 
-### 3.5 Fonts
+Web frontends MUST meet the Core Web Vitals thresholds: LCP < 2.5s, INP < 200ms, CLS < 0.1. These are the baseline metrics for user experience and search ranking.
 
-- `font-display: swap` or `optional` to avoid invisible text.
-- Subset fonts to the characters used.
-- Preload the primary font.
-- Avoid web fonts when a system font stack works.
+### PERF-008 — Frontend Metric Targets
 
-### 3.6 JavaScript
+**MUST**
 
-- Ship less of it.
-- Code-split by route and by heavy component.
-- Never import a full library when a smaller one exists.
-- Never `import *` from a tree-shakeable library.
-- Defer non-critical scripts.
-- Prefer native browser APIs over polyfills for modern targets.
+Secondary metrics (TTFB, FCP, TBT, Bundle Size) MUST have defined targets for the project.
 
-### 3.7 CSS
+### PERF-009 — Main Thread Non-Blocking
 
-- No unused CSS in the critical path.
-- Avoid deeply nested selectors (high specificity).
-- Avoid `!important` (it forces re-evaluation).
-- Use `will-change` sparingly; too many layers consume memory.
-- Avoid animating layout properties (`width`, `height`, `top`,
-  `left`). Animate `transform` and `opacity`.
+**MUST NOT**
 
-### 3.8 Third-Party Scripts
+The main thread MUST NOT be blocked with long tasks (>50ms). Long tasks MUST be broken using `requestIdleCallback`, `scheduler.yield`, or chunking.
 
-Each third-party script is:
+### PERF-010 — Layout Thrashing Prevention
 
-- Additional bytes.
-- Additional parsing and execution time.
-- A potential source of main-thread blockage.
-- A privacy and security cost.
+**MUST NOT**
 
-Audit them. Load them after the critical path. Consider
-self-hosting.
+Synchronous layout thrashing (reading DOM geometry then writing DOM styles in a loop) MUST NOT occur. Reads and writes MUST be batched.
 
-### 3.9 Data Fetching on the Client
-
-- Do not fetch data the server already has.
-- Do not fetch in series what can be fetched in parallel.
-- Do not refetch data that is fresh.
-- Do not fetch on every mount when the cache would suffice.
-
-### 3.10 Memory
-
-- Long-lived subscriptions (event listeners, WebSockets, observers)
-  are cleaned up on unmount.
-- Detached DOM nodes are not held in closures.
-- Large data structures are released when no longer needed.
-- `WeakMap` and `WeakRef` where appropriate, not where unnecessary.
-
-## 4. Backend Performance
-
-### 4.1 Latency Budget
-
-Define the latency budget for the endpoint:
-
-- Total budget: p99 under 100ms.
-- Database: 30ms.
-- External services: 40ms.
-- Business logic: 20ms.
-- Serialization: 10ms.
-
-Every part is measured. A part that exceeds its budget is the target.
-
-### 4.2 Database Queries
-
-- No N+1 (covered in `02-database-anti-slop.md`).
-- Index every filter and sort column.
-- Use `EXPLAIN ANALYZE` on production-sized data.
-- Never `SELECT *`.
-- Never `OFFSET` for deep pagination (use cursor).
-- Batch writes where possible.
-- Pool connections; do not open one per request.
-
-### 4.3 Caching
-
-- Cache at the right layer (CDN, application, database query cache).
-- Invalidate precisely, not broadly.
-- Define TTL for every cache.
-- Handle cache stampede (dogpile) with a lock or a probabilistic
-  early refresh.
-- Never cache PII without encryption and access control.
-- Measure cache hit rate; a cache below 80% is usually misconfigured.
-
-### 4.4 Concurrency
-
-- Do not process sequentially what can be parallel.
-- Do not parallelize dependent operations.
-- Use a bounded worker pool for CPU-bound tasks.
-- Use asynchronous I/O for network and disk.
-- Respect backpressure from downstream services.
-
-### 4.5 Serialization
-
-- JSON is fast enough for most cases. Protobuf, MessagePack, and
-  FlatBuffers are faster but add complexity.
-- Avoid serializing fields the client does not need.
-- Avoid double-serialization (JSON in JSON).
-- Response compression (`gzip`, `brotli`) is mandatory for text.
-
-### 4.6 Memory
-
-- Avoid loading entire tables into memory.
-- Stream large responses.
-- Paginate large result sets.
-- Profile heap allocation; reduce object churn in hot paths.
-- Reuse buffers where the language and framework support it.
-
-### 4.7 Startup Time
-
-- For serverless and CLI, startup time matters.
-- Lazy-load what is not needed at boot.
-- Precompile what can be precompiled.
-- Avoid network calls during startup.
-
-### 4.8 CPU
-
-- Profile before micro-optimizing.
-- Reduce allocations in hot loops.
-- Avoid regex in hot paths; compile once, use many times.
-- Use the language's fast primitives (avoid reflection, avoid dynamic
-  dispatch where a static one works).
-
-## 5. Profiling Tools
-
-### 5.1 Frontend
-
-- Chrome DevTools Performance panel.
-- Lighthouse.
-- WebPageTest.
-- `performance.mark` and `performance.measure` for custom timings.
-- React DevTools Profiler for React.
-- Bundle analyzers (`webpack-bundle-analyzer`, `vite-bundle-visualizer`).
-
-### 5.2 Backend
-
-- Language-specific profilers: `pprof` (Go), `cProfile` /
-  `py-spy` (Python), `clinic` / `--prof` (Node.js), `perf` (native),
-  `JFR` (Java).
-- Distributed tracing: OpenTelemetry, Jaeger, Tempo.
-- APM: Datadog, New Relic, Elastic APM.
-
-### 5.3 Database
-
-- `EXPLAIN` and `EXPLAIN ANALYZE`.
-- Slow query logs.
-- `pg_stat_statements` (PostgreSQL).
-- Query profilers in the ORM.
-
-### 5.4 System
-
-- `top`, `htop`, `iostat`, `vmstat`.
-- Flame graphs.
-- `strace` for syscall tracing.
-- `tcpdump` for network.
-
-## 6. Performance Patterns
-
-### 6.1 Batching
-
-Combine small operations into larger ones. One database round trip
-for 100 rows beats 100 round trips.
-
-### 6.2 Debouncing and Throttling
-
-- Debounce: run after the user stops (search input).
-- Throttle: run at most N times per interval (scroll handler).
-
-Never debounce the critical path of a user action.
-
-### 6.3 Lazy Loading
-
-Load on demand:
-
-- Images: `loading="lazy"`.
-- Components: dynamic `import()`.
-- Data: fetch when the section becomes visible.
-- Database: fetch columns on access (ORM lazy loading), but beware
-  N+1.
-
-### 6.4 Prefetching
-
-Load before the user asks:
-
-- Prefetch the next route on hover.
-- Prefetch DNS, TCP, TLS with `<link rel="preconnect">`.
-- Prefetch resources with `<link rel="prefetch">`.
-- Do not prefetch everything; bandwidth is a budget.
-
-### 6.5 Memoization
-
-Cache the result of an expensive computation. Invalidate when inputs
-change. Beware memory growth with unbounded caches.
-
-### 6.6 Concurrency
-
-Run independent work in parallel. Do not run dependent work in
-parallel.
-
-### 6.7 Streaming
-
-Send data as it is produced rather than buffering everything:
-
-- HTTP chunked responses.
-- Server-sent events.
-- WebSocket frames.
-- Database cursors.
-
-### 6.8 Compression
-
-`gzip` for text. `brotli` for smaller. `zstd` for very high
-compression. Never compress already-compressed data (images, video).
-
-### 6.9 Connection Reuse
-
-- HTTP keep-alive.
-- Database connection pooling.
-- gRPC channels reused.
-- WebSocket for repeated small messages.
-
-### 6.10 Backpressure
-
-When a producer is faster than a consumer, the producer must slow
-down. Unbounded queues lead to memory exhaustion. Apply backpressure
-at every boundary.
-
-## 7. Performance Anti-Patterns
-
-### 7.1 Premature Optimization
-
-Optimizing code that has not been measured. The three rules of
-optimization: measure, measure, measure.
-
-### 7.2 `useMemo` and `useCallback` Everywhere
-
-Covered in `02-react-anti-slop.md`. Repeating: memoization has a
-cost. Use it after profiling.
-
-### 7.3 Synchronous I/O in a Server
-
-BAD: `fs.readFileSync`, `requests.get` (blocking), blocking database
-drivers in an async runtime.
-
-Each blocks the entire worker. On a busy server, this is catastrophic.
-
-### 7.4 Unbounded Queries
-
-BAD: `SELECT * FROM events` with no `LIMIT`. On a table with 10M
-rows, this crashes the server.
-
-Always paginate. Always.
-
-### 7.5 N+1 Queries
-
-Covered in `02-database-anti-slop.md`.
-
-### 7.6 Regex in Hot Paths
-
-A regex compiled once and used many times is fine. A regex compiled
-on every call, or a poorly written regex (ReDoS), is not.
-
-### 7.7 Excessive Logging in Hot Paths
-
-BAD: `logger.debug(JSON.stringify(request))` on every request.
-This serializes and writes on every call.
-
-Log at the appropriate level. Sample verbose logs.
-
-### 7.8 String Concatenation in Loops
-
-Covered in `02-go-anti-slop.md` section 14.15. Applies to every
-language: use the language's builder or buffer.
-
-### 7.9 Array `push` Without Preallocation
-
-In languages with preallocatable arrays (`make` in Go, `new
-Array(n)` in JavaScript), preallocation avoids repeated resizing.
-
-### 7.10 Over-Serialization
-
-BAD: Loading a full ORM entity with 30 relations to render a name.
-GOOD: A projection query that returns only the name.
-
-### 7.11 Cache Without Invalidation
-
-Covered in 4.3. Repeating: a cache that never invalidates is a cache
-that serves stale data forever.
-
-### 7.12 Cache Stampede
-
-When a popular cache entry expires, hundreds of requests hit the
-backend simultaneously to rebuild it. Prevent with:
-
-- A lock (only one request rebuilds).
-- Probabilistic early refresh.
-- Staggered TTLs.
-
-### 7.13 `SELECT COUNT(*)` on Large Tables
-
-On a table with 100M rows, this is a full scan. Use approximate
-counts (`pg_class.reltuples`), a cached count, or a separate
-counter table.
-
-### 7.14 Missing Index on Foreign Keys
-
-Covered in `02-database-anti-slop.md` section 5.1.
-
-### 7.15 Deep Pagination With `OFFSET`
-
-`OFFSET 100000 LIMIT 20` scans 100,020 rows and returns 20. Use
-cursor-based pagination (`WHERE id > last_id ORDER BY id LIMIT 20`).
-
-### 7.16 Synchronous Rendering of Large Lists
-
-Rendering 10,000 rows to the DOM freezes the browser. Virtualize.
-
-### 7.17 Layout Thrashing
+Example (illustrative, JavaScript):
 
 BAD:
-javascript
+```javascript
 for (const el of elements) {
   el.style.width = el.offsetWidth + 10 + "px"; // read, write, read, write
 }
-Each read forces a layout recalculation. Batch reads and writes.
+```
 
-7.18 Memory Leaks
-Subscriptions, listeners, timers, closures holding large objects.
-Each is a slow leak that grows over time.
+### PERF-011 — Image Optimization
 
-7.19 Excessive Re-renders
-Covered in 02-react-anti-slop.md and 02-state-anti-slop.md.
+**MUST**
 
-7.20 Unbounded Concurrency
-BAD: await Promise.all(urls.map(fetch)) with 100,000 URLs. This
-opens 100,000 connections.
+Images MUST be served in modern formats (WebP, AVIF) with fallbacks. `width` and `height` MUST be specified to prevent CLS. `loading="lazy"` MUST be used for off-screen images. `srcset` and `sizes` MUST be used for responsive images. Serving oversized images (e.g., 4K for a 200px thumbnail) is prohibited.
 
-GOOD: A bounded pool of 10-100 concurrent operations.
+### PERF-012 — Font Loading Discipline
 
-7.21 Retry Storms
-A failing downstream service triggers retries. The retries add load,
-making the failure worse. Use exponential backoff with jitter and a
-circuit breaker.
+**MUST**
 
-7.22 Thundering Herd on Startup
-A service starts and immediately hammers its dependencies. Use
-jittered delays or a warmup.
+Web fonts MUST use `font-display: swap` or `optional` to avoid invisible text. Fonts MUST be subset to the characters used. The primary font SHOULD be preloaded. System font stacks SHOULD be preferred when web fonts are unnecessary.
 
-7.23 Ignoring the Cost of Third-Party Scripts
-A single analytics script can add 200ms to LCP. Audit them.
+### PERF-013 — JavaScript Payload Minimization
 
-7.24 Micro-Optimizing Before Macro
-Optimizing a 0.1ms function while the page takes 5s to load.
+**MUST**
 
-Fix the biggest problem first. Always.
+JavaScript payloads MUST be minimized. Code MUST be split by route and heavy component. Full libraries MUST NOT be imported when a smaller alternative exists. `import *` from tree-shakeable libraries MUST NOT be used. Non-critical scripts MUST be deferred.
 
-7.25 Optimizing for the Wrong Metric
-Reducing bundle size when the problem is server latency. Reducing
-server latency when the problem is database queries. Measure the
-whole chain.
+### PERF-014 — CSS Critical Path Discipline
 
-8. Performance Budget Enforcement
-8.1 Budget in CI
-A performance budget that is not enforced regresses. Run Lighthouse
-in CI. Fail the build when the budget is exceeded.
+**MUST**
 
-8.2 Bundle Size Limits
-Set a maximum bundle size. A new dependency that pushes over the
-limit fails the build.
+Unused CSS MUST NOT be in the critical path. Deeply nested selectors and `!important` MUST be avoided. `will-change` MUST be used sparingly. Layout properties (`width`, `height`, `top`, `left`) MUST NOT be animated; `transform` and `opacity` MUST be used instead.
 
-8.3 Query Count Limits
-Some frameworks (Rails, Django) can assert a maximum query count
-per request in tests. Use it.
+### PERF-015 — Third-Party Script Audit
 
-8.4 Regression Tests
-A benchmark suite that runs on every commit. A change that regresses
-performance by more than X% fails.
+**MUST**
 
-8.5 Alerting
-Production metrics (latency, error rate, throughput) alert when they
-deviate from the SLO. Performance is not a one-time fix; it is a
-property that must be maintained.
+Third-party scripts MUST be audited for byte size, parsing time, and main-thread blockage. They MUST be loaded after the critical path. Self-hosting SHOULD be considered.
 
-9. Trade-Offs
-9.1 Speed vs Readability
-A faster algorithm is often less readable. Document the trade-off
-in a comment. Reference the benchmark.
+### PERF-016 — Client Data Fetching Discipline
 
-9.2 Speed vs Correctness
-Never trade correctness for speed. A fast wrong answer is worse than
-a slow right one.
+**MUST NOT**
 
-9.3 Memory vs Speed
-Caching trades memory for speed. Unbounded caches trade memory for
-out-of-memory errors. Bound every cache.
+The client MUST NOT fetch data the server already has, fetch in series what can be parallelized, refetch fresh data, or fetch on every mount when a cache suffices.
 
-9.4 Latency vs Throughput
-Batching improves throughput but increases latency. Choose based on
-the user's experience.
+### PERF-017 — Frontend Memory Cleanup
 
-9.5 Consistency vs Availability
-From the CAP theorem. Do not pretend the trade-off does not exist.
+**MUST**
 
-9.6 Developer Time vs Runtime
-An optimization that saves 5ms but takes a week to implement and a
-week to review may not be worth it. Ask the user.
+Long-lived subscriptions (event listeners, WebSockets, observers) MUST be cleaned up on unmount. Detached DOM nodes MUST NOT be held in closures. Large data structures MUST be released when no longer needed.
 
-10. Response to Violation
-If a previous response violated a rule here:
+## Backend Performance
 
-text
-In the previous response, [specific rule] was violated. Correction:
-[corrected code]
-No justification. No apology paragraph. Fix and move on.
+### PERF-018 — Latency Budget Definition
 
-If the violation is a performance regression in already-shipped
-code, add a note: "This may affect the SLO. Measure in the target
-environment before deploying."
+**MUST**
 
+Every endpoint MUST have a defined latency budget (e.g., Total: 100ms, DB: 30ms, External: 40ms, Logic: 20ms, Serialization: 10ms). Every part MUST be measured against its budget.
 
+### PERF-019 — Database Query Discipline
 
----
+**MUST**
+
+Database queries MUST be optimized. N+1 queries (see `DB-017`), missing indexes on filter/sort columns, `SELECT *`, and deep `OFFSET` pagination (see `DB-019`) are prohibited. `EXPLAIN ANALYZE` MUST be run on production-sized data. Writes MUST be batched where possible. Connections MUST be pooled.
+
+### PERF-020 — Caching Layer Discipline
+
+**MUST**
+
+Caching MUST occur at the right layer (CDN, application, DB). Invalidation MUST be precise. TTL MUST be defined for every cache. Cache stampedes (dogpiles) MUST be handled with locks or probabilistic early refresh. PII MUST NOT be cached without encryption and access control. Cache hit rates below 80% indicate misconfiguration.
+
+### PERF-021 — Concurrency Discipline
+
+**MUST**
+
+Independent operations MUST be parallelized. Dependent operations MUST NOT be parallelized. CPU-bound tasks MUST use a bounded worker pool. Network and disk I/O MUST use asynchronous operations. Backpressure from downstream services MUST be respected.
+
+### PERF-022 — Serialization Discipline
+
+**MUST**
+
+Serialization formats MUST match the performance requirement (JSON for general use, Protobuf/MessagePack for high throughput). Fields the client does not need MUST NOT be serialized. Double-serialization (JSON in JSON) MUST NOT occur. Text responses MUST be compressed (`gzip`, `brotli`).
+
+### PERF-023 — Backend Memory Discipline
+
+**MUST**
+
+Entire tables MUST NOT be loaded into memory. Large responses MUST be streamed. Large result sets MUST be paginated. Heap allocation MUST be profiled; object churn in hot paths MUST be reduced. Buffers MUST be reused where the language supports it.
+
+### PERF-024 — Startup Time Minimization
+
+**MUST**
+
+For serverless and CLI tools, startup time MUST be minimized. Non-boot dependencies MUST be lazy-loaded. Precompilation SHOULD be used. Network calls during startup MUST NOT occur.
+
+### PERF-025 — CPU Hot Path Discipline
+
+**MUST**
+
+Hot paths MUST be profiled before micro-optimizing. Allocations in hot loops MUST be reduced. Regex MUST be compiled once and reused. Language-specific fast primitives MUST be used (avoiding reflection or dynamic dispatch where static works).
+
+## Performance Patterns
+
+### PERF-026 — Batching
+
+**SHOULD**
+
+Small operations SHOULD be combined into larger ones (e.g., one database round trip for 100 rows instead of 100 round trips).
+
+### PERF-027 — Debounce and Throttle Discipline
+
+**MUST**
+
+Debouncing (run after user stops) MUST be used for search inputs. Throttling (run at most N times per interval) MUST be used for scroll handlers. The critical path of a user action MUST NOT be debounced.
+
+### PERF-028 — Lazy Loading
+
+**SHOULD**
+
+Resources SHOULD be loaded on demand: images (`loading="lazy"`), components (dynamic `import()`), data (on visibility), and database relations (with N+1 caution).
+
+### PERF-029 — Prefetching Discipline
+
+**SHOULD**
+
+Resources SHOULD be loaded before the user asks (e.g., next route on hover, DNS/TCP via `<link rel="preconnect">`). Bandwidth is a budget; everything MUST NOT be prefetched.
+
+### PERF-030 — Memoization Discipline
+
+**MUST**
+
+Expensive computations MAY be memoized. Invalidation MUST occur when inputs change. Unbounded caches MUST NOT be used for memoization to prevent memory growth.
+
+### PERF-031 — Streaming
+
+**SHOULD**
+
+Data SHOULD be sent as it is produced rather than buffered entirely (HTTP chunked, SSE, WebSocket frames, DB cursors).
+
+### PERF-032 — Connection Reuse
+
+**MUST**
+
+Connections MUST be reused: HTTP keep-alive, database connection pooling, gRPC channels, and WebSockets for repeated small messages.
+
+### PERF-033 — Backpressure Enforcement
+
+**MUST**
+
+When a producer is faster than a consumer, the producer MUST slow down. Unbounded queues lead to memory exhaustion. Backpressure MUST be applied at every boundary.
+
+## Budget Enforcement
+
+### PERF-034 — CI Budget Enforcement
+
+**MUST**
+
+Performance budgets MUST be enforced in CI (e.g., Lighthouse CI). The build MUST fail when the budget is exceeded.
+
+### PERF-035 — Bundle Size Limits
+
+**MUST**
+
+A maximum bundle size MUST be set. Dependencies that push the bundle over the limit MUST fail the build.
+
+### PERF-036 — Query Count Limits
+
+**SHOULD**
+
+Frameworks that support asserting a maximum query count per request in tests SHOULD use this feature to prevent N+1 regressions.
+
+### PERF-037 — Regression Testing
+
+**MUST**
+
+A benchmark suite MUST run on every commit. Changes that regress performance beyond an acceptable threshold MUST fail the build.
+
+### PERF-038 — Production Alerting
+
+**MUST**
+
+Production metrics (latency, error rate, throughput) MUST alert when they deviate from the SLO. Performance is a continuous property, not a one-time fix.
+
+## Trade-Offs
+
+### PERF-039 — Speed vs Readability Documentation
+
+**MUST**
+
+When a faster algorithm reduces readability, the trade-off MUST be documented in a comment referencing the benchmark.
+
+### PERF-040 — Correctness Precedence
+
+**MUST NOT**
+
+Correctness MUST NOT be traded for speed. A fast wrong answer is worse than a slow right one.
+
+### PERF-041 — Memory vs Speed Bounding
+
+**MUST**
+
+Caching trades memory for speed. Every cache MUST be bounded to prevent out-of-memory errors.
+
+## AI-Specific Performance Discipline
+
+### PERF-060 — Profiler Data Fabrication Prohibition
+
+**MUST NOT**
+
+The assistant MUST NOT invent profiler traces, benchmark results, or Big-O complexities for existing project code. If performance data is needed to justify an optimization, the assistant MUST instruct the user to run the profiler and provide the output.
+
+See MAS-007 in `_universal/00-master-anti-slop.md`.
+
+### PERF-061 — Existing Optimization Discovery
+
+**MUST**
+
+Before introducing a new caching layer, batching mechanism, or concurrency pool, the assistant MUST search the project for an existing equivalent. Inventing parallel performance infrastructure creates resource contention and cache invalidation bugs.
+
+See MAS-035 in `_universal/00-master-anti-slop.md`.
+
+### PERF-062 — Algorithmic Complexity Restraint
+
+**SHOULD**
+
+The assistant SHOULD NOT introduce complex, highly-optimized, low-level algorithms (e.g., custom memory allocators, lock-free data structures) unless the profiler explicitly identifies the current implementation as the bottleneck and the project's language/stack supports it safely.
+
+See MAS-038 in `_universal/00-master-anti-slop.md`.
+
+## Anti-Patterns
+
+### PERF-042 — Premature Optimization
+
+**MUST NOT**
+
+Optimizing code that has not been measured is prohibited. The three rules of optimization are: measure, measure, measure.
+
+### PERF-043 — Synchronous I/O in Async Servers
+
+**MUST NOT**
+
+Synchronous I/O (`fs.readFileSync`, blocking HTTP requests, blocking DB drivers) MUST NOT be used in an asynchronous runtime. Each blocks the entire worker.
+
+### PERF-044 — Unbounded Queries
+
+**MUST NOT**
+
+Queries without a `LIMIT` (e.g., `SELECT * FROM events`) MUST NOT be executed on large tables. Pagination is mandatory.
+
+### PERF-045 — Hot Path Regex Compilation
+
+**MUST NOT**
+
+Regular expressions MUST NOT be compiled on every call in a hot path. They MUST be compiled once and reused. Poorly written regex (ReDoS) MUST NOT be used on untrusted input.
+
+### PERF-046 — Hot Path Excessive Logging
+
+**MUST NOT**
+
+Verbose logging (e.g., `logger.debug(JSON.stringify(request))`) MUST NOT occur on every request in a hot path. Logs MUST be sampled or level-gated.
+
+### PERF-047 — Loop String Concatenation
+
+**MUST NOT**
+
+String concatenation in loops MUST NOT be used. The language's string builder or buffer MUST be used.
+
+### PERF-048 — Array Reallocation in Loops
+
+**SHOULD NOT**
+
+Arrays SHOULD be preallocated (e.g., `make` in Go, `new Array(n)` in JS) when the size is known, to avoid repeated resizing in loops.
+
+### PERF-049 — Over-Serialization
+
+**MUST NOT**
+
+Loading full ORM entities with dozens of relations to render a single field is prohibited. Projection queries MUST be used.
+
+### PERF-050 — Uninvalidated Caches
+
+**MUST NOT**
+
+A cache that never invalidates serves stale data forever. Invalidation logic MUST be implemented.
+
+### PERF-051 — Cache Stampede Prevention
+
+**MUST**
+
+When popular cache entries expire, concurrent requests MUST NOT all hit the backend simultaneously. Stampedes MUST be prevented via locks, probabilistic early refresh, or staggered TTLs.
+
+### PERF-052 — Large Table Exact Counts
+
+**MUST NOT**
+
+`SELECT COUNT(*)` on tables with millions of rows MUST NOT be used. Approximate counts, cached counts, or counter tables MUST be used.
+
+### PERF-053 — Deep OFFSET Pagination
+
+**MUST NOT**
+
+Deep pagination using `OFFSET` (e.g., `OFFSET 100000 LIMIT 20`) MUST NOT be used. Cursor-based pagination MUST be used. See `DB-019`.
+
+### PERF-054 — Synchronous Large List Rendering
+
+**MUST NOT**
+
+Rendering thousands of rows to the DOM synchronously freezes the browser. Lists MUST be virtualized.
+
+### PERF-055 — Unbounded Concurrency
+
+**MUST NOT**
+
+Unbounded concurrent operations (e.g., `Promise.all(urls.map(fetch))` with 100,000 URLs) MUST NOT be used. A bounded pool MUST be used.
+
+### PERF-056 — Retry Storms
+
+**MUST NOT**
+
+Retries without exponential backoff and jitter MUST NOT be used. Failing downstream services trigger retry storms that worsen the failure. Circuit breakers MUST be used.
+
+### PERF-057 — Thundering Herd on Startup
+
+**MUST NOT**
+
+Services MUST NOT immediately hammer dependencies on startup. Jittered delays or warmup routines MUST be used.
+
+### PERF-058 — Micro-Optimization Over Macro
+
+**MUST NOT**
+
+Optimizing a 0.1ms function while the page takes 5s to load is prohibited. The biggest problem MUST be fixed first.
+
+### PERF-059 — Wrong Metric Optimization
+
+**MUST NOT**
+
+Optimizing the wrong metric (e.g., reducing bundle size when the problem is server latency) is prohibited. The whole chain MUST be measured.
+
+## Response to Violation
+
+When a rule in this file is violated, report:
+
+Violation: PERF-{NNN}
+Reason: {one-line reason}
+Correction: {smallest fix}
+
+If the violation is a performance regression in already-shipped code, the correction MUST be accompanied by:
+
+> "This may affect the SLO. Measure in the target environment before deploying."
+
+For multiple violations, report each rule ID separately.
+
+Do not replace a technical correction with a generic explanation.

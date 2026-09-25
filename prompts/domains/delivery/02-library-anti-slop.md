@@ -2,144 +2,90 @@
 id: 02-library-anti-slop
 title: "Library Anti-Slop Layer"
 lang: en
-depends_on: [00-master-anti-slop]
+depends_on: ["_universal/00-style-guide.md", "_universal/00-master-anti-slop.md"]
 category: domain
 domain_type: delivery
-version: 2
+version: 3
 ---
 
 # Library Anti-Slop Layer
 
-Layered under `_universal/00-master-anti-slop.md`. Universal rules
-(fabrication, fake completion, over-engineering, silent assumptions,
-generic security, dependency addition, output format) are NOT
-repeated here.
+This file defines behavioral contracts specific to publishing a library for other developers. It sits in the delivery layer, below the universal anti-slop rules and above language-specific or framework-specific patterns. It covers public API design, semantic versioning, backwards compatibility, tree-shaking, distribution, and the discipline of treating consumers as users. It does not cover application code (see the relevant delivery file), language rules (see language files), framework rules (see framework files), or security and performance concerns in detail (see concern files).
 
-This file covers rules specific to publishing a library for other
-developers: public API design, semantic versioning, backwards
-compatibility, tree-shaking, distribution, and the discipline of
-treating consumers as users. It does NOT cover application code
-(see the relevant delivery file), language rules (see the language
-files), framework rules (see the framework files), or security and
-performance concerns (see the concern files).
+A library's public API is a contract. Every change is a breaking change until proven otherwise.
 
-A library's public API is a contract. Every change is a breaking
-change until proven otherwise.
+## Scope
 
-## 1. Stack Assumptions
+This file applies to libraries published through any package registry (npm, PyPI, crates.io, Go modules, Maven Central, NuGet, RubyGems, Packagist, Hex). The examples use TypeScript, Python, and JSON where illustrative. Language-specific rules live in language files. Build and publish tooling lives in the project's CI configuration.
 
-This file applies to libraries published through any package
-registry:
+## Rule Severity
 
-- npm (JavaScript, TypeScript)
-- PyPI (Python)
-- crates.io (Rust)
-- Go modules (Go)
-- Maven Central (Java, Kotlin)
-- NuGet (C#)
-- RubyGems (Ruby)
-- Packagist (PHP)
-- Hex (Elixir)
+Severity follows `_universal/00-style-guide.md`.
 
-The examples use TypeScript and Python. The principles are
-language-agnostic. Language-specific rules (type system, error
-syntax) live in `domains/language/`. Build and publish tooling lives
-in the project's CI configuration.
+## Contracts
 
-## 2. Delivery Contracts
+A library commits to five contracts. The table below maps each contract to the rules that enforce it.
 
-A library commits to five contracts. Every section below enforces
-one or more of these.
+| Contract | Description | Enforced By |
+|---|---|---|
+| API Stability | Once published under version X.Y.Z, the public API is frozen. Changing it requires a new major version. | LIB-001, LIB-008, LIB-011 |
+| Semantic Versioning | The version number communicates compatibility strictly via MAJOR.MINOR.PATCH. | LIB-010 to LIB-014 |
+| Tree-Shakability | A bundler can drop unused exports. The library does not force consumers to pay for unused code. | LIB-021 to LIB-027 |
+| Side-Effect Freedom | Importing a module does not perform I/O, mutate global state, or register listeners. | LIB-024, LIB-053, LIB-065 |
+| Distribution Integrity | The published artifact matches the source. What was tested is what was shipped. | LIB-038, LIB-046, LIB-049 |
 
-### 2.1 API Stability
+## Public API Design
 
-Once published under version `X.Y.Z`, the public API at that version
-is frozen. Consumers depend on it. Changing it requires a new major
-version.
+### LIB-001 — Export as Contract
 
-### 2.2 Semantic Versioning
+**MUST**
 
-The version number communicates compatibility. `MAJOR.MINOR.PATCH`:
+Every exported function, class, type, or constant is a contract with consumers. Once published, it MUST NOT change without a major version bump. Before exporting anything, the necessity for consumers MUST be verified.
 
-- MAJOR: incompatible API change.
-- MINOR: new functionality, backwards-compatible.
-- PATCH: backwards-compatible bug fix.
+### LIB-002 — Minimal Surface
 
-The version is not a marketing tool. It is a compatibility signal.
+**MUST**
 
-### 2.3 Tree-Shakability
+The public API surface MUST be minimal. Every additional export is a maintenance cost and a compatibility burden. The library MUST start small and add exports on demand.
 
-A bundler can drop unused exports. A library that ships as a single
-non-shakeable blob forces consumers to pay for code they do not use.
-
-### 2.4 Side-Effect Freedom
-
-Importing a module does not perform I/O, mutate global state, or
-register listeners. Side effects happen only when the consumer
-calls an explicit function.
-
-### 2.5 Distribution Integrity
-
-The published artifact matches the source. What was tested is what
-was shipped. Lockfiles and checksums verify this.
-
-## 3. Public API Design
-
-### 3.1 Every Export Is a Contract
-
-An exported function, class, type, or constant is used by someone.
-Once published, it cannot change without a major version bump.
-Before exporting anything, ask: is this needed by consumers?
-
-### 3.2 Minimal Surface
+Example (illustrative):
 
 BAD: A library that exports 50 functions for 10 use cases.
-
 GOOD: A library that exports the 10 functions actually needed.
 
-Every additional export is a maintenance cost and a compatibility
-burden. Start small. Add on demand.
+### LIB-003 — No Accidental Exports
 
-### 3.3 No Accidental Exports
+**MUST NOT**
 
-BAD:
-```typescript
-export * from "./internal/helpers";
-```
+Wildcard exports (e.g., `export * from "./internal"`) MUST NOT be used. Exports MUST be explicit. Language-specific boundaries (TypeScript's `"exports"` field, Python's `__all__`, Go's package boundary) MUST be used to prevent accidental exports.
 
-GOOD:
-```typescript
-export { parseConfig } from "./config";
-export { validate } from "./validate";
-```
+### LIB-004 — Entry Point Discipline
 
-TypeScript's `"exports"` field, Python's `__all__`, and Go's
-package boundary prevent accidental exports. Use them.
+**MUST**
 
-### 3.4 One Entry Point
+Most libraries MUST have one entry point. Multiple entry points are acceptable only when sub-packages have distinct dependency sets. Each additional entry point is a new compatibility surface and MUST be justified.
 
-Most libraries have one entry point: `"main"`, `"module"`,
-`"types"`, or a single `"exports"` field in `package.json`; a
-public module in Python; `lib.rs` in Rust.
+### LIB-005 — Stable Naming
 
-Multiple entry points (for example `my-lib/react` alongside
-`my-lib/core`) are acceptable when the sub-packages have distinct
-dependency sets. Each additional entry point is a new compatibility
-surface.
+**MUST**
 
-### 3.5 Stable Naming
+Export names MUST be stable. Renaming an export is a breaking change. Names MUST be descriptive and professional.
 
-Renaming an export is a breaking change. Pick names carefully.
+Example (illustrative):
 
 BAD: `doStuff`, `handleThing`, `process2`.
-
 GOOD: `parseConfig`, `validateInput`, `formatOutput`.
 
-### 3.6 No Leaking Internal Types
+### LIB-006 — No Leaking Internal Types
+
+**MUST NOT**
+
+Internal types MUST NOT leak into the public API signature. If a type is part of a public signature, it is part of the API and MUST be exported, or a primitive/public interface MUST be returned instead.
+
+Example (illustrative, TypeScript):
 
 BAD:
 ```typescript
-// Returns an internal type that is not exported.
 export function createClient(): InternalClient { ... }
 ```
 
@@ -149,66 +95,58 @@ export interface Client { ... }
 export function createClient(): Client { ... }
 ```
 
-If the type is part of the signature, it is part of the API. Export
-it or return a primitive.
+## Semantic Versioning
 
-## 4. Semantic Versioning
+### LIB-010 — Strict SemVer
 
-### 4.1 Strict SemVer
+**MUST**
 
-Follow `MAJOR.MINOR.PATCH` exactly. Do not use pre-release suffixes
-for marketing. Do not skip numbers for marketing.
+Semantic Versioning (`MAJOR.MINOR.PATCH`) MUST be followed exactly. Pre-release suffixes MUST NOT be used for marketing. Version numbers MUST NOT be skipped for marketing.
+
+Example (illustrative):
 
 BAD: `1.0.0-beta-marketing-preview`.
-
 GOOD: `1.0.0-rc.1` for a release candidate, `1.0.0` for the release.
 
-### 4.2 What Counts as Breaking
+### LIB-011 — Breaking Change Definition
 
-Anything that changes the contract:
+**MUST**
 
-- Renaming an export.
-- Changing a function signature.
-- Changing a return type in a way that breaks existing code.
-- Removing an export.
-- Making a previously optional parameter required.
-- Changing behavior in a way consumers depend on.
-- Raising the minimum supported language or runtime version.
+Any change that alters the public contract MUST be treated as breaking and require a MAJOR version bump. This includes renaming exports, changing signatures, changing return types incompatibly, removing exports, making optional parameters required, changing relied-upon behavior, or raising the minimum supported runtime version. "Nobody uses that" is not a valid excuse to bypass a major version.
 
-Even if "nobody uses that", it is breaking. Wait for a major
-version.
+### LIB-012 — Pre-1.0 Discipline
 
-### 4.3 Pre-1.0 Is Different, Not Free
+**MUST**
 
-Before 1.0, minor versions may break. Document this in the README.
-Once 1.0 is published, the contract is enforced. Do not stay in 0.x
-to avoid the discipline of 1.0.
+Before 1.0, minor versions may break, but this MUST be documented in the README. Once 1.0 is published, the contract is enforced. Staying in `0.x` indefinitely to avoid the discipline of `1.0` MUST NOT be used as a strategy.
 
-### 4.4 Deprecation Before Removal
+### LIB-013 — Deprecation Before Removal
 
-A deprecated export is kept for at least one major version:
+**MUST**
 
-1. Announce the deprecation in a minor release.
-2. Mark it `@deprecated` in the type system or docstring.
-3. Log a warning when used, if the runtime supports it.
-4. Remove it in the next major.
+A deprecated export MUST be kept for at least one major version. The deprecation MUST be announced in a minor release, marked `@deprecated` in the type system or docstring, and log a warning when used (if the runtime supports it). It MUST only be removed in the next major version.
 
-Removing without a deprecation cycle surprises consumers.
+### LIB-014 — Changelog Maintenance
 
-### 4.5 Changelog
+**MUST**
 
-Every release has a changelog entry, categorized as: Added, Changed,
-Deprecated, Removed, Fixed, Security. Follow the Keep a Changelog
-convention. Consumers read this before upgrading.
+Every release MUST have a changelog entry, categorized as: Added, Changed, Deprecated, Removed, Fixed, Security. The Keep a Changelog convention MUST be followed.
 
-## 5. Backwards Compatibility
+## Backwards Compatibility
 
-### 5.1 Add, Do Not Modify
+### LIB-015 — Add, Do Not Modify
 
-The safest change is adding a new export or a new optional
-parameter. The riskiest is changing an existing signature.
+**SHOULD**
 
-### 5.2 Default Values Over Required Parameters
+Adding a new export or a new optional parameter SHOULD be preferred over modifying an existing signature. Modifying existing signatures is the riskiest change.
+
+### LIB-016 — Default Values Over Required Parameters
+
+**MUST**
+
+When adding parameters to an existing function, they MUST have default values or be part of an optional configuration object. Making a new parameter required is a breaking change.
+
+Example (illustrative, TypeScript):
 
 BAD:
 ```typescript
@@ -220,556 +158,418 @@ GOOD:
 export function parse(input: string, options: ParseOptions = {}): Result { ... }
 ```
 
-Consumers that pass nothing keep working.
+### LIB-017 — Accept More, Return Less
 
-### 5.3 Accept More, Return Less
+**MUST**
 
-Accepting a union where a single type was accepted before is
-backwards-compatible. Returning a union where a single type was
-returned before is breaking.
+Accepting a union where a single type was accepted before is backwards-compatible. Returning a union where a single type was returned before is breaking. Input types MAY be widened; output types MUST NOT be widened incompatibly.
 
-### 5.4 No Unexpected Side Effects
+### LIB-018 — No Unexpected Side Effects
 
-A function named `parse` does not mutate global state, write to
-disk, or send network requests. If it does, it is not `parse`; it
-is `parseAndSave`. Names must reflect behavior.
+**MUST NOT**
 
-### 5.5 Error Types Are Part of the API
+Functions MUST NOT perform unexpected side effects. A function named `parse` MUST NOT mutate global state, write to disk, or send network requests. Names MUST reflect behavior accurately.
 
-If consumers catch a specific error, changing the error type is
-breaking. Introduce a new error as a subclass of the old one when
-possible.
+### LIB-019 — Error Type Stability
 
-### 5.6 Runtime Compatibility
+**MUST**
 
-If the library claims to support Node.js 18+, it is tested on
-Node.js 18. A feature that requires 20+ in the source breaks the
-claim.
+Error types are part of the API. If consumers catch a specific error, changing the error type is breaking. New errors MUST be introduced as subclasses of the old one when possible.
 
-## 6. Tree-Shaking and Bundle Size
+### LIB-020 — Runtime Compatibility
 
-### 6.1 `sideEffects: false`
+**MUST**
 
-For npm packages with no side effects, set `"sideEffects": false`
-in `package.json`. Bundlers then drop unused imports.
+If the library claims to support a specific runtime version (e.g., Node.js 18+), it MUST be tested on that version. Using features that require a newer version in the source code breaks the compatibility claim.
 
-If some files have side effects (CSS, polyfills), list them:
+## Tree-Shaking and Bundle Size
 
-```json
-"sideEffects": ["./dist/polyfill.js", "*.css"]
-```
+### LIB-021 — Side Effects Declaration
 
-### 6.2 ES Modules
+**MUST**
 
-Ship ESM (`"type": "module"` or dual `"exports"`). CommonJS-only
-packages cannot be tree-shaken.
+For npm packages with no side effects, `"sideEffects": false` MUST be set in `package.json`. If some files have side effects (CSS, polyfills), they MUST be explicitly listed.
 
-### 6.3 Named Exports Over Default
+### LIB-022 — ES Modules Distribution
+
+**MUST**
+
+Libraries MUST ship as ES Modules (`"type": "module"` or dual `"exports"`). CommonJS-only packages cannot be tree-shaken effectively.
+
+### LIB-023 — Named Exports Preference
+
+**MUST**
+
+Named exports MUST be preferred over default exports. Default exports force consumers to import the whole object or rename on import, hindering tree-shaking and tooling analysis.
+
+Example (illustrative, TypeScript):
 
 BAD:
 ```typescript
 export default { parse, stringify, validate };
 ```
 
-Consumers import the whole object. Bundlers cannot tree-shake.
-
 GOOD:
 ```typescript
 export function parse() { ... }
 export function stringify() { ... }
-export function validate() { ... }
 ```
 
-### 6.4 No Barrel Files With Deep Imports
+### LIB-024 — No Deep Barrel Files
 
-An `index.js` that re-exports everything from `./internal/*`
-defeats tree-shaking. Consumers who import one thing pull in
-everything.
+**MUST NOT**
 
-### 6.5 No `import * as` for Internal Use
+Barrel files (`index.js`) that re-export everything from deep internal directories MUST NOT be used. They defeat tree-shaking by pulling in the entire library when a consumer imports one item.
 
-Import named exports. `import * as _` prevents bundlers from
-pruning.
+### LIB-025 — No Internal Wildcard Imports
 
-### 6.6 Measure the Cost of Dependencies
+**MUST NOT**
 
-Before adding a dependency, measure:
+`import * as _` MUST NOT be used for internal library code. Named imports MUST be used to allow bundlers to prune unused code.
 
-- Bytes added to the consumer's bundle.
-- Whether a smaller alternative exists.
-- Whether the dependency is tree-shakeable.
-- License compatibility.
+### LIB-026 — Dependency Cost Measurement
 
-A library that adds 200 KB for a 10-line utility is not a good
-library.
+**MUST**
 
-### 6.7 No Unconditional Polyfills
+Before adding a dependency, its cost MUST be measured: bytes added to the consumer's bundle, availability of smaller alternatives, tree-shakability, and license compatibility. Adding massive dependencies for trivial utilities is prohibited.
 
-A library that ships a polyfill for every environment forces
-modern environments to download dead code. Gate polyfills behind
-environment checks or a separate entry point.
+See MAS-038 in `_universal/00-master-anti-slop.md`.
 
-## 7. Dependency Discipline
+### LIB-027 — Conditional Polyfills
 
-### 7.1 Every Dependency Is a Cost
+**MUST NOT**
 
-Every dependency of a library becomes a dependency of every
-consumer. The cost compounds. Before adding a dependency, ask
-whether the standard library or a 20-line implementation suffices.
+Unconditional polyfills MUST NOT be shipped. A library MUST NOT force modern environments to download dead code. Polyfills MUST be gated behind environment checks or placed in a separate entry point.
 
-### 7.2 Peer Dependencies for Framework Libraries
+## Dependency Discipline
 
-BAD:
-```json
-"dependencies": { "react": "^18.0.0" }
-```
+### LIB-028 — Dependency as Cost
 
-This installs a second React if the consumer already has one.
+**MUST**
 
-GOOD:
-```json
-"peerDependencies": { "react": ">=17.0.0" }
-```
+Every dependency of a library becomes a dependency of every consumer. Before adding a dependency, the standard library or a minimal custom implementation MUST be considered.
 
-### 7.3 Wide Version Ranges for Peer Dependencies
+### LIB-029 — Peer Dependencies for Frameworks
 
-A peer dependency on `react: "18.2.0"` fails when the consumer is on
-`18.3.0`. Use a range that includes compatible versions.
+**MUST**
 
-### 7.4 Runtime Dependencies Pinned or Ranged
+Framework libraries MUST use `peerDependencies` for the framework itself, not `dependencies`. Installing a second copy of a framework (e.g., React) in the consumer's bundle is a critical bug.
 
-Match the ecosystem's convention. npm uses `^`, Python uses `>=`
-with upper bounds, Rust uses `~` or `^`. Do not pin to an exact
-version unless the project's policy requires it.
+### LIB-030 — Wide Peer Dependency Ranges
 
-### 7.5 No Dev Dependencies at Runtime
+**MUST**
 
-Dev dependencies are for building and testing. A runtime import of
-a dev dependency fails in the consumer's environment.
+Peer dependencies MUST use wide version ranges that include compatible versions (e.g., `>=17.0.0`). Pinning to an exact minor/patch version causes unnecessary resolution failures for consumers.
 
-### 7.6 Audited Dependencies
+### LIB-031 — Runtime Dependency Ranges
 
-Run `npm audit`, `pip-audit`, `cargo audit`, or the ecosystem's
-equivalent in CI. A vulnerable transitive dependency is a
-vulnerability of the library.
+**MUST**
 
-### 7.7 Minimal Transitive Surface
+Runtime dependencies MUST use ecosystem-standard ranges (e.g., `^` in npm, `>=` with upper bounds in Python). Exact version pins MUST NOT be used in libraries, as they force consumers to manually deduplicate.
 
-A dependency that brings 30 transitive packages adds 30 attack
-vectors. Inspect what a dependency pulls in before adding it.
+### LIB-032 — No Dev Dependencies at Runtime
 
-## 8. Testing a Library
+**MUST NOT**
 
-### 8.1 Public API Tests
+Runtime code MUST NOT import dev dependencies. Dev dependencies are for building and testing; importing them causes failures in the consumer's environment.
 
-Every exported function has a test. The tests are the
-specification.
+### LIB-033 — Dependency Auditing
 
-### 8.2 Compatibility Tests
+**MUST**
 
-Run the test suite against the minimum supported runtime version
-and the latest. A feature that works on Node 20 may fail on Node
-18.
+Dependency audits (`npm audit`, `pip-audit`, `cargo audit`) MUST be run in CI. A vulnerable transitive dependency is a vulnerability of the library.
 
-### 8.3 Type Tests
+### LIB-034 — Minimal Transitive Surface
 
-If the library has types (TypeScript, Python stubs, Rust traits),
-test them:
+**MUST**
 
-BAD: Types are compiled but never checked against consumer code.
+The transitive dependency tree MUST be inspected before adding a new dependency. A dependency that brings dozens of transitive packages adds unnecessary attack vectors and bloat.
 
-GOOD: A `test-d.ts` file using `tsd` or `expect-type`, or a
-`mypy` check on a consumer sample.
+## Testing a Library
 
-Type regressions are breaking changes.
+### LIB-035 — Public API Tests
 
-### 8.4 Test the Published Artifact
+**MUST**
 
-Before releasing, install the packed artifact in a fresh project
-and run a smoke test. Bugs from missing files in `"files"` or
-incorrect `"exports"` are only caught this way.
+Every exported function MUST have a test. The tests serve as the specification for the public API.
 
-```bash
-npm pack
-cd /tmp/smoke-test
-npm init -y
-npm install /path/to/package.tgz
-node -e "require('mylib').parse('x')"
-```
+### LIB-036 — Compatibility Tests
 
-### 8.5 No Network in Tests
+**MUST**
 
-Unit tests for a library do not call real services. Use fakes or
-local servers.
+The test suite MUST run against the minimum supported runtime version and the latest version. Features that work on the latest version may fail on the minimum supported version.
 
-### 8.6 Golden Files for Serialization
+### LIB-037 — Type Tests
 
-If the library serializes or parses a format, test against golden
-files. A change in output is a breaking change and must be
-reviewed.
+**MUST**
 
-## 9. Documentation
+If the library has types (TypeScript, Python stubs, Rust traits), they MUST be tested against consumer code patterns (e.g., using `tsd`, `expect-type`, or `mypy`). Type regressions are breaking changes.
 
-### 9.1 README Structure
+### LIB-038 — Published Artifact Testing
 
-- One-line description.
-- Installation.
-- Minimal usage example.
-- API reference (or link to it).
-- Compatibility matrix (runtimes, versions).
-- License.
+**MUST**
 
-### 9.2 Examples That Run
+Before releasing, the packed artifact MUST be installed in a fresh project and smoke-tested. Bugs from missing files in `"files"` or incorrect `"exports"` are only caught this way.
 
-Every example in the README is tested. A stale example is worse
-than no example because it erodes trust.
+### LIB-039 — No Network in Unit Tests
 
-### 9.3 API Documentation
+**MUST NOT**
 
-Every export is documented with:
+Unit tests for a library MUST NOT call real external services. Fakes or local servers MUST be used.
 
-- What it does.
-- Parameters, with types.
-- Return value.
-- Thrown errors.
-- At least one example.
+### LIB-040 — Golden Files for Serialization
 
-### 9.4 Migration Guide
+**MUST**
 
-Every major version has a migration guide. What changed, why, and
-how to update consumer code. A migration guide turns a painful
-upgrade into a mechanical one.
+If the library serializes or parses a format, it MUST be tested against golden files. A change in output is a breaking change and MUST be reviewed explicitly.
 
-### 9.5 Version Compatibility Table
+## Documentation
 
-State which versions of the language, runtime, and key peers are
-supported. Consumers check this before upgrading.
+### LIB-041 — README Structure
 
-## 10. Distribution and Packaging
+**MUST**
 
-### 10.1 What Goes in the Package
+The README MUST include a one-line description, installation instructions, a minimal usage example, an API reference (or link), a compatibility matrix, and the license.
 
-Only what consumers need: compiled output, types, README, LICENSE,
-CHANGELOG.
+### LIB-042 — Executable Examples
 
-BAD: Tests, examples, editor configs, and source maps are shipped.
+**MUST**
 
-GOOD: `"files"` field in `package.json`, `include`/`exclude` in
-`pyproject.toml`, or the equivalent manifest field lists exactly
-what is published.
+Every example in the README MUST be tested and runnable. Stale examples erode trust and are worse than no examples.
 
-### 10.2 Source Maps
+### LIB-043 — API Documentation Completeness
 
-Ship source maps if debugging consumer code is a common need. Omit
-if the library is small and the source is not a commercial asset.
+**MUST**
 
-### 10.3 License
+Every export MUST be documented with its purpose, parameters (with types), return value, thrown errors, and at least one example.
 
-Every package has a LICENSE file. The license in `package.json` or
-the manifest matches the file.
+### LIB-044 — Migration Guides
 
-### 10.4 Publish Is Not a Manual Step
+**MUST**
 
-A release is a CI job, not a developer's laptop. The release
-pipeline:
+Every major version MUST include a migration guide detailing what changed, why, and how to update consumer code.
 
-1. Runs the tests.
-2. Builds the artifact.
-3. Publishes to the registry.
-4. Tags the git commit.
-5. Creates a release note.
+### LIB-045 — Version Compatibility Table
 
-Manual publishes drift and are hard to reproduce.
+**MUST**
 
-### 10.5 Pre-Release Tags
+The supported versions of the language, runtime, and key peer dependencies MUST be explicitly documented.
 
-Pre-releases (alpha, beta, rc) are published under a tag
-(`next`, `beta`, `rc`) that is not `latest`. Consumers opt in
-explicitly.
+## Distribution and Packaging
 
-## 11. Configuration and Runtime
+### LIB-046 — Package Contents Restriction
 
-### 11.1 No Global Configuration
+**MUST**
 
-A library that reads from a global config object is coupled to it.
-Consumers cannot use two instances with different configs.
+Only what consumers need MUST be published (compiled output, types, README, LICENSE, CHANGELOG). Tests, examples, editor configs, and source maps MUST be excluded using manifest fields (e.g., `"files"` in `package.json`, `include`/`exclude` in `pyproject.toml`).
 
-BAD:
-```typescript
-let apiUrl = "https://default";
-export function setApiUrl(url: string) { apiUrl = url; }
-```
+### LIB-047 — Source Map Discipline
 
-GOOD:
-```typescript
-export interface Config { apiUrl: string; }
-export function createClient(config: Config): Client { ... }
-```
+**SHOULD**
 
-### 11.2 No Environment Variables
+Source maps SHOULD be shipped if debugging consumer code is a common need. They MAY be omitted if the library is small and the source is a commercial asset.
 
-A library that reads `process.env.API_KEY` inside a function
-surprises consumers and breaks in environments without env vars.
+### LIB-048 — License Inclusion
 
-If env vars are read, they are read once at initialization and
-documented. Better: accept configuration explicitly.
+**MUST**
 
-### 11.3 No Hidden Initialization
+Every package MUST include a LICENSE file. The license declared in the manifest MUST match the file.
 
-BAD: A library that starts a background timer on import.
+### LIB-049 — Automated Publishing
 
-GOOD: An explicit `start()` function that the consumer calls.
+**MUST**
 
-### 11.4 Lazy Initialization
+Publishing MUST be a CI job, not a manual step from a developer's laptop. The release pipeline MUST run tests, build the artifact, publish to the registry, tag the commit, and create release notes.
 
-The library performs heavy work (parse config, open connection)
-only on first use, not on import. Import is cheap.
+### LIB-050 — Pre-Release Tags
 
-## 12. Error Types
+**MUST**
 
-### 12.1 Exported Error Types
+Pre-releases (alpha, beta, rc) MUST be published under a specific tag (e.g., `next`, `beta`) that is not `latest`. Consumers MUST opt in explicitly.
 
-Every error the library throws is either a standard error or an
-exported custom error. Consumers catch them by type, not by string.
+## Configuration and Runtime
 
-BAD:
-```typescript
-throw new Error("invalid config");
-```
+### LIB-051 — No Global Configuration
 
-GOOD:
-```typescript
-export class ConfigError extends Error {}
-throw new ConfigError("invalid config");
-```
+**MUST NOT**
 
-### 12.2 No String Matching
+Libraries MUST NOT read from or mutate global configuration objects. Consumers MUST be able to use multiple instances with different configurations via factories or explicit config parameters.
 
-Consumers must not match on error messages. Messages are for
-humans. Types and codes are for code.
+### LIB-052 — No Hidden Environment Variables
 
-### 12.3 Documented Errors
+**MUST NOT**
 
-Every function that throws documents what it throws and under what
-conditions. Error behavior is part of the public API.
+Libraries MUST NOT read environment variables (e.g., `process.env.API_KEY`) inside functions. If env vars are read, they MUST be read once at initialization and explicitly documented. Explicit configuration parameters are preferred.
 
-## 13. Anti-Patterns
+### LIB-053 — No Hidden Initialization
 
-### 13.1 Exporting Everything
+**MUST NOT**
 
-BAD: `export * from "./internal"`.
+Importing a library MUST NOT start background timers, open connections, or perform heavy work. Initialization MUST be explicit (via a `start()` function) or lazy (on first use).
 
-GOOD: Explicit exports of the intended public API.
+### LIB-054 — Lazy Initialization
 
-### 13.2 Mutable Global State
+**MUST**
 
-BAD: A module-level cache that all consumers share.
+Heavy work (parsing config, opening connections) MUST be deferred until first use. Importing the library MUST be cheap.
 
-GOOD: A factory that returns a new instance with its own state.
+## Error Types
 
-### 13.3 Requiring a Specific Framework
+### LIB-055 — Exported Custom Errors
 
-BAD: A "utility" library that imports React.
+**MUST**
 
-GOOD: A framework-agnostic core plus a framework-specific adapter
-package.
+Every custom error the library throws MUST be exported. Consumers MUST be able to catch errors by type, not by string matching.
 
-### 13.4 Peer Dependencies as Dependencies
+Example (illustrative, TypeScript):
 
-BAD: React in `dependencies` of a React library. Two React copies
-end up in the consumer's bundle.
+BAD: `throw new Error("invalid config");`
+GOOD: `export class ConfigError extends Error {}`
 
-GOOD: React in `peerDependencies` with a wide range.
+### LIB-056 — No String Matching for Errors
 
-### 13.5 Silent Version Bumps
+**MUST NOT**
 
-BAD: A patch release that changes behavior.
+Error messages are for humans. Consumers MUST NOT be forced to match on error message strings. Error types and codes MUST be used for programmatic handling.
 
-GOOD: A minor or major release with a changelog entry.
+### LIB-057 — Documented Error Behavior
 
-### 13.6 Breaking Changes Without a Major
+**MUST**
 
-The most damaging library mistake. Wait for a major version.
+Every function that throws MUST document what it throws and under what conditions. Error behavior is part of the public API.
 
-### 13.7 No Types
+## AI-Specific Library Discipline
 
-BAD: A JavaScript library with no type definitions.
+### LIB-074 — Export Verification Before Creation
 
-GOOD: Types bundled, or a `@types/...` package maintained in sync.
+**MUST**
 
-### 13.8 Types That Lie
+Before creating a new public export or module, the assistant MUST search the library's existing API for an equivalent function. Inventing parallel utilities fragments the API surface and breaks the minimal surface contract.
 
-BAD: A type that says `string` but the function can return
-`undefined`.
+See MAS-035 in `_universal/00-master-anti-slop.md`.
 
-GOOD: The type matches the runtime behavior.
+### LIB-075 — Dependency API Verification
 
-### 13.9 Shipping Source Without a Build
+**MUST**
 
-BAD: A TypeScript library that publishes `.ts` files and expects
-consumers to compile them.
+Before using a third-party dependency's API in the library's source code, the assistant MUST verify the method exists in the installed version specified in `package.json`/`pyproject.toml`. Invented methods produce runtime errors for consumers that are invisible during library compilation.
 
-GOOD: Ship compiled `.js` + `.d.ts`, or use a bundler that handles
-it.
+See MAS-036 in `_universal/00-master-anti-slop.md`.
 
-### 13.10 Shipping Without `files` or `.npmignore`
+### LIB-076 — Ecosystem Convention Verification
 
-BAD: Publishing that includes tests, examples, and editor configs.
+**MUST**
 
-GOOD: An explicit `"files"` field listing only what consumers need.
+Before defining package manifests, entry points, or build scripts, the assistant MUST verify the standard conventions for the target registry (npm, PyPI, crates.io). Invented manifest fields cause publishing failures or un-tree-shakeable bundles.
 
-### 13.11 Optional Dependencies Without Fallback
+## Anti-Patterns
 
-BAD: `try { require("optional") } catch {}` with no fallback path.
+### LIB-058 — Framework Agnosticism
 
-GOOD: A documented behavior when the optional dependency is
-missing.
+**MUST NOT**
 
-### 13.12 Async Initialization
+A "utility" library MUST NOT import a specific framework (e.g., React) unless it is explicitly a framework adapter. Framework-agnostic cores MUST be separated from framework-specific adapters.
 
-BAD: The consumer must `await lib.init()` before using anything.
+### LIB-059 — Type Definitions Requirement
 
-GOOD: Lazy initialization on first use.
+**MUST**
 
-### 13.13 Environment Assumptions
+Libraries written in dynamically typed languages MUST provide type definitions (e.g., bundled `.d.ts` files or a maintained `@types/...` package).
 
-BAD: The library assumes `window` exists (breaks in Node), or
-Node's `fs` exists (breaks in browser).
+### LIB-060 — Type Accuracy
 
-GOOD: Explicit environment checks with clear errors.
+**MUST**
 
-### 13.14 No Error Context
+Type definitions MUST accurately reflect runtime behavior. A type that claims `string` but returns `undefined` at runtime is a critical bug.
 
-BAD: `throw new Error("invalid")`.
+### LIB-061 — Compiled Distribution
 
-GOOD: `throw new ConfigError("missing field: apiKey")`.
+**MUST NOT**
 
-### 13.15 Console Output in a Library
+Libraries MUST NOT ship raw source files (e.g., `.ts`, `.py` without build steps) and expect consumers to compile them. Compiled artifacts (`.js`, `.d.ts`, `.pyc`) MUST be shipped.
 
-BAD: `console.log("loaded")` in library code.
+### LIB-062 — Optional Dependency Fallback
 
-GOOD: No output. The consumer decides whether to log.
+**MUST**
 
-### 13.16 Locking to a Specific Dependency Version
+If an optional dependency is used, a documented fallback or clear error MUST be provided when the dependency is missing. Silent failures on missing optional dependencies are prohibited.
 
-BAD: `"dependencies": { "lodash": "4.17.21" }` (exact pin).
+### LIB-063 — Environment Agnosticism
 
-GOOD: `"dependencies": { "lodash": "^4.17.0" }`.
+**MUST NOT**
 
-Exact pins in a library force every consumer to deduplicate
-manually.
+Libraries MUST NOT assume a specific environment (e.g., assuming `window` exists in Node, or `fs` exists in the browser). Explicit environment checks with clear errors MUST be used.
 
-### 13.17 No Minimum Runtime Documented
+### LIB-064 — No Console Output
 
-BAD: A library that works on Node 14 but does not say so.
+**MUST NOT**
 
-GOOD: `"engines": { "node": ">=18" }` in `package.json` and a
-README section.
+Libraries MUST NOT write to `console.log`, `print`, or stdout. The consumer MUST decide whether to log. Diagnostics MUST be returned or an injectable logger MUST be accepted.
 
-### 13.18 Polyfilling Globals
+### LIB-065 — No Global Polyfills
 
-BAD: A library that assigns `global.fetch = ...` on import.
+**MUST NOT**
 
-GOOD: The library uses the environment's `fetch` and documents the
-requirement.
+Libraries MUST NOT polyfill globals (e.g., assigning `global.fetch = ...` on import). The environment's native APIs MUST be used, and requirements MUST be documented.
 
-### 13.19 Barrel Files
+### LIB-066 — Functional Preference
 
-BAD: `index.js` re-exporting everything from every subdirectory.
+**SHOULD**
 
-GOOD: Import from the specific module.
+Functions SHOULD be preferred over class-based APIs for stateless operations. Classes MUST only be used when state encapsulation is strictly required.
 
-### 13.20 Default Exports
+### LIB-067 — Config Immutability
 
-BAD:
-```typescript
-export default function parse() { ... }
-```
+**MUST NOT**
 
-Consumers rename it on import. Tooling cannot follow it. Bundlers
-have a harder time.
+Configuration objects passed by the consumer MUST NOT be mutated by the library. The library MUST copy the config or treat it as read-only.
 
-GOOD: Named exports.
+### LIB-068 — Explicit Failure
 
-### 13.21 Class-Based APIs Without a Reason
+**MUST NOT**
 
-BAD: A library that requires `new Client()` for a stateless
-function.
+Functions MUST NOT fail silently (e.g., returning `undefined` on error without a reason). Errors MUST be thrown, or a documented sentinel value MUST be returned.
 
-GOOD: A function that does the work. Use classes only when state
-must be encapsulated.
+See MAS-037 in `_universal/00-master-anti-slop.md`.
 
-### 13.22 Configuration Objects That Are Mutated
+### LIB-069 — Deterministic Output
 
-BAD: A config object passed by the consumer, then mutated by the
-library.
+**MUST**
 
-GOOD: The library copies the config or accepts it as read-only.
+Serialization and formatting functions MUST produce deterministic output. Output MUST NOT depend on object key iteration order or other non-deterministic runtime factors.
 
-### 13.23 Silent Failures
+### LIB-070 — Injectable Clock
 
-BAD: A function that returns `undefined` on error, without a
-reason.
+**MUST**
 
-GOOD: Throw an error, or return a documented sentinel.
+Functions whose output depends on time MUST accept an injectable clock or `now` parameter. Relying implicitly on `Date.now()` makes testing and deterministic behavior impossible.
 
-### 13.24 Non-Deterministic Output
+### LIB-071 — Locale Independence
 
-BAD: A serializer whose output depends on object key iteration
-order.
+**MUST**
 
-GOOD: Deterministic output, tested against golden files.
+Libraries that format numbers or dates MUST NOT use locale-dependent behavior implicitly (e.g., `toLocaleString()`). A locale parameter MUST be accepted, or a locale-independent format MUST be used.
 
-### 13.25 Time-Dependent Behavior
+### LIB-072 — Optional Input Defaults
 
-BAD: A function whose output depends on `Date.now()` without an
-injectable clock.
+**MUST NOT**
 
-GOOD: Accept a `now` parameter or a `Clock` interface.
+Libraries MUST NOT throw errors when optional configuration fields are absent. Documented defaults MUST be applied.
 
-### 13.26 Locale-Dependent Behavior
+### LIB-073 — Flat Configuration
 
-BAD: Using `toLocaleString()` in a library that formats numbers.
+**SHOULD**
 
-GOOD: Accept a locale parameter, or use a locale-independent
-format.
+Configuration objects SHOULD be flat. Deeply nested options (e.g., `{ retry: { delay: { initial: 100 } } }`) are harder to document, type, and default.
 
-### 13.27 Logging in a Library
+## Response to Violation
 
-BAD: `console.log`, `print`, or writing to stdout from a library.
+When a rule in this file is violated, report:
 
-GOOD: The consumer provides a logger, or the library returns
-diagnostics.
+Violation: LIB-{NNN}
+Reason: {one-line reason}
+Correction: {smallest fix}
 
-### 13.28 Throw on Missing Optional Input
+For multiple violations, report each rule ID separately.
 
-BAD: Throwing when an optional config field is absent.
-
-GOOD: A documented default.
-
-### 13.29 Deeply Nested Options
-
-BAD: `{ retry: { delay: { initial: 100, max: 5000 } } }`.
-
-GOOD: `{ retryDelayMs: 100, retryMaxDelayMs: 5000 }`.
-
-Nested options are harder to document and default.
-
-### 13.30 No Deprecation Warnings
-
-BAD: A deprecated function silently continues working until it is
-removed.
-
-GOOD: The function logs a warning on use, referencing the
-replacement and the removal version.
-
-## 14. Response to Violation
-
-If a previous response violated a rule here:
-
-```
-In the previous response, [specific rule] was violated. Correction:
-[corrected code]
-```
-
-No justification. No apology paragraph. Fix and move on.
+Do not replace a technical correction with a generic explanation.

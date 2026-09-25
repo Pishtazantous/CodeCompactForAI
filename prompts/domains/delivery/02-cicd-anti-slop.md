@@ -2,397 +2,413 @@
 id: 02-cicd-anti-slop
 title: "CI/CD Anti-Slop Layer"
 lang: en
-depends_on: [00-master-anti-slop]
+depends_on: ["_universal/00-style-guide.md", "_universal/00-master-anti-slop.md"]
 category: domain
 domain_type: delivery
-version: 1
+version: 2
 ---
 
 # CI/CD Anti-Slop Layer
 
-Layered under `_universal/00-master-anti-slop.md`. Universal rules
-(fabrication, fake completion, over-engineering, silent assumptions,
-security anti-patterns, output format) are NOT repeated here.
+This file defines behavioral contracts specific to continuous integration and continuous delivery pipelines. It sits in the delivery layer, below the universal anti-slop rules and above infrastructure-as-code or application deployment patterns. It covers pipeline stages, caching, secret masking, test selection, artifact handling, and deployment strategy. It does not cover application deployment rules (see `02-devops-anti-slop.md`) or infrastructure-as-code (see `02-infra-anti-slop.md`).
 
-This file covers rules specific to continuous integration and
-continuous delivery: pipeline stages, caching, secret masking, test
-selection, artifact handling, and deployment strategy. Application
-deployment rules live in `domains/delivery/02-devops-anti-slop.md`.
-Infrastructure rules live in `domains/delivery/02-infra-anti-slop.md`.
+A CI/CD pipeline is the factory that produces production artifacts. Every stage, cache, and secret is a contract with the deployment process.
 
-## 1. Stack Assumptions
+## Scope
 
-This layer applies to pipelines in:
+This file applies to pipelines in GitHub Actions, GitLab CI, CircleCI, Jenkins, Buildkite, Azure Pipelines, Bitbucket Pipelines, and Drone. The principles are tool-agnostic. The examples use YAML syntax where illustrative.
 
-- GitHub Actions
-- GitLab CI
-- CircleCI
-- Jenkins
-- Buildkite
-- Azure Pipelines
-- Bitbucket Pipelines
-- Drone
+## Rule Severity
 
-The principles are tool-agnostic. YAML syntax varies.
+Severity follows `_universal/00-style-guide.md`.
 
-## 2. Pipeline Structure
+## Contracts
 
-### 2.1 Stages That Fail Fast
+A CI/CD pipeline commits to six contracts. The table below maps each contract to the rules that enforce it.
 
-Order stages from fastest to slowest, and from most likely to fail to
-least:
+| Contract | Description | Enforced By |
+|---|---|---|
+| Pipeline Structure | Stages fail fast, jobs are single-purpose, dependencies are explicit. | CI-001 to CI-005 |
+| Caching Discipline | Dependencies are cached with lockfile-based keys, build outputs are not shared across branches. | CI-006 to CI-009 |
+| Secret Management | Secrets are never echoed, masked, scoped per environment, and rotated. | CI-010 to CI-015 |
+| Testing Discipline | Same tests run locally and in CI, flaky tests are eliminated, test data is isolated. | CI-016 to CI-020 |
+| Artifact Management | Artifacts are built once, immutable, tagged with commit SHA, and signed. | CI-021 to CI-024 |
+| Deployment Safety | Deployment is a separate job, environment-protected, with automated rollback and verification. | CI-025 to CI-030 |
 
-1. Lint
-2. Type check
-3. Unit tests
-4. Build
-5. Integration tests
-6. End-to-end tests
-7. Deploy
+## Pipeline Structure
 
-A failure in stage 1 stops the pipeline before stage 2 runs. Do not
-waste five minutes on a build when the lint fails in 10 seconds.
+### CI-001 — Fast-Fail Stage Ordering
 
-### 2.2 Parallelism When It Is Free
+**MUST**
 
-Independent jobs run in parallel:
+Pipeline stages MUST be ordered from fastest to slowest, and from most likely to fail to least: lint, type check, unit tests, build, integration tests, end-to-end tests, deploy. A failure in an early stage MUST stop the pipeline before later stages run.
 
-- Lint and type-check can run simultaneously.
-- Unit tests split across shards.
-- Multiple platforms (Linux, macOS, Windows) in parallel.
+### CI-002 — Parallelism Cost Awareness
 
-Parallelism has a cost (more runners, more minutes). Use it when the
-wall-clock time saved matters.
+**SHOULD**
 
-### 2.3 One Job, One Purpose
+Independent jobs (lint and type-check, unit test shards, multiple platforms) SHOULD run in parallel. Parallelism has a cost (more runners, more minutes) and MUST be used when wall-clock time saved matters.
+
+### CI-003 — Job Single Purpose
+
+**MUST**
+
+Every job MUST have a single purpose. Combined jobs (e.g., `build-and-test-and-deploy`) are prohibited. Separate jobs have separate logs, retry semantics, and resource usage.
+
+Example (illustrative):
 
 BAD: A single `build-and-test-and-deploy` job.
 GOOD: `lint`, `test`, `build`, `deploy` as separate jobs.
 
-Separate jobs have separate logs, separate retry semantics, and
-separate resource usage.
+### CI-004 — Explicit Job Dependencies
 
-### 2.4 Dependencies Are Explicit
+**MUST**
 
-A deploy job depends on the build job. Do not rely on execution order
-implicitly.
+Job dependencies MUST be explicit. A deploy job MUST declare its dependency on the build job. Implicit reliance on execution order is prohibited.
 
-### 2.5 Deterministic
+### CI-005 — Deterministic Execution
 
-The same commit produces the same result. No random failures from
-race conditions, timing, or external state.
+**MUST**
 
-Flaky tests are bugs. Do not retry them into passing.
+The same commit MUST produce the same result. Random failures from race conditions, timing, or external state MUST NOT occur. Flaky tests are bugs and MUST NOT be retried into passing.
 
-## 3. Caching
+## Caching
 
-### 3.1 Cache Dependencies
+### CI-006 — Dependency Caching
 
-Cache the package manager's directory:
+**MUST**
 
-- npm: `~/.npm` or `node_modules`.
-- pip: `~/.cache/pip` or the virtualenv.
-- Go: `~/go/pkg/mod` and the build cache.
-- Cargo: `~/.cargo/registry` and `target`.
-- Maven: `~/.m2/repository`.
+The package manager's directory MUST be cached (e.g., `~/.npm` or `node_modules` for npm, `~/.cache/pip` for pip, `~/go/pkg/mod` for Go, `~/.cargo/registry` and `target` for Cargo, `~/.m2/repository` for Maven). A cache miss costs minutes on every run.
 
-A cache miss costs minutes on every run.
+### CI-007 — Cache Key Lockfile Hash
 
-### 3.2 Cache Keys Include the Lockfile Hash
+**MUST**
 
+Cache keys MUST include the lockfile hash. Without the lockfile hash, the cache is stale after a dependency change and produces incorrect builds.
+
+Example (illustrative, GitHub Actions):
 ```yaml
 key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
 ```
 
-Without the lockfile hash, the cache is stale after a dependency
-change and produces incorrect builds.
+### CI-008 — No Cross-Branch Artifact Caching
 
-### 3.3 Never Cache Build Artifacts Across Branches
+**MUST NOT**
 
-A build artifact from `main` must not be reused on a feature branch
-that changed source. Cache only inputs (dependencies), not outputs.
+Build artifacts MUST NOT be cached across branches. A build artifact from `main` MUST NOT be reused on a feature branch that changed source. Only inputs (dependencies) MUST be cached, not outputs.
 
-### 3.4 Cache Size Limits
+### CI-009 — Cache Size Monitoring
 
-Every CI provider has a cache size limit. Exceeding it silently evicts
-older entries. Monitor cache size and prune.
+**MUST**
 
-## 4. Secrets in CI
+Cache size MUST be monitored and pruned. Every CI provider has a cache size limit; exceeding it silently evicts older entries.
 
-### 4.1 Never Echo Secrets
+## Secrets in CI
 
-BAD: `echo $API_KEY` in a step.
-GOOD: Use the value directly in the tool that needs it.
+### CI-010 — Secret Echo Prohibition
 
-Even "safe" commands like `env` print secrets.
+**MUST NOT**
 
-### 4.2 Mask Logs
+Secrets MUST NEVER be echoed (e.g., `echo $API_KEY` in a step). Even "safe" commands like `env` print secrets. The value MUST be used directly in the tool that needs it.
 
-GitHub Actions, GitLab CI, and others mask registered secrets in logs.
-This is the safety net, not the primary defense. Do not rely on it.
+### CI-011 — Log Masking Awareness
 
-### 4.3 Scope Secrets Per Environment
+**MUST**
 
-- A secret for staging is not available in production jobs.
-- A secret for one repository is not available to forks.
-- A secret for one branch is not available on PRs from forks.
+Registered secrets MUST be masked in logs by the CI provider (GitHub Actions, GitLab CI, etc.). Log masking is the safety net, not the primary defense, and MUST NOT be relied upon exclusively.
 
-GitHub Actions: `pull_request` from a fork does not have access to
-secrets by default. `pull_request_target` does; use it with extreme
-care.
+### CI-012 — Per-Environment Secret Scoping
 
-### 4.4 Rotate Secrets
+**MUST**
 
-A secret that has been in CI for two years has leaked somewhere. Set
-a rotation schedule.
+Secrets MUST be scoped per environment, repository, and branch:
 
-### 4.5 Short-Lived Credentials Over Static
+- A staging secret MUST NOT be available in production jobs.
+- A repository secret MUST NOT be available to forks.
+- A branch secret MUST NOT be available on PRs from forks.
 
-Prefer OIDC-based authentication (GitHub Actions to AWS, GCP, Azure)
-over static access keys. The credential is issued per job and expires.
+The `pull_request` event from a fork does not have access to secrets by default. `pull_request_target` does and MUST be used with extreme care.
 
-### 4.6 No Secrets in Build Artifacts
+### CI-013 — Secret Rotation Schedule
 
-A container image built in CI must not contain secrets. Use build args
-sparingly, and never bake secrets into layers.
+**MUST**
 
-## 5. Testing in CI
+Every secret in CI MUST have a rotation schedule. A secret that has been in CI for two years has likely leaked somewhere.
 
-### 5.1 Run the Same Tests Locally
+### CI-014 — Short-Lived Credentials
 
-A test that only passes in CI is a test with hidden dependencies. The
-developer runs the same command locally.
+**SHOULD**
 
-### 5.2 Fail on Flaky Tests
+OIDC-based authentication (GitHub Actions to AWS, GCP, Azure) SHOULD be preferred over static access keys. The credential is issued per job and expires.
 
-A flaky test is worse than no test. It erodes trust in the suite.
-Fix it or remove it. Do not add `retry: 3`.
+### CI-015 — Artifact Secret Prohibition
 
-### 5.3 Test Sharding
+**MUST NOT**
 
-Large test suites split across parallel runners. Each shard runs a
-subset. Merge coverage reports.
+Container images and build artifacts MUST NOT contain secrets. Build args MUST be used sparingly, and secrets MUST NEVER be baked into layers.
 
-### 5.4 Coverage Without Obsession
+## Testing in CI
 
-Report coverage as a signal, not a gate. A coverage of 100% with
-meaningless assertions is worse than 60% with real tests.
+### CI-016 — Local Test Parity
 
-A decrease in coverage on a PR is worth a comment, not a block.
+**MUST**
 
-### 5.5 Test Data Isolation
+A test that only passes in CI is a test with hidden dependencies. The developer MUST run the same command locally and in CI.
 
-Tests do not share state. Each test creates and cleans up its own
-data. Parallel jobs use separate databases or schemas.
+### CI-017 — Flaky Test Elimination
 
-## 6. Build Artifacts
+**MUST NOT**
 
-### 6.1 Build Once, Deploy Many
+A flaky test erodes trust in the suite. It MUST be fixed or removed. Adding `retry: 3` to bypass flakiness is prohibited.
 
-Build the artifact once (a binary, a container image, a bundle), tag
-it with the commit SHA, and promote the same artifact through
-environments.
+### CI-018 — Test Sharding
 
-BAD: Build again for staging and for production.
-GOOD: One artifact, promoted.
+**SHOULD**
 
-### 6.2 Immutable Artifacts
+Large test suites SHOULD split across parallel runners (shards). Each shard runs a subset, and coverage reports MUST be merged.
 
-Once published, an artifact is never overwritten. A version `1.4.2`
-always refers to the same bytes.
+### CI-019 — Coverage Signal Discipline
 
-### 6.3 Tag With Commit SHA
+**SHOULD**
 
-Every artifact is tagged with the commit SHA it was built from.
-Debugging a production issue requires knowing the exact source.
+Coverage SHOULD be reported as a signal, not a gate. A coverage of 100% with meaningless assertions is worse than 60% with real tests. A decrease in coverage on a PR is worth a comment, not a block.
 
-### 6.4 Sign Artifacts
+### CI-020 — Test Data Isolation
 
-Container images and binaries are signed (Sigstore, Cosign). Consumers
-verify the signature before running.
+**MUST**
 
-## 7. Deployment in CI
+Tests MUST NOT share state. Each test MUST create and clean up its own data. Parallel jobs MUST use separate databases or schemas.
 
-### 7.1 Deploy Is a Separate Job
+## Build Artifacts
 
-Do not deploy in the same job that runs tests. The deploy job depends
-on the test job and runs only on the target branch.
+### CI-021 — Build Once Deploy Many
 
-### 7.2 Environment Protection
+**MUST**
 
-Production deploys require:
+The artifact MUST be built once (a binary, a container image, a bundle), tagged with the commit SHA, and promoted through environments. Building again for staging and production is prohibited.
+
+### CI-022 — Immutable Artifacts
+
+**MUST**
+
+Once published, an artifact MUST NEVER be overwritten. A version `1.4.2` MUST always refer to the same bytes.
+
+### CI-023 — Commit SHA Tagging
+
+**MUST**
+
+Every artifact MUST be tagged with the commit SHA it was built from. Debugging a production issue requires knowing the exact source.
+
+### CI-024 — Artifact Signing
+
+**SHOULD**
+
+Container images and binaries SHOULD be signed (e.g., Sigstore, Cosign). Consumers MUST verify the signature before running.
+
+## Deployment in CI
+
+### CI-025 — Separate Deploy Job
+
+**MUST**
+
+Deployment MUST be a separate job. Deploy MUST NOT occur in the same job that runs tests. The deploy job MUST depend on the test job and MUST run only on the target branch.
+
+### CI-026 — Environment Protection
+
+**MUST**
+
+Production deploys MUST require:
 
 - Manual approval (GitHub Environments, GitLab Protected Environments).
 - Branch restrictions (only `main`).
 - Reviewer requirements (one or two approvers).
 
-### 7.3 Rollback Is a Job, Not a Manual Step
+### CI-027 — Automated Rollback
 
-The pipeline can roll back to the previous version. A rollback is a
-re-run of a previously successful deploy, not an ad-hoc `kubectl`
-command.
+**MUST**
 
-### 7.4 Migration Order
+The pipeline MUST be able to roll back to the previous version. A rollback MUST be a re-run of a previously successful deploy, not an ad-hoc `kubectl` command.
 
-Database migrations run before the new code. The old code must tolerate
-the new schema. See `02-devops-anti-slop.md` section 4.5.
+### CI-028 — Migration Order
 
-### 7.5 Post-Deploy Verification
+**MUST**
 
-After deploy, run a smoke test against the new version. If it fails,
-roll back automatically.
+Database migrations MUST run before the new code. The old code MUST tolerate the new schema. See `02-devops-anti-slop.md` for deployment migration discipline.
 
-### 7.6 Notify on Failure
+### CI-029 — Post-Deploy Verification
 
-A failed production deploy notifies the on-call channel. Silent
-failures are the worst.
+**MUST**
 
-## 8. CI/CD-Specific Anti-Patterns
+After deployment, a smoke test MUST run against the new version. If it fails, the pipeline MUST automatically roll back.
 
-### 8.1 Secrets in YAML
+### CI-030 — Failure Notification
+
+**MUST**
+
+A failed production deploy MUST notify the on-call channel. Silent failures are prohibited.
+
+## AI-Specific CI/CD Discipline
+
+### CI-050 — Pipeline Syntax Verification
+
+**MUST**
+
+Before generating or modifying a CI/CD configuration file, the assistant MUST verify that the syntax, stage names, and action references are valid for the target CI provider and version. Invented action names or syntax produce pipeline failures that are invisible until runtime.
+
+See MAS-036 in `_universal/00-master-anti-slop.md`.
+
+### CI-051 — Action and Plugin Verification
+
+**MUST**
+
+Before using a third-party action or plugin (e.g., `actions/checkout@v4`), the assistant MUST verify the action exists at the specified version. Invented actions or versions cause pipeline failures and supply chain risks.
+
+See MAS-036 in `_universal/00-master-anti-slop.md`.
+
+### CI-052 — Existing Pipeline Discovery
+
+**MUST**
+
+Before creating a new pipeline job or stage, the assistant MUST search the project's existing CI configuration for an equivalent job. Inventing parallel jobs for the same purpose creates maintenance burden and inconsistent outputs.
+
+See MAS-035 in `_universal/00-master-anti-slop.md`.
+
+## Anti-Patterns
+
+### CI-031 — Secrets in YAML
+
+**MUST NOT**
+
+Secrets MUST NEVER be hardcoded in YAML files. Even in a private repository, secrets in Git history are permanent.
+
+Example (illustrative, YAML):
 
 BAD:
 ```yaml
 - run: curl -H "Authorization: Bearer ghp_xxx" ...
 ```
+
 GOOD:
 ```yaml
 - run: curl -H "Authorization: Bearer ${{ secrets.TOKEN }}" ...
 ```
 
-Even in a private repository, secrets in Git history are permanent.
+### CI-032 — Long-Running Pipeline
 
-### 8.2 Long-Running Pipelines
+**SHOULD NOT**
 
-A pipeline that takes 30 minutes per commit is a pipeline developers
-avoid. Profile the slowest jobs and fix them.
+A pipeline that takes 30 minutes per commit is a pipeline developers avoid. The slowest jobs SHOULD be profiled and optimized.
 
-### 8.3 Rebuilding Dependencies Every Run
+### CI-033 — Low Cache Hit Rate
 
-Covered in 3.1.
+**MUST NOT**
 
-### 8.4 Cache Hit Rate Below 80%
+A cache that misses more than it hits (below 80%) is misconfigured. The key strategy MUST be reviewed and fixed.
 
-A cache that misses more than it hits is misconfigured. Check the key
-strategy.
+### CI-034 — Missing Job Timeout
 
-### 8.5 No Timeout on Jobs
+**MUST**
 
-A hanging job consumes a runner for hours. Set a timeout on every
-job.
+Every job MUST have a timeout. A hanging job consumes a runner for hours.
 
-### 8.6 Deploy From Feature Branches
+### CI-035 — Feature Branch Production Deploy
 
-BAD: Any branch can deploy to production.
-GOOD: Only `main` (or a release branch) deploys to production.
+**MUST NOT**
 
-### 8.7 No Rollback
+Production deployment from feature branches is prohibited. Only `main` (or a release branch) MUST deploy to production.
 
-Covered in 7.3.
+### CI-036 — Network-Dependent Tests
 
-### 8.8 Tests That Depend on Network
+**MUST NOT**
 
-BAD: A unit test that calls `api.github.com`.
-GOOD: A test with a mocked or local server.
+Unit tests MUST NOT call external services (e.g., `api.github.com`). Tests MUST use mocked or local servers. External services fail, and CI fails with them.
 
-External services fail; CI fails with them.
+### CI-037 — Non-Reproducible Install
 
-### 8.9 `npm install` Instead of `npm ci`
+**MUST NOT**
 
-BAD: `npm install` in CI. It may update the lockfile.
-GOOD: `npm ci` for a reproducible install. Same for `yarn --frozen-lockfile`, `pip install --require-hashes`, `go mod download`.
+Non-reproducible install commands MUST NOT be used in CI. `npm ci`, `yarn --frozen-lockfile`, `pip install --require-hashes`, and `go mod download` MUST be used instead of `npm install` to prevent lockfile updates.
 
-### 8.10 Ignoring Exit Codes
+### CI-038 — Exit Code Suppression
 
-BAD: `command || true` to make a failing step pass.
-GOOD: Let it fail, or handle the error explicitly.
+**MUST NOT**
 
-### 8.11 Running Everything on Every Commit
+Suppressing exit codes (e.g., `command || true` to make a failing step pass) is prohibited. The command MUST fail, or the error MUST be handled explicitly.
 
-BAD: A 40-minute end-to-end suite on every push.
-GOOD: Unit tests on every push; E2E on PR merge or a schedule.
+### CI-039 — Over-Frequent Heavy Tests
 
-### 8.12 No Cancellation of Stale Runs
+**SHOULD NOT**
 
-A new push to a branch cancels the previous run. Otherwise, five
-runners process five commits that are all outdated except the last.
+Running a heavy end-to-end suite on every push SHOULD be avoided. Unit tests MUST run on every push; E2E tests SHOULD run on PR merge or a schedule.
 
-### 8.13 Single Point of Failure
+### CI-040 — Stale Run Continuation
 
-BAD: All pipelines depend on one self-hosted runner.
-GOOD: Multiple runners, or a managed pool.
+**MUST**
 
-### 8.14 Deploy Without Approval
+A new push to a branch MUST cancel the previous run. Otherwise, multiple runners process outdated commits.
 
-Covered in 7.2.
+### CI-041 — Single Point of Failure
 
-### 8.15 No Visibility
+**MUST NOT**
 
-BAD: A pipeline with no status badge, no notifications, and no
-dashboard.
-GOOD: A status badge in the README, notifications on failure.
+All pipelines depending on a single self-hosted runner is a single point of failure and MUST NOT be used. Multiple runners or a managed pool MUST be used.
 
-### 8.16 Reused Secrets Across Environments
+### CI-042 — Pipeline Visibility
 
-BAD: The same `DATABASE_URL` in staging and production.
-GOOD: Separate secrets per environment, with separate values.
+**MUST**
 
-### 8.17 Overly Broad Permissions
+Every pipeline MUST have visibility via a status badge in the README and notifications on failure. A pipeline with no visibility is a pipeline nobody watches.
 
-BAD: A CI job with `permissions: write-all`.
-GOOD: `permissions: contents: read, packages: write` and only what is
-needed.
+### CI-043 — Cross-Environment Secret Reuse
 
-### 8.18 Deploy Scripts in the Repository
+**MUST NOT**
 
-BAD: A `deploy.sh` that everyone runs with different flags.
-GOOD: A pipeline that is the single source of truth for how a project
-is deployed.
+Reusing the same secret value (e.g., `DATABASE_URL`) across staging and production is prohibited. Separate secrets per environment MUST be used with separate values.
 
-### 8.19 Environment Variables in CI That Shadow Secrets
+### CI-044 — Broad Permissions
 
-BAD: A workflow that sets `DATABASE_URL=localhost` in `env:` and
-forgets the production override.
-GOOD: Secrets set at the environment level, not the workflow level.
+**MUST NOT**
 
-### 8.20 No Artifact Retention Policy
+Overly broad permissions (e.g., `permissions: write-all`) are prohibited. Permissions MUST be scoped to only what is needed (e.g., `permissions: contents: read, packages: write`).
 
-BAD: Artifacts kept forever.
-GOOD: 30 days for test artifacts, 90 days for release artifacts,
-longer for compliance.
+### CI-045 — Deploy Script Anti-Pattern
 
-### 8.21 Manual Steps in the Pipeline
+**MUST NOT**
 
-BAD: "After the pipeline succeeds, SSH into the server and..."
-GOOD: Every step is in the pipeline.
+Ad-hoc deploy scripts (e.g., `deploy.sh` run with different flags by different developers) are prohibited. The pipeline MUST be the single source of truth for how a project is deployed.
 
-### 8.22 No Feedback on PR
+### CI-046 — Environment Variable Shadowing
 
-BAD: The developer has to check the CI dashboard manually.
-GOOD: A status check on the PR, a comment on failure.
+**MUST NOT**
 
-### 8.23 Pipeline That Only Works on `main`
+Environment variables in CI that shadow secrets (e.g., setting `DATABASE_URL=localhost` in `env:` and forgetting the production override) are prohibited. Secrets MUST be set at the environment level, not the workflow level.
 
-A pipeline that fails on feature branches is a pipeline that was not
-designed for the workflow developers actually use.
+### CI-047 — No Artifact Retention Policy
 
-### 8.24 Tests That Require a Specific Order
+**MUST**
 
-BAD: Test A populates a database that test B reads.
-GOOD: Each test is independent.
+An artifact retention policy MUST be defined (e.g., 30 days for test artifacts, 90 days for release artifacts, longer for compliance). Artifacts MUST NOT be kept forever.
 
-### 8.25 No Cost Awareness
+### CI-048 — Manual Pipeline Steps
 
-CI minutes cost money. A pipeline that runs 1,000 times per day for
-a project with 5 developers is burning budget. Optimize.
+**MUST NOT**
 
-## 9. Response to Violation
+Manual steps in the pipeline (e.g., "After the pipeline succeeds, SSH into the server and...") are prohibited. Every step MUST be in the pipeline.
 
-If a previous response violated a rule here:
+### CI-049 — Missing PR Feedback
 
-```
-In the previous response, [specific rule] was violated. Correction:
-[corrected code]
-```
+**MUST**
 
-No justification. No apology paragraph. Fix and move on.
+Every pipeline MUST provide feedback on the PR via status checks and comments on failure. The developer MUST NOT have to check the CI dashboard manually.
+
+## Response to Violation
+
+When a rule in this file is violated, report:
+
+Violation: CI-{NNN}
+Reason: {one-line reason}
+Correction: {smallest fix}
+
+For multiple violations, report each rule ID separately.
+
+Do not replace a technical correction with a generic explanation.

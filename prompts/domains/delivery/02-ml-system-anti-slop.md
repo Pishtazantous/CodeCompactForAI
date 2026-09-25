@@ -2,467 +2,423 @@
 id: 02-ml-system-anti-slop
 title: "ML System Anti-Slop Layer"
 lang: en
-depends_on: [00-master-anti-slop]
+depends_on: ["_universal/00-style-guide.md", "_universal/00-master-anti-slop.md", "domains/delivery/02-data-pipeline-anti-slop.md"]
 category: domain
 domain_type: delivery
-version: 1
+version: 2
 ---
 
 # ML System Anti-Slop Layer
 
-Layered under `_universal/00-master-anti-slop.md`. Universal rules
-(fabrication, fake completion, over-engineering, silent assumptions,
-security anti-patterns, output format) are NOT repeated here.
+This file defines behavioral contracts specific to machine learning systems. It sits in the delivery layer, below the universal anti-slop rules and alongside data pipeline patterns. It covers data leakage, train/serve skew, reproducibility, evaluation hygiene, model versioning, and production deployment. It does not cover general data pipeline rules (see `02-data-pipeline-anti-slop.md`) or LLM-specific rules (see `02-llm-system-anti-slop.md`).
 
-This file covers rules specific to machine learning systems: data
-leakage, train/serve skew, reproducibility, evaluation hygiene, model
-versioning, and production deployment. General data pipeline rules
-live in `domains/delivery/02-data-pipeline-anti-slop.md`. LLM-specific
-rules live in `domains/delivery/02-llm-system-anti-slop.md`.
+A machine learning system is a contract between data and predictions. Every transformation, seed, and artifact is a guarantee of reproducibility and reliability.
 
-## 1. Stack Assumptions
+## Scope
 
-This layer applies to:
+This file applies to classical ML (scikit-learn, XGBoost, LightGBM), deep learning (PyTorch, TensorFlow, JAX), feature stores (Feast, Tecton), experiment trackers (MLflow, Weights & Biases, Neptune), model registries, and serving frameworks (TorchServe, Triton, BentoML, Ray Serve). The principles are framework-agnostic. The examples use Python and common library syntax where illustrative.
 
-- Classical ML (scikit-learn, XGBoost, LightGBM)
-- Deep learning (PyTorch, TensorFlow, JAX)
-- Feature stores (Feast, Tecton)
-- Experiment trackers (MLflow, Weights & Biases, Neptune)
-- Model registries
-- Serving frameworks (TorchServe, Triton, BentoML, Ray Serve)
+## Rule Severity
 
-The principles are framework-agnostic.
+Severity follows `_universal/00-style-guide.md`.
 
-## 2. Data Discipline
+## Contracts
 
-### 2.1 No Data Leakage
+A machine learning system commits to seven contracts. The table below maps each contract to the rules that enforce it.
 
-The single most common cause of a model that looks great offline and
-fails in production. Leakage sources:
+| Contract | Description | Enforced By |
+|---|---|---|
+| Data Integrity | Training data is free from leakage, temporal skew, and duplication. | ML-001 to ML-006 |
+| Feature Parity | Features are computed identically in training and serving, using point-in-time data. | ML-007 to ML-011 |
+| Reproducibility | Every training run can be exactly recreated from its artifacts and seeds. | ML-012 to ML-016 |
+| Evaluation Hygiene | Models are evaluated on held-out data using task-appropriate metrics and slices. | ML-017 to ML-023 |
+| Artifact Immutability | Models and datasets are versioned, registered, and never overwritten. | ML-024 to ML-027 |
+| Serving Reliability | Inference is validated, budgeted, and degrades gracefully. | ML-028 to ML-033 |
+| Drift Management | Data, concept, and prediction drift are monitored with explicit retraining triggers. | ML-034 to ML-038 |
 
-- Target-derived features (a feature computed from the target).
-- Future information (a feature computed after the prediction time).
-- Duplicate rows split across train and test.
-- Global statistics computed on the full dataset before splitting.
-- Time-based leakage (shuffling time-series data).
+## Data Discipline
 
-### 2.2 Split Before You Compute
+### ML-001 — Data Leakage Prevention
 
-BAD: Compute the mean of the full dataset, then split into train/test.
-GOOD: Split first, compute the mean on the train set, apply it to
-both.
+**MUST**
 
-Every statistic (mean, std, min, max) computed for normalization or
-imputation is computed on train only.
+Data leakage MUST be prevented. Leakage sources include target-derived features, future information, duplicate rows split across train and test, global statistics computed on the full dataset before splitting, and time-based leakage. Leakage causes models to perform well offline and fail in production.
 
-### 2.3 Time-Based Splits for Temporal Data
+### ML-002 — Split-Before-Compute Discipline
 
-BAD: A random split on a time-series dataset.
-GOOD: Train on older data, test on newer data.
+**MUST**
 
-For a forecasting model, the test set must be strictly after the
-training set. A random split is a form of leakage.
+Every statistic (mean, std, min, max) computed for normalization or imputation MUST be computed on the training set only, after splitting. Computing statistics on the full dataset before splitting leaks test set information into the training process.
 
-### 2.4 Group Splits for Clustered Data
+Example (illustrative, Python):
 
-When rows belong to groups (a user, a session, a document), split by
-group. Splitting within a group leaks information across the split.
+BAD:
+```python
+mean = df["feature"].mean()
+df["feature"] = df["feature"] - mean
+train, test = train_test_split(df)
+```
+
+GOOD:
+```python
+train, test = train_test_split(df)
+mean = train["feature"].mean()
+train["feature"] = train["feature"] - mean
+test["feature"] = test["feature"] - mean
+```
+
+### ML-003 — Temporal Split Discipline
+
+**MUST**
+
+For temporal or time-series data, splits MUST be time-based. The test set MUST be strictly after the training set. A random split on time-series data is a form of leakage.
+
+### ML-004 — Group Split Discipline
+
+**MUST**
+
+When rows belong to groups (a user, a session, a document), splits MUST be by group. Splitting within a group leaks information across the split boundary.
+
+Example (illustrative):
 
 BAD: Random split where the same user appears in train and test.
 GOOD: `GroupKFold` or a manual group-based split.
 
-### 2.5 Deduplicate Before Splitting
+### ML-005 — Pre-Split Deduplication
 
-Duplicate rows (or near-duplicates) leak between splits. Deduplicate
-or use a deduplication-aware splitter.
+**MUST**
 
-### 2.6 Validate the Split
+Duplicate rows or near-duplicates MUST be removed or handled with a deduplication-aware splitter before splitting. Duplicates leak between splits and inflate evaluation metrics.
 
-After splitting, check:
+### ML-006 — Split Validation
 
-- Class balance per split.
-- Distribution of key features per split.
-- No overlap of IDs across splits.
+**MUST**
 
-## 3. Feature Engineering
+After splitting, the splits MUST be validated for class balance, distribution of key features, and absence of ID overlap across splits.
 
-### 3.1 Features Computed the Same Way in Train and Serve
+## Feature Engineering
 
-Train/serve skew is the second most common cause of production
-failure. The feature pipeline in training and the feature pipeline at
-serving must be the same code, or verified to produce identical
-results on the same input.
+### ML-007 — Train/Serve Feature Parity
 
-### 3.2 Point-in-Time Correctness
+**MUST**
 
-A feature computed for a training example uses only data available at
-that example's timestamp. Computing `total_orders_last_30_days` with
-data from after the example date is leakage.
+The feature pipeline in training and the feature pipeline at serving MUST be the same code, or verified to produce identical results on the same input. Train/serve skew is a primary cause of production failure.
 
-### 3.3 Feature Store When Multiple Models Share Features
+### ML-008 — Point-in-Time Correctness
 
-A feature store (Feast, Tecton) provides:
+**MUST**
 
-- Point-in-time correct feature values for training.
-- Low-latency feature values for serving.
-- Consistent definitions across models.
+A feature computed for a training example MUST use only data available at that example's timestamp. Computing features with data from after the example date is leakage.
 
-Without a feature store, the training code and the serving code drift.
+### ML-009 — Feature Store Usage
 
-### 3.4 No ID Features Unless Justified
+**SHOULD**
 
-A user ID, an order ID, or a session ID as a raw feature encodes the
-training set's specific IDs. The model memorizes them and fails on
-new IDs.
+When multiple models share features, a feature store (e.g., Feast, Tecton) SHOULD be used to provide point-in-time correct values for training, low-latency values for serving, and consistent definitions across models. Without a feature store, training and serving definitions drift.
 
-Use embeddings or aggregated features instead.
+### ML-010 — Raw ID Feature Prohibition
 
-### 3.5 Null Handling Is Explicit
+**MUST NOT**
 
-Every feature's null policy is defined:
+Raw high-cardinality IDs (user ID, order ID, session ID) MUST NOT be used as features. The model memorizes the training set's specific IDs and fails on new ones. Embeddings or aggregated features MUST be used instead.
 
-- Drop the row.
-- Impute with a fixed value.
-- Impute with the train mean (see section 2.2).
-- Treat null as a separate category.
+### ML-011 — Explicit Null Handling
 
-The choice affects the model's behavior. Do not leave it to the
-library's default silently.
+**MUST**
 
-## 4. Training
+Every feature's null policy (drop, impute with fixed value, impute with train mean, or treat as separate category) MUST be explicitly defined. Null handling MUST NOT be left to the library's silent default.
 
-### 4.1 Reproducibility
+## Training
 
-A training run is reproducible:
+### ML-012 — Training Reproducibility
 
-- Random seeds fixed for every library.
-- Data version pinned (DVC, a dataset hash, a snapshot).
-- Code version pinned (git SHA).
-- Environment pinned (Docker image or a lockfile).
+**MUST**
 
-Without these, "the model was better yesterday" is unfalsifiable.
+A training run MUST be reproducible. Random seeds MUST be fixed, data version pinned, code version pinned, and environment pinned (Docker image or lockfile). Without these, performance claims are unfalsifiable.
 
-### 4.2 Seed Everything
+### ML-013 — Global Seed Setting
 
-Python: `random.seed`, `numpy.random.seed`, `torch.manual_seed`,
-`torch.cuda.manual_seed_all`, `PYTHONHASHSEED`.
+**MUST**
 
-Some GPU operations are still non-deterministic. Document the
-limitation.
+All relevant random seeds MUST be set at the start of the training script.
 
-### 4.3 Version the Dataset
-
-The dataset is a versioned artifact, not "the file that was on disk
-that day". Use DVC, a table snapshot, or a hash.
-
-### 4.4 Hyperparameters Are Logged
-
-Every run logs its hyperparameters. A model that cannot be
-reproduced cannot be debugged.
-
-### 4.5 Baseline First
-
-Before a complex model, train the simplest possible baseline
-(logistic regression, a decision tree, a heuristic). The complex
-model's value is measured against it.
-
-BAD: A 12-layer transformer with no baseline.
-GOOD: A baseline, then a transformer with a documented improvement.
-
-## 5. Evaluation
-
-### 5.1 The Right Metric for the Task
-
-- Classification with balanced classes: accuracy.
-- Classification with imbalanced classes: precision, recall, F1,
-  AUC-PR.
-- Regression: MAE, RMSE, R².
-- Ranking: NDCG, MAP, MRR.
-- Forecasting: MAPE, sMAPE, MASE.
-
-Do not default to accuracy. It hides failure on the minority class.
-
-### 5.2 Evaluation on a Held-Out Set
-
-The test set is used once. Tuning on the test set is leakage.
-
-### 5.3 Confidence Intervals
-
-A single number on a test set is an estimate. Report the confidence
-interval or a bootstrap estimate.
-
-### 5.4 Slice-Based Evaluation
-
-Evaluate the model on meaningful slices:
-
-- By user cohort.
-- By geography.
-- By device type.
-- By class.
-
-A model with 90% overall accuracy and 40% on a critical slice is not
-ready.
-
-### 5.5 Fairness Metrics
-
-Where relevant, report:
-
-- Demographic parity.
-- Equal opportunity.
-- Predictive parity.
-
-Even if the project has no legal requirement, knowing the model's
-behavior across groups matters.
-
-### 5.6 Error Analysis
-
-Look at the worst errors. A model's failure mode is often obvious in
-the misclassified examples, and invisible in the aggregate metric.
-
-### 5.7 No Test Set in CI
-
-A unit test does not touch the test set. Model evaluation is a
-separate, deliberate step.
-
-## 6. Model Versioning and Registry
-
-### 6.1 Every Model Has a Version
-
-A model is a versioned artifact:
-
-- Version number or timestamp.
-- Training data version.
-- Code version.
-- Metrics from evaluation.
-- Hyperparameters.
-
-### 6.2 Registry
-
-A model registry (MLflow, SageMaker Model Registry, Weights & Biases)
-tracks:
-
-- Which model is in production.
-- Which model is in staging.
-- The history of promotions and rollbacks.
-
-### 6.3 Immutable Artifacts
-
-A model version, once registered, is never overwritten. A new
-training run produces a new version.
-
-### 6.4 Signatures
-
-A registered model includes an input/output signature: the expected
-feature types and the output schema. Serving validates against it.
-
-## 7. Serving
-
-### 7.1 Train/Serve Parity
-
-The feature pipeline in training and the feature pipeline at serving
-produce the same values for the same input. Test this.
-
-### 7.2 Latency Budget
-
-A model's inference latency is measured and has a budget. A
-100 ms budget is different from a 1-second budget.
-
-- Batch inference: minutes to hours.
-- Real-time inference: milliseconds to hundreds of milliseconds.
-- Streaming: tens of milliseconds.
-
-### 7.3 Batch vs Real-Time
-
-Batch inference for reporting and offline scoring. Real-time
-inference for user-facing predictions. Do not force one where the
-other fits.
-
-### 7.4 Graceful Degradation
-
-If the model service is down:
-
-- Fall back to a heuristic, a cached prediction, or a default.
-- Never crash the calling service.
-
-### 7.5 Input Validation at Serving
-
-The serving endpoint validates inputs against the model's signature.
-An unexpected input produces a clear error, not a silent wrong
-prediction.
-
-### 7.6 Monitoring
-
-- Prediction distribution over time.
-- Input feature distribution over time.
-- Latency percentiles.
-- Error rate.
-
-An alert when any drifts beyond a threshold.
-
-## 8. Monitoring and Drift
-
-### 8.1 Data Drift
-
-The input distribution changes. Monitor per-feature statistics
-(mean, std, quantiles, null rate) against the training baseline.
-
-### 8.2 Concept Drift
-
-The relationship between inputs and target changes. Monitor the
-model's live performance when ground truth is available (even
-delayed).
-
-### 8.3 Prediction Drift
-
-The distribution of predictions changes. Monitor mean, variance, and
-class balance.
-
-### 8.4 Alert Thresholds
-
-Drift alerts use statistical tests (KS test, PSI, KL divergence) with
-thresholds tuned to the domain.
-
-### 8.5 Retraining Trigger
-
-Define what triggers retraining:
-
-- Scheduled (weekly, monthly).
-- On drift alert.
-- On performance drop below a threshold.
-
-Do not retrain "when someone remembers".
-
-## 9. ML-Specific Anti-Patterns
-
-### 9.1 Data Leakage
-
-Covered in 2.1. The most damaging ML mistake.
-
-### 9.2 Train/Serve Skew
-
-Covered in 3.1.
-
-### 9.3 Notebook-to-Production
-
-A model trained in a Jupyter notebook, then copy-pasted into a
-production script. The two drift immediately.
-
-GOOD: The training code is importable, and the same functions run in
-training and serving.
-
-### 9.4 No Seed
-
-Covered in 4.2.
-
-### 9.5 Accuracy as the Only Metric
-
-Covered in 5.1.
-
-### 9.6 Evaluating on the Training Set
-
-BAD: `model.score(X_train, y_train)` reported as the model's
-performance.
-GOOD: Performance on a held-out set.
-
-### 9.7 Hyperparameter Tuning on the Test Set
-
-Covered in 5.2.
-
-### 9.8 No Baseline
-
-Covered in 4.5.
-
-### 9.9 Feature Store Not Used When It Should Be
-
-Two models with two slightly different definitions of
-`user_lifetime_value`. The definitions drift. Predictions are
-inconsistent.
-
-### 9.10 Silent Model Updates
-
-A new model version deployed without announcement. Downstream
-consumers see changed predictions with no warning.
-
-### 9.11 No Rollback
-
-A model that performs worse in production than offline has no path
-back to the previous version. Keep the previous model registered and
-deployable.
-
-### 9.12 Monitoring Only Latency
-
-A model is fast and wrong. Monitoring latency without monitoring
-accuracy or drift misses the actual problem.
-
-### 9.13 Ignoring Class Imbalance
-
-A fraud detection model with 99.9% accuracy that never predicts
-fraud. Accuracy is meaningless here.
-
-### 9.14 Raw IDs as Features
-
-Covered in 3.4.
-
-### 9.15 Global Statistics From Full Data
-
-Covered in 2.2.
-
-### 9.16 Random Split on Time-Series
-
-Covered in 2.3.
-
-### 9.17 No Confidence Intervals
-
-Covered in 5.3.
-
-### 9.18 Data Versioning by Filename
-
-BAD: `data_v2_final_final.csv`.
-GOOD: A hash, a DVC pointer, or a table snapshot with a timestamp.
-
-### 9.19 No Error Analysis
-
-Covered in 5.6.
-
-### 9.20 Model in the Repository
-
-BAD: A 2 GB `model.pkl` committed to Git.
-GOOD: The model in a registry or object storage, referenced by
-version.
-
-### 9.21 Serving a Notebook's Model Object Directly
-
-A pickled scikit-learn model that depends on a specific version of
-scikit-learn. Upgrading the library breaks the model.
-
-GOOD: Export the model in a framework-agnostic format (ONNX) or pin
-the serving environment to the training environment.
-
-### 9.22 No Input Validation at Serving
-
-Covered in 7.5.
-
-### 9.23 Fallback Crashes
-
-Covered in 7.4.
-
-### 9.24 Retraining Without Evaluation
-
-A new model trained and deployed without comparing to the current
-production model. The new one may be worse.
-
-### 9.25 Overwriting the Production Model
-
-BAD: `cp new_model.pkl production_model.pkl`.
-GOOD: A versioned registry with a promotion step.
-
-## 10. Response to Violation
-
-If a previous response violated a rule here:
-
-```
-In the previous response, [specific rule] was violated. Correction:
-[corrected code]
+Example (illustrative, Python):
+```python
+random.seed(42)
+numpy.random.seed(42)
+torch.manual_seed(42)
+torch.cuda.manual_seed_all(42)
+os.environ["PYTHONHASHSEED"] = "42"
 ```
 
-No justification. No apology paragraph. Fix and move on.
+Some GPU operations may remain non-deterministic. This limitation MUST be documented.
+
+### ML-014 — Dataset Versioning
+
+**MUST**
+
+The dataset MUST be a versioned artifact (via DVC, a dataset hash, or a table snapshot). Relying on "the file that was on disk that day" is prohibited.
+
+### ML-015 — Hyperparameter Logging
+
+**MUST**
+
+Every training run MUST log its hyperparameters to an experiment tracker. A model that cannot be reproduced cannot be debugged.
+
+### ML-016 — Baseline First Discipline
+
+**MUST**
+
+Before training a complex model, the simplest possible baseline (logistic regression, decision tree, heuristic) MUST be trained. The complex model's value MUST be measured against this baseline.
+
+## Evaluation
+
+### ML-017 — Task-Appropriate Metrics
+
+**MUST**
+
+The evaluation metric MUST match the task. Accuracy MUST NOT be used as the default for imbalanced classification. Appropriate metrics include precision, recall, F1, AUC-PR for imbalanced classification; MAE, RMSE, R² for regression; NDCG, MAP for ranking; and MAPE, MASE for forecasting.
+
+### ML-018 — Held-Out Test Set
+
+**MUST**
+
+The test set MUST be used exactly once for final evaluation. Tuning hyperparameters or making architectural decisions on the test set is leakage.
+
+### ML-019 — Confidence Interval Reporting
+
+**SHOULD**
+
+A single number on a test set is an estimate. Confidence intervals or bootstrap estimates SHOULD be reported to quantify evaluation uncertainty.
+
+### ML-020 — Slice-Based Evaluation
+
+**MUST**
+
+The model MUST be evaluated on meaningful slices (user cohort, geography, device type, class). A model with high overall accuracy but poor performance on a critical slice is not ready for production.
+
+### ML-021 — Fairness Metric Reporting
+
+**SHOULD**
+
+Where relevant, fairness metrics (demographic parity, equal opportunity, predictive parity) SHOULD be reported across protected groups, regardless of legal requirements.
+
+### ML-022 — Error Analysis
+
+**MUST**
+
+The worst errors MUST be analyzed. A model's failure mode is often obvious in misclassified examples and invisible in aggregate metrics.
+
+### ML-023 — Test Set Isolation
+
+**MUST NOT**
+
+Unit tests in CI MUST NOT access the test set. Model evaluation MUST be a separate, deliberate step.
+
+## Model Versioning and Registry
+
+### ML-024 — Model Artifact Metadata
+
+**MUST**
+
+Every model MUST be a versioned artifact containing the version number, training data version, code version, evaluation metrics, and hyperparameters.
+
+### ML-025 — Model Registry Usage
+
+**MUST**
+
+A model registry (e.g., MLflow, SageMaker Model Registry) MUST be used to track which model is in production, which is in staging, and the history of promotions and rollbacks.
+
+### ML-026 — Artifact Immutability
+
+**MUST NOT**
+
+A registered model version MUST NEVER be overwritten. A new training run MUST produce a new version.
+
+### ML-027 — Model Signature Definition
+
+**MUST**
+
+A registered model MUST include an input/output signature defining expected feature types and the output schema. Serving endpoints MUST validate against it.
+
+## Serving
+
+### ML-028 — Train/Serve Parity Testing
+
+**MUST**
+
+The feature pipeline in training and serving MUST be explicitly tested to ensure it produces the same values for the same input.
+
+### ML-029 — Inference Latency Budget
+
+**MUST**
+
+A model's inference latency MUST be measured and have a defined budget (e.g., milliseconds for real-time, minutes for batch).
+
+### ML-030 — Batch vs Real-Time Separation
+
+**MUST**
+
+Batch inference MUST be used for reporting and offline scoring. Real-time inference MUST be used for user-facing predictions. The wrong paradigm MUST NOT be forced for a given use case.
+
+### ML-031 — Graceful Degradation
+
+**MUST**
+
+If the model service is down, the system MUST fall back to a heuristic, a cached prediction, or a default. The calling service MUST NOT crash.
+
+### ML-032 — Serving Input Validation
+
+**MUST**
+
+The serving endpoint MUST validate inputs against the model's signature. Unexpected inputs MUST produce a clear error, not a silent wrong prediction.
+
+### ML-033 — Serving Telemetry Monitoring
+
+**MUST**
+
+Prediction distribution, input feature distribution, latency percentiles, and error rate MUST be monitored. Alerts MUST fire when metrics drift beyond thresholds.
+
+## Monitoring and Drift
+
+### ML-034 — Data Drift Monitoring
+
+**MUST**
+
+Input distribution changes MUST be monitored by tracking per-feature statistics (mean, std, quantiles, null rate) against the training baseline.
+
+### ML-035 — Concept Drift Monitoring
+
+**MUST**
+
+When ground truth is available (even delayed), the model's live performance MUST be monitored to detect changes in the relationship between inputs and target.
+
+### ML-036 — Prediction Drift Monitoring
+
+**MUST**
+
+The distribution of predictions (mean, variance, class balance) MUST be monitored over time.
+
+### ML-037 — Statistical Drift Thresholds
+
+**MUST**
+
+Drift alerts MUST use statistical tests (KS test, PSI, KL divergence) with thresholds tuned to the domain, rather than arbitrary percentage changes.
+
+### ML-038 — Explicit Retraining Triggers
+
+**MUST**
+
+Retraining triggers MUST be explicitly defined (scheduled, on drift alert, or on performance drop). Retraining MUST NOT rely on ad-hoc human memory.
+
+## AI-Specific ML Discipline
+
+### ML-060 — Library API Verification
+
+**MUST**
+
+Before using a machine learning library API (e.g., a specific scikit-learn estimator, PyTorch layer, or XGBoost parameter), the assistant MUST verify the method or parameter exists in the installed version. Invented APIs or deprecated parameters produce runtime errors or silent fallbacks to defaults.
+
+See MAS-036 in `_universal/00-master-anti-slop.md`.
+
+### ML-061 — Existing Pipeline Discovery
+
+**MUST**
+
+Before creating a new feature transformation, model architecture, or training loop, the assistant MUST search the project for an existing equivalent. Inventing parallel feature definitions or training scripts creates train/serve skew and maintenance burden.
+
+See MAS-035 in `_universal/00-master-anti-slop.md`.
+
+### ML-062 — Algorithm Complexity Restraint
+
+**SHOULD**
+
+The assistant SHOULD NOT introduce complex model architectures (e.g., deep ensembles, custom attention mechanisms) when a simpler baseline (e.g., logistic regression, XGBoost) has not been established and proven insufficient.
+
+See MAS-038 in `_universal/00-master-anti-slop.md`.
+
+## Anti-Patterns
+
+### ML-039 — Notebook-to-Production Prohibition
+
+**MUST NOT**
+
+A model trained in an interactive notebook and copy-pasted into a production script is prohibited. The training code MUST be importable, and the same functions MUST run in training and serving.
+
+### ML-040 — Training Set Evaluation Prohibition
+
+**MUST NOT**
+
+Reporting performance on the training set (e.g., `model.score(X_train, y_train)`) as the model's true performance is prohibited. Evaluation MUST occur on a held-out set.
+
+### ML-041 — Feature Definition Drift
+
+**MUST NOT**
+
+Multiple models using slightly different definitions of the same concept (e.g., `user_lifetime_value`) without a centralized feature store or registry is prohibited. Definitions MUST NOT drift.
+
+### ML-042 — Silent Model Update Prohibition
+
+**MUST NOT**
+
+Deploying a new model version without announcement is prohibited. Downstream consumers MUST be warned of changed predictions.
+
+### ML-043 — Model Rollback Capability
+
+**MUST**
+
+A path back to the previous model version MUST be maintained. The previous model MUST remain registered and deployable in case the new model performs worse in production.
+
+### ML-044 — Accuracy and Drift Monitoring
+
+**MUST NOT**
+
+Monitoring only latency without monitoring accuracy or drift is prohibited. A model that is fast and wrong is a failure.
+
+### ML-045 — Class Imbalance Metric Discipline
+
+**MUST NOT**
+
+Using accuracy as the sole metric for highly imbalanced datasets (e.g., fraud detection) is prohibited. Appropriate metrics (AUC-PR, Recall) MUST be used.
+
+### ML-046 — Cryptographic Data Versioning
+
+**MUST**
+
+Datasets MUST be versioned using a hash, a DVC pointer, or a table snapshot with a timestamp. Versioning by filename (e.g., `data_v2_final_final.csv`) is prohibited.
+
+### ML-047 — Model Binary Git Prohibition
+
+**MUST NOT**
+
+Large model binaries (e.g., `model.pkl`) MUST NOT be committed to Git. Models MUST be stored in a registry or object storage and referenced by version.
+
+### ML-048 — Framework-Agnostic Model Export
+
+**SHOULD**
+
+Models SHOULD be exported in a framework-agnostic format (e.g., ONNX) or the serving environment MUST be strictly pinned to the training environment to prevent library version mismatches.
+
+### ML-049 — Pre-Deployment Model Comparison
+
+**MUST NOT**
+
+Deploying a retrained model without comparing it to the current production model is prohibited. The new model MUST be evaluated against the baseline.
+
+### ML-050 — Production Model Overwrite Prohibition
+
+**MUST NOT**
+
+Overwriting a production model file in place (e.g., `cp new_model.pkl production_model.pkl`) is prohibited. A versioned registry with a promotion step MUST be used.
+
+## Response to Violation
+
+When a rule in this file is violated, report:
+
+Violation: ML-{NNN}
+Reason: {one-line reason}
+Correction: {smallest fix}
+
+For multiple violations, report each rule ID separately.
+
+Do not replace a technical correction with a generic explanation.

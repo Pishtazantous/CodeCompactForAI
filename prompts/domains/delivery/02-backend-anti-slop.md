@@ -5,7 +5,7 @@ lang: en
 depends_on: ["_universal/00-style-guide.md", "_universal/00-master-anti-slop.md"]
 category: domain
 domain_type: delivery
-version: 4
+version: 5
 ---
 
 # Backend Anti-Slop Layer
@@ -31,12 +31,12 @@ A backend commits to nine contracts. The table below maps each contract to the r
 | Response Shape | Every response has a documented shape. Success and error shapes are consistent. | BE-001, BE-003 |
 | Status Code Correctness | The HTTP status code matches the outcome. | BE-002 |
 | Input Validation | Every external input is validated before use. | BE-006 to BE-012 |
-| Error Containment | An error in one request does not affect other requests. | BE-013, BE-017 |
+| Error Containment | An error in one request does not affect other requests. | BE-013, BE-017, BE-090 |
 | Identity Integrity | The server decides who the caller is. Client-provided identity is never trusted. | BE-020, BE-025 |
 | Data Consistency | Every write operation either completes fully or leaves no trace. | BE-032 |
 | Observability | Every request is traceable. Logs and metrics answer what happened. | BE-041, BE-042 |
 | Configuration Integrity | Configuration is validated at startup. Invalid configuration fails fast. | BE-047, BE-049 |
-| Graceful Lifecycle | Startup and shutdown are controlled. In-flight requests complete. | BE-064 |
+| Graceful Lifecycle | Startup and shutdown are controlled. In-flight requests complete. | BE-064, BE-091 |
 
 ## API Contract Discipline
 
@@ -201,6 +201,8 @@ GOOD:
 
 One central handler MUST catch all errors from route handlers and convert them to responses. Route handlers MUST NOT set error status codes directly.
 
+See MAS-037 in `_universal/00-master-anti-slop.md`.
+
 ### BE-014 — Typed Domain Errors
 
 **MUST**
@@ -251,6 +253,8 @@ BAD:
 ```typescript
 try { await processOrder(order); } catch (e) {}
 ```
+
+See MAS-037 in `_universal/00-master-anti-slop.md`.
 
 ### BE-018 — Operational vs Programmer Errors
 
@@ -443,6 +447,8 @@ Example (illustrative queue names): BullMQ, Celery, Sidekiq, NATS JetStream.
 **MUST**
 
 Every HTTP, database, cache, and queue call MUST have a timeout. A call without one hangs forever.
+
+See MAS-040 in `_universal/00-master-anti-slop.md`.
 
 ### BE-037 — No Shared Mutable State
 
@@ -683,6 +689,8 @@ Before writing any database query, the assistant MUST verify that the referenced
 
 If the schema cannot be verified, the assistant MUST ask the user rather than guess.
 
+See MAS-036 in `_universal/00-master-anti-slop.md`.
+
 ### BE-068 — ORM Method Verification
 
 **MUST**
@@ -692,6 +700,8 @@ Before using an ORM method, the assistant MUST verify the method exists in the p
 BAD: Using `db.users.findByEmail()` when the ORM only has `db.users.findOne({ email })`.
 
 GOOD: Fetch the ORM's model file or documentation first, then use the verified method.
+
+See MAS-036 in `_universal/00-master-anti-slop.md`.
 
 ### BE-069 — Migration Pattern Verification
 
@@ -705,6 +715,8 @@ Before creating a migration, the assistant MUST fetch and follow the project's e
 
 Before writing database connection code, the assistant MUST verify the project's existing connection pattern. Connection pooling, retry logic, and transaction handling differ across projects. Invented connection patterns create resource leaks.
 
+See MAS-036 in `_universal/00-master-anti-slop.md`.
+
 ### BE-071 — Existing Pattern Discovery
 
 **MUST**
@@ -713,6 +725,8 @@ Before creating a new service, repository, middleware, or utility, the assistant
 
 This prevents duplicate data layers, competing validators, and fragmented patterns.
 
+See MAS-035 in `_universal/00-master-anti-slop.md`.
+
 ### BE-072 — Architecture Restraint
 
 **SHOULD**
@@ -720,6 +734,8 @@ This prevents duplicate data layers, competing validators, and fragmented patter
 The assistant SHOULD NOT introduce architectural layers, design patterns, or abstractions that the project does not already use. A simple CRUD endpoint does not need a factory, a strategy pattern, or an event bus unless the project already uses them.
 
 Speculative architecture increases maintenance burden without immediate value.
+
+See MAS-038 in `_universal/00-master-anti-slop.md`.
 
 ## Anti-Patterns
 
@@ -830,6 +846,24 @@ A paginated response without a cursor or total count is prohibited. Clients cann
 **MUST NOT**
 
 A migration that locks a table for hours in production is prohibited. Split into batches or run during a maintenance window.
+
+## Response and Resource Completeness
+
+### BE-090 — Complete Error Responses
+
+**MUST**
+
+Every endpoint that can fail MUST return a structured error response. Every endpoint that may return no data MUST return an explicit empty representation. Silent failures and missing error states are prohibited.
+
+See MAS-037 in `_universal/00-master-anti-slop.md`.
+
+### BE-091 — Resource Cleanup
+
+**MUST**
+
+Every connection, file handle, or lock acquired by the assistant's code MUST be released when no longer needed. Unreleased resources cause exhaustion and hangs.
+
+See MAS-040 in `_universal/00-master-anti-slop.md`.
 
 ## Response to Violation
 

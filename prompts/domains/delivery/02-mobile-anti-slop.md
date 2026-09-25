@@ -2,224 +2,151 @@
 id: 02-mobile-anti-slop
 title: "Mobile Anti-Slop Layer"
 lang: en
-depends_on: [00-master-anti-slop]
+depends_on: ["_universal/00-style-guide.md", "_universal/00-master-anti-slop.md"]
 category: domain
 domain_type: delivery
-version: 2
+version: 3
 ---
 
 # Mobile Anti-Slop Layer
 
-Layered under `_universal/00-master-anti-slop.md`. Universal rules
-(fabrication, fake completion, over-engineering, silent assumptions,
-generic security, dependency addition, output format) are NOT
-repeated here.
+This file defines behavioral contracts specific to mobile applications. It sits in the delivery layer, below the universal anti-slop rules and above framework-specific patterns. It covers app lifecycle, permissions, offline behavior, secure storage, push notifications, platform conventions, and store compliance. It does not cover general frontend rules (see `02-frontend-anti-slop.md`), framework-specific rules for React Native or Flutter (see framework files), language rules (see language files), or accessibility and performance in detail (see concern files).
 
-This file covers rules specific to mobile applications: app
-lifecycle, permissions, offline behavior, secure storage, push
-notifications, platform conventions, and store compliance. It does
-NOT cover general frontend rules (see `02-frontend-anti-slop.md`),
-framework-specific rules for React Native or Flutter (see the
-framework files), language rules (see the language files), or
-accessibility and performance in detail (see the concern files).
+A mobile app runs on a device the user carries. It is suspended, resumed, killed by the OS, and restarted at unpredictable times. The OS is hostile to long-running processes.
 
-A mobile app runs on a device the user carries. It is suspended,
-resumed, killed by the OS, and restarted at unpredictable times. The
-OS is hostile to long-running processes. The rules below reflect
-that reality.
+## Scope
 
-## 1. Stack Assumptions
+This file applies to native iOS (Swift, SwiftUI, UIKit), native Android (Kotlin, Jetpack Compose, XML views), and cross-platform frameworks (React Native, Flutter, .NET MAUI, Kotlin Multiplatform). The examples use React Native and Swift syntax where illustrative. Platform-specific framework rules live in framework files. Platform-specific language rules live in language files.
 
-This file applies to:
+## Rule Severity
 
-- Native iOS (Swift, SwiftUI, UIKit).
-- Native Android (Kotlin, Jetpack Compose, XML views).
-- Cross-platform (React Native, Flutter, .NET MAUI, Kotlin
-  Multiplatform).
+Severity follows `_universal/00-style-guide.md`.
 
-The examples use React Native and Swift syntax. The principles are
-platform-agnostic. Platform-specific framework rules (React Native
-hooks, Flutter widgets, SwiftUI property wrappers) live in the
-framework files. Platform-specific language rules (Swift optionals,
-Kotlin nullability) live in the language files.
+## Contracts
 
-## 2. Delivery Contracts
+A mobile app commits to seven contracts. The table below maps each contract to the rules that enforce it.
 
-A mobile app commits to seven contracts. Every section below
-enforces one or more of these.
+| Contract | Description | Enforced By |
+|---|---|---|
+| State Survival | State survives backgrounding, process death, and restart. | MOB-001, MOB-002, MOB-056 |
+| Permission Honesty | Only request used permissions, explain why, handle denial gracefully. | MOB-007 to MOB-012 |
+| Offline Tolerance | Works without network, queues writes, shows state. | MOB-013 to MOB-019 |
+| Secure Storage | Secrets in Keychain/Keystore, PII encrypted, cleaned on logout. | MOB-021 to MOB-023, MOB-055 |
+| Store Compliance | Follows Apple/Google guidelines, no private APIs. | MOB-044 to MOB-049 |
+| Battery Discipline | No background polling, respects OS battery modes. | MOB-037, MOB-069 |
+| Platform Convention | Follows HIG/Material, safe areas, touch targets, system gestures. | MOB-038 to MOB-043 |
 
-### 2.1 State Survival
+## App Lifecycle
 
-Any state the user can see survives backgrounding, process death,
-and restart. Data is persisted before the app moves to the
-background, not after.
+### MOB-001 — Save State on Background
 
-### 2.2 Permission Honesty
+**MUST**
 
-The app requests only the permissions it uses and explains why. A
-denied permission has a graceful fallback.
+When the app moves to the background, user-visible state MUST be persisted before the OS terminates the process. Saving only on explicit user action causes data loss if the user backgrounds the app without tapping save.
 
-### 2.3 Offline Tolerance
-
-The app works, in degraded form, without network. Every network
-call has a failure path that does not crash the app.
-
-### 2.4 Secure Storage
-
-Tokens, credentials, and PII go in the platform's secure storage
-(Keychain, Keystore). Never in plain preferences.
-
-### 2.5 Store Compliance
-
-The app follows Apple App Store Review Guidelines, Google Play
-Policies, and the platform's requirements. Non-compliance means
-removal.
-
-### 2.6 Battery Discipline
-
-The app does not poll in the background, does not hold wake locks
-unnecessarily, and respects the OS's battery-saving modes.
-
-### 2.7 Platform Convention
-
-The app follows the platform's conventions (iOS HIG, Material
-Design) unless the design genuinely requires deviation.
-
-## 3. App Lifecycle
-
-### 3.1 Save State on Background
-
-When the app moves to the background, persist user-visible state
-before the OS terminates the process.
+Example (illustrative, Swift):
 
 BAD:
 ```swift
-// Save only on user action.
-func saveButtonTapped() {
-    saveDocument()
-}
+func saveButtonTapped() { saveDocument() }
 ```
-
-If the user backgrounds the app without tapping, unsaved changes
-are lost.
 
 GOOD:
 ```swift
 func scenePhaseDidChange(to phase: ScenePhase) {
-    if phase == .background {
-        saveDocument()
-    }
+    if phase == .background { saveDocument() }
 }
 ```
 
-### 3.2 Handle All Launch Types
+### MOB-002 — Handle All Launch Types
 
-Every launch is either cold (process created), warm (process
-resumed), or hot (activity/view recreated). The app handles all
-three.
+**MUST**
 
-BAD: Code that assumes the app boots into a known screen.
+Every launch (cold, warm, or hot) MUST be handled. The app MUST NOT assume it boots into a known screen. Navigation state and user-visible data MUST be restored on every launch.
 
-GOOD: Restore the navigation state and user-visible data on every
-launch.
+### MOB-003 — Handle Interruptions
 
-### 3.3 Handle Interruptions
+**MUST**
 
-Phone calls, incoming messages, and system dialogs interrupt the
-app. Pause audio, stop animations, and pause timers. Resume on
-return.
+Phone calls, incoming messages, and system dialogs interrupt the app. Audio MUST be paused, animations stopped, and timers paused. They MUST resume on return.
 
-### 3.4 Do Not Fight the OS
+### MOB-004 — OS Lifecycle Compliance
 
-- Do not prevent the user from backgrounding the app.
-- Do not use hacks to extend background execution beyond the
-  platform's allowance.
-- Do not keep the screen awake without a user-visible reason.
+**MUST NOT**
 
-### 3.5 Handle Deep Links and Universal Links
+The app MUST NOT fight the OS. Preventing the user from backgrounding the app, using hacks to extend background execution beyond the platform's allowance, or keeping the screen awake without a user-visible reason is prohibited.
 
-A deep link opens a specific screen, not the home screen. The link
-carries a route and parameters that the app resolves.
+### MOB-005 — Deep Link Handling
 
-BAD: A deep link that opens the home screen and ignores the payload.
+**MUST**
 
-GOOD: A deep link handler that validates the URL and navigates.
+A deep link MUST open a specific screen, not the home screen. The link carries a route and parameters that the app MUST validate and resolve.
 
-### 3.6 Android Back Button
+### MOB-006 — Android Back Button
 
-The Android back button works on every screen. A screen without a
-back path traps the user.
+**MUST**
 
-BAD: A modal with no close button and no back handling.
+The Android back button MUST work on every screen. A screen without a back path traps the user. Back MUST close modals and return to the previous screen.
 
-GOOD: Back closes the modal and returns to the previous screen.
+## Permissions
 
-## 4. Permissions
+### MOB-007 — Contextual Permission Request
 
-### 4.1 Request in Context
+**MUST**
 
-Request a permission when the user takes an action that requires
-it. Never on first launch.
+Permissions MUST be requested when the user takes an action that requires them, never on first launch. A permission prompt before any interaction is denied at a higher rate, and on iOS a denial is one-shot.
 
-BAD: Requesting camera, location, and notification permissions at
-startup.
+### MOB-008 — Pre-Permission Explanation
 
-GOOD: Requesting camera when the user taps "Take photo".
+**SHOULD**
 
-A permission prompt before any interaction is denied at a higher
-rate, and on iOS a denial is one-shot.
+A pre-permission screen explaining why the app needs the permission SHOULD be shown before the OS prompt. The OS prompt is one-shot on iOS; once denied, re-prompting requires a trip to Settings.
 
-### 4.2 Explain Before Prompting
+### MOB-009 — Graceful Denial Handling
 
-Show a pre-permission screen explaining why the app needs the
-permission. The OS prompt is one-shot on iOS. Once denied,
-re-prompting requires a trip to Settings.
+**MUST**
 
-### 4.3 Handle Denial Gracefully
+Every permission can be denied. Every feature behind a permission MUST have a fallback or a clear message with a path to Settings. A blank screen on denial is prohibited.
 
-Every permission can be denied. Every feature behind a permission
-has a fallback or a clear message with a path to Settings.
+### MOB-010 — Minimum Permission Scope
 
-BAD: A blank screen when the camera permission is denied.
+**MUST**
 
-GOOD: A message explaining the feature requires camera access, with
-a button to open Settings.
+The minimum required scope MUST be requested: "when in use" location instead of "always", limited photo access instead of full library, specific contacts instead of full address book.
 
-### 4.4 Minimum Permission Scope
+### MOB-011 — Manifest Hygiene
 
-- "When in use" location instead of "always" when possible.
-- Limited photo access instead of full library access when
-  possible.
-- Specific contacts instead of full address book.
+**MUST**
 
-### 4.5 Request Only What You Use
+Every permission in the manifest is a signal to the user and store reviewers. Unused permissions MUST be removed.
 
-Every permission in the manifest is a signal to the user and to
-the store reviewers. Remove unused permissions.
+### MOB-012 — iOS Purpose Strings
 
-### 4.6 Explain in `Info.plist` (iOS)
+**MUST**
 
-iOS requires a purpose string for each permission. Generic
-descriptions ("This app needs camera access") are rejected.
-Specific ones ("To scan QR codes") pass.
+iOS requires a purpose string for each permission in `Info.plist`. Generic descriptions ("This app needs camera access") are rejected. Specific ones ("To scan QR codes") MUST be used.
 
-## 5. Offline and Network
+## Offline and Network
 
-### 5.1 Assume No Network
+### MOB-013 — Network Failure Paths
 
-Mobile networks drop. Tunnels, elevators, planes, subways. Every
-network call has a failure path.
+**MUST**
 
-### 5.2 Cache What Can Be Cached
+Mobile networks drop (tunnels, elevators, planes). Every network call MUST have a failure path that does not crash the app.
 
-- Static assets: bundled or downloaded once.
-- API responses: cached with a clear expiry.
-- User data: local persistence for offline reads.
+### MOB-014 — Caching Strategy
 
-### 5.3 Queue Writes When Offline
+**SHOULD**
 
-A user action that fails due to network is queued and retried when
-the connection returns. Do not lose the user's input.
+Static assets SHOULD be bundled or downloaded once. API responses SHOULD be cached with a clear expiry. User data SHOULD use local persistence for offline reads.
+
+### MOB-015 — Offline Write Queueing
+
+**MUST**
+
+A user action that fails due to network MUST be queued and retried when the connection returns. The user's input MUST NOT be lost.
+
+Example (illustrative, TypeScript):
 
 BAD:
 ```typescript
@@ -237,43 +164,49 @@ async function sendMessage(text: string) {
 }
 ```
 
-### 5.4 Distinguish Network Errors From Server Errors
+### MOB-016 — Error Type Distinction
 
-"No connection" and "server returned 500" are different. The user
-cannot fix the second by reconnecting.
+**MUST**
 
-### 5.5 Do Not Retry Aggressively
+"No connection" and "server returned 500" MUST be distinguished. The user cannot fix a server error by reconnecting.
 
-Mobile data is metered, and battery is limited. Exponential backoff
-with a ceiling.
+### MOB-017 — Exponential Backoff
 
-BAD: Retrying every 100 ms.
+**MUST**
 
-GOOD: Retrying at 1 s, 2 s, 4 s, 8 s, capped at 60 s, with jitter.
+Mobile data is metered, and battery is limited. Retries MUST use exponential backoff with a ceiling and jitter (e.g., 1s, 2s, 4s, 8s, capped at 60s). Aggressive polling (e.g., every 100ms) is prohibited.
 
-### 5.6 Show Connectivity State
+### MOB-018 — Connectivity State Indicator
 
-A user who cannot tell whether the app is offline blames the app.
-A visible offline indicator prevents confusion.
+**SHOULD**
 
-### 5.7 Cancel Requests on Screen Exit
+A visible offline indicator SHOULD be shown. A user who cannot tell whether the app is offline blames the app.
 
-A request started on screen A that completes after the user leaves
-A is wasted. Cancel it via the framework's abort mechanism.
+See MAS-037 in `_universal/00-master-anti-slop.md`.
 
-## 6. Storage and Secrets
+### MOB-019 — Request Cancellation on Exit
 
-### 6.1 Choose the Right Storage
+**MUST**
 
-- **User preferences**: `UserDefaults`, `SharedPreferences`.
-- **Small structured data**: SQLite, Room, Core Data.
-- **Large files**: file system, not database.
-- **Secrets**: Keychain, Keystore.
+A request started on screen A that completes after the user leaves A is wasted. It MUST be cancelled via the framework's abort mechanism.
 
-### 6.2 Never Store Secrets in Plain Storage
+See MAS-040 in `_universal/00-master-anti-slop.md`.
 
-Tokens, passwords, and keys go in Keychain (iOS) or Keystore
-(Android). Never in `UserDefaults` or `SharedPreferences`.
+## Storage and Secrets
+
+### MOB-020 — Storage Selection
+
+**MUST**
+
+The correct storage mechanism MUST be used: `UserDefaults`/`SharedPreferences` for preferences, SQLite/Room/Core Data for structured data, file system for large files, and Keychain/Keystore for secrets.
+
+### MOB-021 — Secure Secret Storage
+
+**MUST NOT**
+
+Tokens, passwords, and keys MUST go in Keychain (iOS) or Keystore (Android). They MUST NEVER be stored in plain `UserDefaults` or `SharedPreferences`.
+
+Example (illustrative, React Native):
 
 BAD:
 ```typescript
@@ -282,131 +215,112 @@ await AsyncStorage.setItem("token", jwt); // plain text
 
 GOOD: Use `react-native-keychain` or the platform's secure API.
 
-### 6.3 Encrypt Sensitive Data at Rest
+### MOB-022 — PII Encryption at Rest
 
-If the app stores PII or financial data, encrypt it before writing.
-The device filesystem is not a safe place for plaintext.
+**MUST**
 
-### 6.4 Clean Up on Logout
+If the app stores PII or financial data, it MUST be encrypted before writing. The device filesystem is not a safe place for plaintext.
 
-On logout, clear:
+### MOB-023 — Logout Cleanup
 
-- Session tokens.
-- User-specific cached data.
-- User-specific preferences.
-- Downloaded content tied to the account.
+**MUST**
 
-Otherwise the next user sees the previous user's data.
+On logout, session tokens, user-specific cached data, user-specific preferences, and downloaded content tied to the account MUST be cleared. Otherwise the next user sees the previous user's data.
 
-### 6.5 Migration Path for Storage
+### MOB-024 — Storage Schema Migration
 
-When the persisted schema changes, provide a migration. Otherwise
-the app crashes on launch for existing users after an update.
+**MUST**
 
-BAD: Reading the new field directly from old data.
+When the persisted schema changes, a migration MUST be provided. Reading new fields directly from old data causes crashes on launch for existing users after an update.
 
-GOOD:
-```typescript
-const raw = await storage.get("user");
-const user = raw ? migrateUser(raw) : null;
-```
+### MOB-025 — React Native Storage API
 
-### 6.6 Do Not Use `localStorage` in React Native
+**MUST NOT**
 
-`localStorage` does not exist in React Native. Use
-`AsyncStorage` (or the project's storage library).
+`localStorage` does not exist in React Native and MUST NOT be used. `AsyncStorage` (or the project's storage library) MUST be used.
 
-## 7. Push Notifications
+## Push Notifications
 
-### 7.1 Request Permission in Context
+### MOB-026 — Push Token Registration Lifecycle
 
-Never on first launch. See 4.1.
+**MUST**
 
-### 7.2 Register the Token After Login
+The push token is tied to the user session. It MUST be registered after login and unregistered on logout.
 
-The push token is tied to the user session. Register after login,
-unregister on logout.
+### MOB-027 — Push Token Refresh
 
-### 7.3 Handle Token Refresh
+**MUST**
 
-Push tokens change. The platform provides a callback. Update the
-server on change.
+Push tokens change. The platform provides a callback. The server MUST be updated on change. Registering the token once and never updating it is prohibited.
 
-BAD: Register the token once and never update it.
-
-GOOD:
+Example (illustrative, Swift):
 ```swift
-func application(
-    _ application: UIApplication,
-    didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
-) {
+func application(_ application: UIApplication,
+    didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
     let token = deviceToken.map { String(format: "%02x", $0) }.joined()
     Task { await api.registerDeviceToken(token) }
 }
 ```
 
-### 7.4 Do Not Use Notifications for Everything
+### MOB-028 — Push Notification Restraint
 
-A notification is an interruption. Use it for:
+**MUST NOT**
 
-- Time-sensitive information.
-- User-relevant updates.
-- Actions the user explicitly opted into.
+A notification is an interruption. It MUST only be used for time-sensitive information, user-relevant updates, or actions the user explicitly opted into. Marketing notifications without explicit consent are prohibited.
 
-Do not use it for marketing without explicit consent.
+### MOB-029 — Push Deep Linking
 
-### 7.5 Deep Link on Tap
+**MUST**
 
-Tapping a notification opens a specific screen, not the home
-screen. The payload carries the navigation target.
+Tapping a notification MUST open a specific screen, not the home screen. The payload MUST carry the navigation target.
 
-### 7.6 Handle Foreground and Background
+### MOB-030 — Push State Handling
 
-A notification received while the app is in the foreground is
-handled differently from one received in the background. Both
-paths are tested.
+**MUST**
 
-### 7.7 Request a Notification Channel (Android)
+A notification received while the app is in the foreground MUST be handled differently from one received in the background. Both paths MUST be tested.
 
-Android requires a channel for notifications. Without a channel,
-notifications are silently dropped.
+### MOB-031 — Android Notification Channels
 
-## 8. Performance on Real Devices
+**MUST**
 
-### 8.1 Test on Low-End Devices
+Android requires a channel for notifications. Without a channel, notifications are silently dropped. Channels MUST be defined.
 
-The simulator runs on the development machine, which is faster than
-any real phone. Test on the lowest-supported device.
+## Performance on Real Devices
 
-### 8.2 Cold Start Time
+### MOB-032 — Low-End Device Testing
 
-A cold start over 2 seconds is slow. Profile startup. Lazy-load
-non-essential modules.
+**MUST**
 
-### 8.3 Memory
+The simulator runs on the development machine, which is faster than any real phone. Testing MUST occur on the lowest-supported device.
 
-Mobile memory is limited. A leak that takes days to surface on
-desktop crashes the app in minutes on a low-end device.
+### MOB-033 — Cold Start Optimization
 
-### 8.4 Battery
+**SHOULD**
 
-- Do not poll in the background.
-- Use the platform's push mechanisms.
-- Batch network requests.
-- Respect the OS's battery-saving modes.
+A cold start over 2 seconds is slow. Startup SHOULD be profiled. Non-essential modules SHOULD be lazy-loaded.
 
-### 8.5 App Size
+### MOB-034 — Memory Leak Prevention
 
-- Remove unused assets.
-- Use vector assets where possible.
-- Split by device architecture (Android App Bundle, iOS App
-  Thinning).
-- Review every dependency's size before adding.
+**MUST**
 
-### 8.6 Do Not Block the UI Thread
+Mobile memory is limited. A leak that takes days to surface on desktop crashes the app in minutes on a low-end device. Memory MUST be managed and leaks prevented.
 
-A synchronous operation over 16 ms drops frames. Move I/O, database
-access, and heavy computation off the main thread.
+See MAS-040 in `_universal/00-master-anti-slop.md`.
+
+### MOB-035 — App Size Discipline
+
+**MUST**
+
+Unused assets MUST be removed. Vector assets SHOULD be used. Apps MUST be split by device architecture (Android App Bundle, iOS App Thinning). Every dependency's size MUST be reviewed before adding.
+
+### MOB-036 — UI Thread Non-Blocking
+
+**MUST NOT**
+
+A synchronous operation over 16 ms drops frames. I/O, database access, and heavy computation MUST NOT block the main thread.
+
+Example (illustrative, Swift):
 
 BAD:
 ```swift
@@ -420,267 +334,272 @@ let data = try await Task.detached {
 }.value
 ```
 
-## 9. Platform Conventions
+### MOB-037 — Battery Saving Compliance
 
-### 9.1 Follow the Platform's Design Language
+**MUST NOT**
 
-iOS uses Human Interface Guidelines. Android uses Material Design.
-Do not build an iOS-looking app on Android or vice versa.
+The app MUST NOT poll in the background. The platform's push mechanisms MUST be used. Network requests MUST be batched. The OS's battery-saving modes MUST be respected.
 
-A user on iOS expects swipe-back navigation. A user on Android
-expects the back button. Both must work.
+## Platform Conventions
 
-### 9.2 Respect Safe Areas
+### MOB-038 — Platform Design Language
 
-Notches, dynamic islands, and home indicators. Use the platform's
-safe area APIs. Never draw under the status bar or the home
-indicator.
+**MUST**
 
-BAD: A fixed header at `top: 0`.
+iOS uses Human Interface Guidelines. Android uses Material Design. An iOS-looking app on Android or vice versa MUST NOT be built. Swipe-back navigation (iOS) and the back button (Android) MUST both work on their respective platforms.
 
-GOOD: A header inside the safe area.
+### MOB-039 — Safe Area Respect
 
-### 9.3 Touch Targets
+**MUST**
 
-Minimum 44x44 points on iOS, 48x48 dp on Android. Small targets
-cause mis-taps.
+Notches, dynamic islands, and home indicators MUST be respected. The platform's safe area APIs MUST be used. Drawing under the status bar or the home indicator (e.g., fixed header at `top: 0`) is prohibited.
 
-### 9.4 System Gestures
+### MOB-040 — Touch Target Sizing
 
-Do not interfere with system gestures (swipe from edge, pull down
-for control center). A custom gesture that conflicts with the
-system is a bug.
+**MUST**
 
-### 9.5 System Font Size
+Touch targets MUST be minimum 44x44 points on iOS, 48x48 dp on Android. Small targets cause mis-taps.
 
-A user who increased the system font size expects the app to
-respect it. Layouts must not break when text is scaled to 200%.
+### MOB-041 — System Gesture Non-Interference
 
-### 9.6 System Dark Mode
+**MUST NOT**
 
-If the OS is in dark mode, the app respects it (or explicitly opts
-out with a user setting). Hardcoded light-only styling is a
-convention violation.
+The app MUST NOT interfere with system gestures (swipe from edge, pull down for control center). A custom gesture that conflicts with the system is a bug.
 
-## 10. App Store Compliance
+### MOB-042 — Dynamic Type and Font Scaling
 
-### 10.1 In-App Purchases for Digital Goods
+**MUST**
 
-Apple and Google require their in-app purchase systems for digital
-goods. Linking to an external payment page violates the guidelines.
+A user who increased the system font size expects the app to respect it. Layouts MUST NOT break when text is scaled to 200%.
 
-### 10.2 No Placeholder Content
+### MOB-043 — System Dark Mode Support
 
-Reviewers reject apps with "Lorem ipsum" or obviously unfinished
-content. Every screen in the build is production-ready.
+**MUST**
 
-### 10.3 Privacy Manifest and Data Disclosure
+If the OS is in dark mode, the app MUST respect it (or explicitly opt out with a user setting). Hardcoded light-only styling is a convention violation.
 
-Both stores require a privacy disclosure listing the data collected
-and its use. Match the manifest to the actual behavior.
+## App Store Compliance
 
-### 10.4 Account Deletion (Apple)
+### MOB-044 — In-App Purchase Compliance
 
-Apple requires apps with account creation to offer account deletion
-in-app. Google has similar requirements. The deletion path must be
-discoverable.
+**MUST**
 
-### 10.5 Permission Usage Descriptions
+Apple and Google require their in-app purchase systems for digital goods. Linking to an external payment page for digital goods violates the guidelines and MUST NOT be done.
 
-Covered in 4.6.
+### MOB-045 — Placeholder Content Prohibition
 
-### 10.6 No Private APIs
+**MUST NOT**
 
-Using private iOS APIs or reflection into system frameworks causes
-rejection and can cause crashes on OS updates.
+Reviewers reject apps with "Lorem ipsum" or obviously unfinished content. Every screen in the build MUST be production-ready.
 
-### 10.7 Age Rating Accuracy
+### MOB-046 — Privacy Manifest Accuracy
 
-The age rating matches the content. A mislabeled app is removed.
+**MUST**
 
-## 11. Anti-Patterns
+Both stores require a privacy disclosure listing the data collected and its use. The manifest MUST match the actual behavior.
 
-### 11.1 Permission Request at Startup
+### MOB-047 — Account Deletion Path
 
-Covered in 4.1.
+**MUST**
 
-### 11.2 Assuming Network
+Apple and Google require apps with account creation to offer account deletion in-app. The deletion path MUST be discoverable.
 
-Covered in 5.1.
+### MOB-048 — Private API Prohibition
 
-### 11.3 Blocking the UI Thread
+**MUST NOT**
 
-Covered in 8.6.
+Using private iOS APIs or reflection into system frameworks causes rejection and crashes on OS updates. They MUST NOT be used.
 
-### 11.4 Storing Tokens in Plain Storage
+### MOB-049 — Age Rating Accuracy
 
-Covered in 6.2.
+**MUST**
 
-### 11.5 No Offline State
+The age rating MUST match the content. A mislabeled app is removed.
 
-Covered in 5.3.
+## AI-Specific Mobile Discipline
 
-### 11.6 Hard-Coded Layouts for One Screen Size
+### MOB-074 — Native Module Verification
 
-BAD: Fixed positions that assume a 390x844 viewport.
+**MUST**
 
-GOOD: Constraint-based or flex layouts that adapt.
+Before using a native bridge, platform API, or third-party native module, the assistant MUST verify it exists in the project's native code or standard SDK. Invented native modules produce runtime crashes that are invisible in the JavaScript/Dart layer.
 
-### 11.7 Ignoring the Back Button (Android)
+See MAS-036 in `_universal/00-master-anti-slop.md`.
 
-Covered in 3.6.
+### MOB-075 — Platform API Version Verification
 
-### 11.8 No Loading State on Slow Operations
+**MUST**
 
-A frozen screen with no feedback looks like a crash.
+Before using a platform API, the assistant MUST verify its availability for the project's minimum supported OS version. Using APIs introduced in newer OS versions without availability checks causes crashes on older devices.
 
-### 11.9 Push Notifications Without Opt-Out
+See MAS-036 in `_universal/00-master-anti-slop.md`.
 
-Covered in 7.4.
+### MOB-076 — Existing Component Discovery
 
-### 11.10 Silent Failures
+**MUST**
 
-BAD: `try { ... } catch (e) {}` in a data sync path.
+Before creating a new native/custom view or complex UI component, the assistant MUST search the project for an existing equivalent. Inventing parallel components creates visual inconsistency across screen sizes.
 
-GOOD: Log the failure, queue the retry, inform the user if
-user-visible.
+See MAS-035 in `_universal/00-master-anti-slop.md`.
 
-### 11.11 No Update Path for Storage Schema
+## Anti-Patterns
 
-Covered in 6.5.
+### MOB-050 — Hard-Coded Layouts
 
-### 11.12 Untested on Real Devices
+**MUST NOT**
 
-Covered in 8.1.
+Fixed positions that assume a specific viewport (e.g., 390x844) are prohibited. Constraint-based or flex layouts that adapt MUST be used.
 
-### 11.13 Synchronous Network Calls on the Main Thread
+### MOB-051 — Missing Loading States
 
-`URLSession` with `sendSynchronousRequest`, `HttpURLConnection`
-without a thread. Both block the UI.
+**MUST NOT**
 
-### 11.14 No Deep Link Handling
+A frozen screen with no feedback on slow operations looks like a crash and is prohibited.
 
-Covered in 3.5.
+See MAS-037 in `_universal/00-master-anti-slop.md`.
 
-### 11.15 No Badge Clearing
+### MOB-052 — Silent Sync Failures
 
-A badge count that never decreases. Users see a permanent
-notification indicator.
+**MUST NOT**
 
-### 11.16 Storing Secrets in the Bundle
+Silent failures in data sync paths (e.g., `try { ... } catch (e) {}`) are prohibited. The failure MUST be logged, the retry queued, and the user informed if user-visible.
 
-An API key in the app binary is extractable by anyone who downloads
-the app.
+### MOB-053 — Synchronous Network on Main Thread
 
-BAD: `const API_KEY = "sk-..."` in the app source.
+**MUST NOT**
 
-GOOD: A server-side proxy that holds the key.
+Synchronous network calls on the main thread (e.g., `URLSession.sendSynchronousRequest`, `HttpURLConnection` without a thread) block the UI and are prohibited.
 
-### 11.17 Ignoring System Dark Mode
+### MOB-054 — Permanent Badge Counts
 
-Covered in 9.6.
+**MUST NOT**
 
-### 11.18 No App State Restoration
+A badge count that never decreases is prohibited. Users see a permanent notification indicator. Badges MUST be cleared appropriately.
 
-A user who backgrounds the app and returns to a reset screen. iOS
-and Android both provide restoration APIs.
+### MOB-055 — Secrets in Bundle
 
-### 11.19 Requesting Background Location Without a Reason
+**MUST NOT**
 
-Background location is heavily audited. Requesting it without a
-documented user benefit causes rejection and distrust.
+An API key in the app binary is extractable by anyone who downloads the app. Secrets MUST NOT be stored in the bundle. A server-side proxy MUST be used.
 
-### 11.20 Using the Wrong Permission Type
+### MOB-056 — App State Restoration
 
-BAD: Requesting `READ_CONTACTS` when only one contact is needed.
+**MUST**
 
-GOOD: The system contact picker, which requires no permission.
+A user who backgrounds the app and returns to a reset screen is a poor experience. iOS and Android both provide restoration APIs. State MUST be restored.
 
-### 11.21 No Handling for Interrupted Downloads
+### MOB-057 — Unjustified Background Location
 
-A download that fails on a network switch is retried from scratch.
-Use the platform's resumable download API.
+**MUST NOT**
 
-### 11.22 Using `UIWebView` (iOS)
+Background location is heavily audited. Requesting it without a documented user benefit causes rejection and distrust. It MUST NOT be requested without justification.
 
-`UIWebView` is deprecated and removed. Use `WKWebView`.
+### MOB-058 — Incorrect Permission Type
 
-### 11.23 No Android 13+ Notification Permission Handling
+**MUST NOT**
 
-Android 13 introduced `POST_NOTIFICATIONS` as a runtime permission.
-Not handling it means notifications are silently blocked.
+Requesting broad permissions (e.g., `READ_CONTACTS`) when only one contact is needed is prohibited. The system contact picker, which requires no permission, MUST be used.
 
-### 11.24 Ignoring `onTrimMemory` (Android)
+### MOB-059 — Resumable Downloads
 
-Android signals memory pressure. Not responding means the OS kills
-the app harder.
+**MUST**
 
-### 11.25 No Crash Reporting
+A download that fails on a network switch MUST NOT be retried from scratch. The platform's resumable download API MUST be used.
 
-A crash without a report is a bug the developer never sees. Use
-the platform's or a third-party crash reporter.
+### MOB-060 — Deprecated WebViews
 
-### 11.26 Using `SharedPreferences` for Complex Data
+**MUST NOT**
 
-`SharedPreferences` is for small key-value pairs. Complex data
-belongs in a database.
+`UIWebView` is deprecated and removed. `WKWebView` MUST be used.
 
-### 11.27 No Certificate Pinning for Sensitive Apps
+### MOB-061 — Android 13+ Push Permission
 
-An app handling financial or health data without certificate
-pinning is vulnerable to MITM on untrusted networks. See the
-security concern file for details.
+**MUST**
 
-### 11.28 Ignoring Accessibility Services
+Android 13 introduced `POST_NOTIFICATIONS` as a runtime permission. Not handling it means notifications are silently blocked. It MUST be handled.
 
-TalkBack and VoiceOver must be tested. A custom widget without
-accessibility labels is invisible to screen readers.
+### MOB-062 — Android Memory Pressure Handling
 
-### 11.29 No Rating Prompt Strategy
+**MUST**
 
-Asking for a review at the wrong moment (during onboarding, after
-a crash) is ineffective and annoying. Use `SKStoreReviewController`
-or the Play In-App Review API at a positive moment.
+Android signals memory pressure via `onTrimMemory`. Not responding means the OS kills the app harder. The signal MUST be handled.
 
-### 11.30 Assuming a Specific Screen Density
+### MOB-063 — Crash Reporting
 
-Assets that only ship in one density appear blurry or oversized on
-other devices.
+**MUST**
 
-### 11.31 Ignoring `applicationDidEnterBackground` Timing
+A crash without a report is a bug the developer never sees. The platform's or a third-party crash reporter MUST be used.
 
-iOS gives the app a few seconds to save state before termination.
-Long work there is killed. Use `beginBackgroundTask` for extended
-work.
+### MOB-064 — Complex Data in Key-Value Storage
 
-### 11.32 No Handling for Time Zone Changes
+**MUST NOT**
 
-A user who travels across time zones sees wrong times unless the
-app uses the system time zone or an explicit one.
+`SharedPreferences`/`UserDefaults` is for small key-value pairs. Complex data MUST NOT be stored there; it belongs in a database.
 
-### 11.33 Trusting Device Time
+### MOB-065 — Certificate Pinning for Sensitive Apps
 
-A user can change the device clock. Never use device time for
-security decisions (token expiry, session duration). Use server
-time.
+**SHOULD**
 
-### 11.34 No Localization
+An app handling financial or health data without certificate pinning is vulnerable to MITM on untrusted networks. Certificate pinning SHOULD be implemented. See the security concern file for details.
 
-Strings hardcoded in code. Localization added at the end costs ten
-times more.
+### MOB-066 — Accessibility Services Testing
 
-### 11.35 No Screenshot Protection for Sensitive Screens
+**MUST**
 
-Financial apps should blur or block screenshots on sensitive
-screens. The platform provides APIs for this.
+TalkBack and VoiceOver MUST be tested. A custom widget without accessibility labels is invisible to screen readers.
 
-## 12. Response to Violation
+See MAS-039 in `_universal/00-master-anti-slop.md`.
 
-If a previous response violated a rule here:
+### MOB-067 — Rating Prompt Strategy
 
-```
-In the previous response, [specific rule] was violated. Correction:
-[corrected code]
-```
+**SHOULD**
 
-No justification. No apology paragraph. Fix and move on.
+Asking for a review at the wrong moment (during onboarding, after a crash) is ineffective and annoying. `SKStoreReviewController` or the Play In-App Review API SHOULD be used at a positive moment.
+
+### MOB-068 — Screen Density Assets
+
+**MUST**
+
+Assets that only ship in one density appear blurry or oversized on other devices. Multiple densities or vector assets MUST be provided.
+
+### MOB-069 — Background Task Timing
+
+**MUST**
+
+iOS gives the app a few seconds to save state before termination. Long work there is killed. `beginBackgroundTask` MUST be used for extended work.
+
+### MOB-070 — Time Zone Changes
+
+**MUST**
+
+A user who travels across time zones sees wrong times unless the app uses the system time zone or an explicit one. Time zone changes MUST be handled.
+
+### MOB-071 — Device Time Trust Prohibition
+
+**MUST NOT**
+
+A user can change the device clock. Device time MUST NOT be used for security decisions (token expiry, session duration). Server time MUST be used.
+
+### MOB-072 — Localization First
+
+**MUST NOT**
+
+Strings hardcoded in code are prohibited. Localization added at the end costs ten times more. Strings MUST be externalized from the start.
+
+### MOB-073 — Screenshot Protection for Sensitive Screens
+
+**SHOULD**
+
+Financial apps SHOULD blur or block screenshots on sensitive screens. The platform provides APIs for this.
+
+## Response to Violation
+
+When a rule in this file is violated, report:
+
+Violation: MOB-{NNN}
+Reason: {one-line reason}
+Correction: {smallest fix}
+
+For multiple violations, report each rule ID separately.
+
+Do not replace a technical correction with a generic explanation.

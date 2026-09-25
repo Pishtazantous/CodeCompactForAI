@@ -2,226 +2,220 @@
 id: 02-security-critical-anti-slop
 title: "Security-Critical Anti-Slop Layer"
 lang: en
-depends_on: [00-master-anti-slop]
+depends_on: ["_universal/00-style-guide.md", "_universal/00-master-anti-slop.md"]
 category: domain
 domain_type: concern
-version: 1
+version: 3
 ---
 
 # Security-Critical Anti-Slop Layer
 
-Layered under `_universal/00-master-anti-slop.md`. Universal rules
-(fabrication, fake completion, over-engineering, silent assumptions,
-security anti-patterns from section 2.4, output format) are NOT
-repeated here.
+This file defines behavioral contracts specific to security-critical systems. It sits in the concern layer, below the universal anti-slop rules and alongside other cross-cutting concerns. It covers threat modeling, authentication, authorization, cryptography, input validation, data protection, session management, supply chain security, and security review discipline. It does not cover generic security basics already defined in `00-master-anti-slop.md` (section MAS-009), domain-specific security rules (see delivery files), language-specific security features (see language files), or framework-specific security configuration (see framework files).
 
-This file is sent for projects where security is a first-class
-requirement, not an afterthought: authentication services, payment
-systems, financial products, health records, multi-tenant platforms,
-and anything that handles PII, credentials, or money. It covers the
-discipline of writing code that resists attack.
+For most projects, the security baseline in `00-master-anti-slop.md` is sufficient. This file applies to the subset of projects where a single mistake can compromise users, funds, or regulated data.
 
-For most projects, the security section of `00-master-anti-slop.md`
-is sufficient. This file is for the subset of projects where a single
-mistake can compromise users.
+## When This File Applies
 
-## 1. When This File Applies
+This file MUST be sent when at least one of the following objective criteria is met:
 
-Send this file when the project is:
+- The system implements authentication or identity (OAuth provider, SSO, auth service).
+- The system processes payments, wallets, or financial transactions.
+- The system stores PII, PHI, or financial records subject to regulation (GDPR, HIPAA, PCI-DSS).
+- The system is multi-tenant with strict tenant isolation requirements.
+- The system exposes APIs to untrusted third-party clients.
+- The system implements cryptographic operations or key management.
+- The system operates in a hostile environment (public internet, untrusted client devices).
 
-- An authentication or identity service.
-- A payment gateway or a wallet.
-- A system storing PII, PHI, or financial records.
-- A multi-tenant platform where tenants must not see each other's
-  data.
-- A service exposing an API to untrusted clients.
-- A cryptographic tool or a key-management system.
+This file does NOT apply to: static marketing sites, internal tools with no sensitive data, public read-only APIs with no authentication, or prototype projects with no production intent.
 
-If the project is a static marketing site or an internal tool with
-no sensitive data, this file is not necessary.
+## Scope
 
-## 2. Threat Modeling Discipline
+This file applies to security-critical systems built in any language or framework. The examples use JavaScript/TypeScript, Python, and Go syntax where illustrative. Language-specific security features (type-safe parsing, memory safety) live in language files. Framework-specific security middleware (Express helmet, Django CSRF, Spring Security) lives in framework files.
 
-### 2.1 Identify the Assets
+The concern is cross-cutting: rules in this file apply to backend services, frontend applications, mobile apps, CLI tools, libraries, and infrastructure equally, wherever the applicability criteria above are met.
 
-Before writing code, name what must be protected:
+## Concern Budgets
 
-- Credentials (passwords, tokens, API keys)
-- Personal data (name, email, address, phone)
-- Financial data (card numbers, bank accounts, transactions)
-- Health data
-- Proprietary business data
-- Audit logs
+Security-critical systems MUST operate within these measurable thresholds:
 
-If the asset list is empty, this file does not apply.
+| Concern | Threshold | Verification Method | Rule |
+|---|---|---|---|
+| Session Token Entropy | >= 128 bits | CSPRNG source audit, bit-length test | SEC-012 |
+| Password Hash Cost | bcrypt >= 12, Argon2id per OWASP | Config review, benchmark test | SEC-007 |
+| JWT Access Token Expiry | <= 15 minutes | Token inspection, test suite | SEC-013 |
+| Auth Rate Limit | <= 5 attempts/min/account | Load test, log analysis | SEC-009 |
+| TLS Version | >= 1.2 (1.3 preferred) | SSL Labs scan, `testssl.sh` | SEC-030 |
+| RSA Key Size | >= 2048 bits | Certificate inspection | SEC-045 |
+| Password Reset Token | Single-use, <= 15 min expiry | Functional test, code review | SEC-070 |
+| Max JSON Nesting Depth | <= 64 levels | Fuzz test with deeply nested JSON | SEC-071 |
+| Dependency Audit | Weekly scan, 0 high/critical CVEs | CI pipeline (`npm audit`, `pip-audit`) | SEC-048 |
 
-### 2.2 Identify the Adversaries
+## Rule Severity
 
-Name who might attack:
+Severity follows `_universal/00-style-guide.md`. Violations in this file are typically critical due to the security nature of the concern.
 
-- Anonymous internet users
-- Authenticated users escalating privilege
-- A compromised dependency
-- An insider
-- A nation-state (rarely; document if relevant)
+## Contracts
 
-The adversary determines the countermeasures. Defending against a
-script kiddie is not the same as defending against a targeted
-attacker.
+A security-critical system commits to eight contracts. The table below maps each contract to the rules that enforce it.
 
-### 2.3 Identify the Attack Surfaces
+| Contract | Description | Enforced By |
+|---|---|---|
+| Threat Awareness | Assets, adversaries, and attack surfaces are identified before code. | SEC-001 to SEC-005 |
+| Authentication Integrity | Credentials hashed, sessions secure, MFA properly implemented. | SEC-006 to SEC-014 |
+| Authorization Correctness | Server-side, deny-by-default, object-level, function-level checks. | SEC-015 to SEC-020 |
+| Input/Output Safety | All input validated, all output encoded, no injection vectors. | SEC-021 to SEC-027 |
+| Data Protection | Secrets managed, data encrypted, PII minimized, backups secured. | SEC-028 to SEC-034 |
+| Session Security | Cookies hardened, CSRF protected, sessions bounded and invalidated. | SEC-035 to SEC-039 |
+| Cryptographic Correctness | Standard libraries, unique nonces, managed keys, no deprecated algorithms. | SEC-040 to SEC-045 |
+| Operational Security | Dependencies audited, errors neutral, logs tamper-resistant, reviews mandatory. | SEC-046 to SEC-061 |
 
-List every place untrusted input enters the system:
+## Threat Modeling Discipline
 
-- HTTP requests (body, query, headers, cookies)
-- WebSocket messages
-- File uploads
-- Webhooks from third parties
-- Queue messages
-- Environment variables set by operators
-- Data read from a database that was written by an earlier
-  compromised request
+### SEC-001 — Asset Identification
 
-### 2.4 Assume the Network Is Hostile
+**MUST**
 
-Every byte from the network is attacker-controlled until validated.
-Every response from a third-party service may be compromised. Every
-certificate may be revoked. Every DNS answer may be spoofed.
+Before writing code, the assets that must be protected MUST be explicitly named: credentials, personal data, financial data, health data, proprietary business data, and audit logs. If the asset list is empty, this file does not apply.
 
-### 2.5 Assume the Client Is Compromised
+### SEC-002 — Adversary Identification
 
-The browser, the mobile app, the CLI, the desktop client: all are
-attacker-controlled. Never trust a client-provided:
+**MUST**
 
-- User ID
-- Role
-- Permission flag
-- Price
-- Discount
-- Timestamp
-- Amount
+Potential adversaries MUST be identified: anonymous internet users, authenticated users escalating privilege, compromised dependencies, insiders, and (when relevant) nation-states. The adversary determines the countermeasures.
 
-The server decides these from authoritative sources.
+### SEC-003 — Attack Surface Enumeration
 
-## 3. Authentication
+**MUST**
 
-### 3.1 Never Roll Your Own Crypto
+Every place untrusted input enters the system MUST be listed: HTTP requests (body, query, headers, cookies), WebSocket messages, file uploads, webhooks, queue messages, operator-set environment variables, and data read from a database written by earlier requests.
 
-Use the platform's or the language's standard library for:
+### SEC-004 — Hostile Network Assumption
 
-- Password hashing (bcrypt, argon2, scrypt)
-- Random number generation (`secrets` in Python, `crypto.randomBytes`
-  in Node.js, `crypto/rand` in Go)
-- Symmetric encryption (AES-GCM, ChaCha20-Poly1305)
-- Key derivation (HKDF, PBKDF2)
-- Signature verification (Ed25519, ECDSA P-256)
+**MUST**
 
-Never invent a cipher, a hash, or a protocol.
+Every byte from the network MUST be treated as attacker-controlled until validated. Every third-party response, certificate, and DNS answer MUST be assumed potentially compromised.
 
-### 3.2 Password Hashing Parameters
+### SEC-005 — Compromised Client Assumption
 
-- Argon2id with current OWASP-recommended parameters, or
-- bcrypt with cost >= 12, or
-- scrypt with appropriate memory/time cost.
+**MUST NOT**
 
-Never MD5, SHA-1, SHA-256 alone, or any fast hash for passwords.
+The client (browser, mobile app, CLI, desktop) MUST NOT be trusted. Client-provided User ID, Role, Permission flag, Price, Discount, Timestamp, and Amount MUST NOT be used for authorization or business logic. The server MUST decide these from authoritative sources.
 
-### 3.3 Constant-Time Comparison for Secrets
+## Authentication
 
-BAD: `if (providedToken === storedToken)`
-GOOD: `crypto.timingSafeEqual(providedToken, storedToken)`
+### SEC-006 — No Custom Cryptography
 
-Length leaks are also side channels. Compare padded values or use
-the language's constant-time primitive.
+**MUST NOT**
 
-### 3.4 Rate Limit Authentication
+Custom ciphers, hashes, or protocols MUST NOT be invented. The platform's or language's standard library MUST be used for password hashing, random number generation, symmetric encryption, key derivation, and signature verification.
 
-Every login, password reset, OTP verification, and API key validation
-has a rate limit. Per-account, per-IP, and per-device where relevant.
+Invented cryptography fails in ways that are invisible until exploited.
 
-### 3.5 Account Lockout With Care
+### SEC-007 — Password Hashing Parameters
 
-Permanent lockout enables a denial-of-service attack by an adversary
-who knows a victim's email. Use exponential backoff or a temporary
-lockout with a clear unlock path.
+**MUST**
 
-### 3.6 Multi-Factor Authentication
+Password hashing MUST use Argon2id with current OWASP-recommended parameters, bcrypt with cost >= 12, or scrypt with appropriate memory/time cost. MD5, SHA-1, SHA-256 alone, or any fast hash MUST NOT be used for passwords.
 
-When the project supports MFA:
+Fast hashes allow offline brute-force at billions of guesses per second.
 
-- TOTP secrets are stored encrypted at rest.
-- Recovery codes are single-use and stored hashed.
-- MFA cannot be bypassed by password reset without a second factor.
-- MFA setup requires re-authentication with the current password.
+### SEC-008 — Constant-Time Secret Comparison
 
-### 3.7 Session Tokens
+**MUST**
 
-- Generated from a cryptographically secure random source.
-- At least 128 bits of entropy.
-- Stored hashed on the server if they are session identifiers.
-- Rotated on login and privilege change.
-- Invalidated on logout, password change, and account suspension.
+Secret comparisons MUST use constant-time primitives (e.g., `crypto.timingSafeEqual`). Length leaks are also side channels; padded values or language primitives MUST be used.
 
-### 3.8 JWT
-
-- Signed with a strong algorithm (RS256, ES256, EdDSA). Never `none`.
-- `alg` header is validated against an allowlist. Never trust the
-  token's own `alg`.
-- Short expiry (minutes, not days). Refresh tokens are separate.
-- `aud`, `iss`, `exp`, `nbf` are validated on every request.
-- Revocation is handled (a deny list or short expiry with rotation).
-
-### 3.9 OAuth / OIDC
-
-- `state` parameter is used and validated (CSRF protection).
-- `nonce` is used for OIDC and validated.
-- `redirect_uri` is validated against an exact-match allowlist.
-- PKCE is used for public clients.
-- Tokens are never sent to the frontend channel; the backend holds
-  them.
-
-### 3.10 API Keys
-
-- Never logged, never in URLs, never in error messages.
-- Stored hashed on the server.
-- Scoped to a specific tenant or permission set.
-- Rotatable without downtime.
-- Revocable immediately.
-
-## 4. Authorization
-
-### 4.1 Server-Side Only
-
-Authorization is decided on the server. The frontend may hide a
-button; the server decides whether the action is allowed.
-
-BAD: The UI hides "Delete" for non-admins, and the delete endpoint
-trusts any authenticated caller.
-GOOD: The delete endpoint checks the caller's role before acting.
-
-### 4.2 Deny by Default
-
-Every endpoint, every resource, every field starts inaccessible.
-Permissions are added explicitly.
-
-BAD: A new endpoint inherits the middleware of its router without
-an explicit check.
-GOOD: A new endpoint explicitly declares its required permission.
-
-### 4.3 Object-Level Authorization
-
-Checking "is the user authenticated" is not enough. The server must
-check "does this user own this resource".
+Example (illustrative, JavaScript):
 
 BAD:
-typescript
+```javascript
+if (providedToken === storedToken) { /* ... */ }
+```
+
+GOOD:
+```javascript
+crypto.timingSafeEqual(providedToken, storedToken);
+```
+
+### SEC-009 — Authentication Rate Limiting
+
+**MUST**
+
+Every login, password reset, OTP verification, and API key validation MUST have rate limits: per-account, per-IP, and per-device where relevant.
+
+### SEC-010 — Careful Account Lockout
+
+**SHOULD**
+
+Permanent lockout enables DoS by adversaries who know a victim's email. Exponential backoff or temporary lockout with a clear unlock path SHOULD be used instead.
+
+### SEC-011 — MFA Implementation
+
+**MUST**
+
+When MFA is supported:
+
+- TOTP secrets MUST be encrypted at rest.
+- Recovery codes MUST be single-use and stored hashed.
+- MFA MUST NOT be bypassable by password reset without a second factor.
+- MFA setup MUST require re-authentication with the current password.
+
+### SEC-012 — Session Token Entropy
+
+**MUST**
+
+Session tokens MUST be generated from a cryptographically secure random source with at least 128 bits of entropy. They MUST be stored hashed on the server, rotated on login and privilege change, and invalidated on logout, password change, and account suspension.
+
+### SEC-013 — JWT Discipline
+
+**MUST**
+
+JWTs MUST be signed with a strong algorithm (RS256, ES256, EdDSA). The `none` algorithm MUST NOT be accepted. The `alg` header MUST be validated against an allowlist. Access token expiry MUST be short (minutes). `aud`, `iss`, `exp`, `nbf` MUST be validated on every request. Revocation MUST be handled via a deny list or short expiry with rotation.
+
+### SEC-014 — OAuth and OIDC Correctness
+
+**MUST**
+
+OAuth/OIDC implementations MUST:
+
+- Use and validate `state` (CSRF protection).
+- Use and validate `nonce` (OIDC).
+- Validate `redirect_uri` against an exact-match allowlist.
+- Use PKCE for public clients.
+- Keep tokens on the backend, never sending them to the frontend channel.
+
+## Authorization
+
+### SEC-015 — Server-Side Authorization
+
+**MUST**
+
+Authorization MUST be decided on the server. The frontend may hide a button, but the server MUST decide whether the action is allowed.
+
+### SEC-016 — Deny by Default
+
+**MUST**
+
+Every endpoint, resource, and field MUST start inaccessible. Permissions MUST be added explicitly. New endpoints MUST NOT inherit middleware without an explicit authorization check.
+
+### SEC-017 — Object-Level Authorization
+
+**MUST**
+
+The server MUST check "does this user own this resource", not just "is the user authenticated". A 404 MUST be returned (not 403) when the resource exists but belongs to another user, to prevent existence leakage.
+
+Example (illustrative, TypeScript):
+
+BAD:
+```typescript
 app.get("/orders/:id", auth, async (req, res) => {
   const order = await db.orders.findById(req.params.id);
-  res.json(order); // any user can read any order
+  res.json(order); // any authenticated user reads any order
 });
-GOOD:
+```
 
-typescript
+GOOD:
+```typescript
 app.get("/orders/:id", auth, async (req, res) => {
   const order = await db.orders.findOne({
     id: req.params.id,
@@ -230,521 +224,509 @@ app.get("/orders/:id", auth, async (req, res) => {
   if (!order) return res.status(404).json({ error: "not found" });
   res.json(order);
 });
-Return 404, not 403, when the resource exists but belongs to another
-user. Returning 403 leaks existence.
+```
 
-4.4 Function-Level Authorization
-Beyond ownership, check that the caller's role permits the operation.
-A regular user calling an admin endpoint is rejected even if the
-endpoint is behind auth.
+### SEC-018 — Function-Level Authorization
 
-4.5 Never Trust a Role From the Client
-The role is read from the session or from a database lookup, never
-from a header, a query param, or a body field.
+**MUST**
 
-4.6 Privilege Escalation Paths
-Audit for:
+Beyond ownership, the caller's role MUST permit the operation. A regular user calling an admin endpoint MUST be rejected even if the endpoint is behind authentication.
 
-A user updating their own role via a profile update endpoint.
+### SEC-019 — No Client-Provided Roles
 
-A user assigning themselves to an admin group.
+**MUST NOT**
 
-A user changing their tenant ID.
+Roles MUST be read from the session or a database lookup. They MUST NEVER come from a header, query param, or body field.
 
-A user editing a record they are not the owner of.
+### SEC-020 — Privilege Escalation Audit
 
-Every field the user can write must be allowlisted. Never bind the
-request body directly to the model.
+**MUST**
 
-5. Input Validation and Output Encoding
-5.1 Validate at the Boundary
-Every external input is validated before use, using the project's
-schema library. The schema is the contract.
+Every field the user can write MUST be allowlisted. Request bodies MUST NEVER be bound directly to models. Audit for: users updating their own role, assigning themselves to admin groups, changing their tenant ID, or editing records they do not own.
 
-5.2 Validate on Type, Length, Format, Range
-Type: string, number, boolean, object.
+## Input Validation and Output Encoding
 
-Length: max chars for strings, max items for arrays.
+### SEC-021 — Boundary Validation
 
-Format: email regex, URL scheme allowlist, UUID shape.
+**MUST**
 
-Range: numeric min/max, date bounds.
+Every external input MUST be validated before use using the project's schema library. The schema is the contract.
 
-5.3 Never Blacklist, Always Allowlist
-A blacklist of known-bad patterns is always incomplete. An allowlist
-of known-good patterns is enforceable.
+### SEC-022 — Comprehensive Validation
 
-5.4 Output Encoding Depends on Context
-HTML context: HTML-encode <, >, &, ", '.
+**MUST**
 
-Attribute context: quote attributes, encode quotes.
+Validation MUST cover type, length (max chars, max items), format (regex, scheme allowlist, UUID shape), and range (min/max, date bounds).
 
-URL context: percent-encode.
+### SEC-023 — Allowlist Over Blacklist
 
-JavaScript context: JSON-encode and escape </script>.
+**MUST**
 
-CSS context: avoid dynamic CSS entirely if possible.
+Allowlists of known-good patterns MUST be used. Blacklists of known-bad patterns are always incomplete and MUST NOT be relied upon.
 
-SQL: parameterized queries, never string concatenation.
+### SEC-024 — Context-Aware Output Encoding
 
-5.5 Never Concatenate Untrusted Input Into:
-SQL queries
+**MUST**
 
-Shell commands
+Output MUST be encoded for its context:
 
-HTML strings
+- HTML context: HTML-encode `<`, `>`, `&`, `"`, `'`.
+- Attribute context: quote attributes, encode quotes.
+- URL context: percent-encode.
+- JavaScript context: JSON-encode and escape `</script>`.
+- CSS context: avoid dynamic CSS entirely if possible.
+- SQL: parameterized queries, never string concatenation.
 
-LDAP queries
+### SEC-025 — No Untrusted Input Concatenation
 
-XPath queries
+**MUST NOT**
 
-Log format strings (log injection)
+Untrusted input MUST NEVER be concatenated into: SQL queries, shell commands, HTML strings, LDAP queries, XPath queries, log format strings, template engines evaluated at runtime, `eval`/`Function`/`exec`, or filesystem paths.
 
-Template engines evaluated at runtime
+### SEC-026 — File Upload Safety
 
-eval, Function, exec
+**MUST**
 
-Filesystem paths
+File uploads MUST validate content type (not just extension), limit size/count/total, store outside the web root or in object storage, rename to a safe identifier (UUID), and never execute or serve with the user's original name containing path separators. Untrusted files MUST be scanned for malware.
 
-5.6 File Uploads
-Validate the content type, not just the extension.
+### SEC-027 — No Unsafe Deserialization
 
-Limit size, count, and total.
+**MUST NOT**
 
-Store outside the web root, or in object storage.
+The following MUST NOT be used on untrusted input: `eval`, `Function()`, `exec`, `pickle.loads`, `yaml.load` (use `safe_load`), `Marshal.load`, `unserialize`, `ObjectInputStream`, or `ScriptEngine` with untrusted scripts.
 
-Rename to a safe identifier (UUID) before storing.
+## Data Protection
 
-Never execute, never include, never serve with the user's original
-name if that name contains path separators.
+### SEC-028 — Source and Git Secret Prohibition
 
-Scan for malware if the project handles untrusted files.
+**MUST NOT**
 
-5.7 Never eval, Function(), exec, pickle.loads, yaml.load
-JavaScript: no eval, no new Function(userInput).
+Secrets MUST NEVER appear in source code, committed `.env` files, Docker image layers, build artifacts, or Git history (even in private repositories or branches that will be deleted). A secret that enters Git history MUST be rotated immediately.
 
-Python: no eval, no exec, no pickle on untrusted data.
+Secrets MUST come from CI secret stores and production secret managers (Vault, AWS Secrets Manager, GCP Secret Manager).
 
-Ruby: no eval.
+Hardcoded secrets in generated code are also prohibited per MAS-009 in `_universal/00-master-anti-slop.md`.
 
-PHP: no eval, no assert with strings.
+### SEC-029 — Encryption at Rest
 
-Java: no ScriptEngine with untrusted scripts.
+**MUST**
 
-YAML: always safe_load (Python), safeLoad (Ruby), never the
-default loader.
+PII, credentials, and financial data MUST be encrypted at the column or file level, in addition to database-level encryption. Keys MUST be managed separately from encrypted data and rotatable without blind re-encryption.
 
-6. Data Protection
-6.1 Secrets Never in Source
-Covered in universal section 2.4. Repeating with specifics:
+### SEC-030 — Encryption in Transit
 
-.env files are gitignored.
+**MUST**
 
-CI secrets come from the CI's secret store.
+TLS 1.2 or 1.3 MUST be used everywhere. Plaintext HTTP MUST NOT carry tokens, passwords, or personal data. HSTS MUST be enabled. HTTP-to-HTTPS redirects MUST be permanent.
 
-Production secrets come from a secret manager (Vault, AWS Secrets
-Manager, GCP Secret Manager).
+### SEC-031 — No Secret Logging
 
-No secret in a Docker image layer.
+**MUST NOT**
 
-No secret in a build artifact.
+Tokens, session IDs, API keys, passwords (even hashed), credit card numbers (beyond allowed last four), and full request bodies containing these MUST NEVER be logged. PII MUST only be logged per project policy.
 
-6.2 Encryption at Rest
-PII, credentials, and financial data are encrypted at the column
-level or the file level, in addition to the database's own
-encryption.
+### SEC-032 — PII Minimization
 
-Encryption keys are managed separately from the encrypted data.
-Rotating keys must be possible without re-encrypting everything
-blindly.
+**MUST**
 
-6.3 Encryption in Transit
-TLS 1.2 or 1.3 everywhere. No plaintext HTTP for anything that
-carries a token, a password, or personal data.
+Only business-necessary PII MUST be collected. Only used PII MUST be stored. PII MUST be deleted when no longer needed. Users MUST have a path to export and delete their data.
 
-HSTS is enabled. Redirects from HTTP to HTTPS are permanent.
+### SEC-033 — Data Retention Policy
 
-6.4 Never Log Secrets
-Covered in universal section 2.4. Repeating with specifics:
+**MUST**
 
-Tokens, session IDs, API keys: never.
+Retention MUST be defined for every data category: logs, sessions, audit trails, user-generated content. Indefinite retention without a documented reason is prohibited.
 
-Passwords: never, not even hashed.
+### SEC-034 — Encrypted Backups
 
-Credit card numbers: never, not even the last four (unless the
-project's policy allows the last four).
+**MUST**
 
-Full request bodies: never when they may contain the above.
+Backups MUST be encrypted with a key not stored in the same location as the backup. An unencrypted backup is an unencrypted database in a different folder.
 
-PII: only when necessary, and with the project's logging policy.
+## Session and Cookie Security
 
-6.5 PII Minimization
-Collect only what the business needs. Store only what is used. Delete
-when no longer needed. Provide users a path to export and delete
-their data.
+### SEC-035 — Session Cookie Hardening
 
-6.6 Data Retention
-Define retention for every category of data. Logs, sessions,
-audit trails, user-generated content. Never keep indefinitely without
-a reason.
+**MUST**
 
-6.7 Backups Are Encrypted
-A backup of an unencrypted database is an unencrypted database in a
-different folder. Encrypt backups with a key that is not stored in
-the same location.
+Session cookies MUST have: `HttpOnly` (always), `Secure` (always in production), `SameSite=Lax` or `Strict` (None only when cross-site is genuinely needed, with Secure), narrow `Path`, and avoided `Domain` unless necessary.
 
-7. Session and Cookie Security
-7.1 Session Cookies
-HttpOnly: always for session tokens. Prevents JavaScript access.
+### SEC-036 — CSRF Protection
 
-Secure: always. No exceptions in production.
+**MUST**
 
-SameSite=Lax or SameSite=Strict: for session cookies. None
-only when cross-site is genuinely needed, and then with Secure.
+For cookie-based sessions, CSRF protection is mandatory: synchronizer token, double-submit cookie with a signed token, or `SameSite=Strict` plus an origin check. For API-only services using Authorization header tokens, CSRF does not apply.
 
-Path: as narrow as practical.
+### SEC-037 — Session Fixation Prevention
 
-Domain: avoid unless necessary.
+**MUST**
 
-7.2 CSRF Protection
-For cookie-based sessions, CSRF protection is mandatory:
+The session ID MUST be regenerated on login and privilege change. Session IDs from URLs MUST NOT be accepted.
 
-Synchronizer token, or
+### SEC-038 — Server-Side Logout
 
-Double-submit cookie with a signed token, or
+**MUST**
 
-SameSite=Strict plus an origin check.
+Logout MUST invalidate the session on the server, not just on the client. Clearing the cookie is insufficient.
 
-For API-only services using Authorization header tokens, CSRF is
-not applicable.
+### SEC-039 — Session Timeouts
 
-7.3 Session Fixation
-Regenerate the session ID on login and on privilege change. Never
-accept a session ID from the URL.
+**MUST**
 
-7.4 Logout
-Logout invalidates the session on the server, not just on the client.
-Clearing the cookie is not enough.
+Sessions MUST expire after inactivity and after an absolute duration. Both MUST be configurable and enforced server-side.
 
-7.5 Idle and Absolute Timeouts
-Sessions expire after inactivity and after an absolute duration.
-Both are configurable and enforced server-side.
+## Cryptography
 
-8. Cryptography
-8.1 Use High-Level Libraries
-Use libsodium or the platform's crypto module.
+### SEC-040 — High-Level Crypto Libraries
 
-Use the library's high-level API (secretbox, sealed box) rather
-than its low-level primitives when possible.
+**SHOULD**
 
-8.2 Never Reuse a Nonce
-For AES-GCM and ChaCha20-Poly1305, a nonce reused with the same key
-is catastrophic. The library's high-level API manages nonces. Do not
-manage them manually without a documented plan.
+High-level libraries (libsodium, platform crypto modules) SHOULD be used. High-level APIs (secretbox, sealed box) SHOULD be preferred over low-level primitives to avoid nonce and padding mistakes.
 
-8.3 Random, Not Pseudorandom
-Secrets: crypto.randomBytes, secrets.token_bytes, crypto/rand.
+### SEC-041 — Nonce Uniqueness
 
-Not: Math.random, random.random, rand.Intn (without seeding
-from a secure source).
+**MUST NOT**
 
-8.4 Key Management
-Keys are generated from a CSPRNG.
+A nonce MUST NOT be reused with the same key for AES-GCM or ChaCha20-Poly1305. Nonce reuse with the same key is catastrophic and allows full plaintext recovery. The library's high-level API manages nonces; manual management MUST NOT be done without a documented plan.
 
-Keys are stored in a KMS or a secret manager.
+### SEC-042 — Cryptographic Randomness
 
-Keys are rotated on a schedule.
+**MUST**
 
-Key material is never logged, never printed, never in a stack
-trace.
+Secrets MUST use cryptographic random sources (`crypto.randomBytes`, `secrets.token_bytes`, `crypto/rand`). Non-cryptographic sources (`Math.random`, `random.random`, unseeded `rand.Intn`) MUST NOT be used.
 
-8.5 Signature Verification
-Verify signatures before trusting the payload.
+### SEC-043 — Key Management
 
-Verify the algorithm matches the expected algorithm. Never accept
-the payload's own claim about which algorithm was used.
+**MUST**
 
-Reject unsigned payloads when the protocol requires signing.
+Keys MUST be generated from a CSPRNG, stored in a KMS or secret manager, rotated on a schedule, and NEVER logged, printed, or included in stack traces.
 
-8.6 Deprecated Algorithms
-Never use:
+### SEC-044 — Signature Verification
 
-MD5, SHA-1 for anything security-relevant.
+**MUST**
 
-DES, 3DES, RC4.
+Signatures MUST be verified before trusting the payload. The algorithm MUST be verified against an expected allowlist; the payload's own claim MUST NOT be trusted. Unsigned payloads MUST be rejected when the protocol requires signing.
 
-RSA with keys under 2048 bits.
+### SEC-045 — Deprecated Algorithm Prohibition
 
-ECB mode.
+**MUST NOT**
 
-Static IVs.
+The following MUST NOT be used for security-relevant purposes: MD5, SHA-1, DES, 3DES, RC4, RSA with keys under 2048 bits, ECB mode, and static IVs.
 
-9. Dependencies and Supply Chain
-9.1 Every Dependency Is a Risk
-Before adding a package:
+## Dependencies and Supply Chain
 
-Check its maintenance status (last release, open issues).
+### SEC-046 — Dependency Risk Assessment
 
-Check its download count and reputation.
+**MUST**
 
-Check its transitive dependencies.
+Before adding a package, its maintenance status, download count, reputation, transitive dependencies, and license MUST be checked.
 
-Check its license.
+### SEC-047 — Committed Lockfiles
 
-9.2 Lockfiles Are Committed
-package-lock.json, yarn.lock, poetry.lock, Cargo.lock,
-go.sum are committed. Never ignored.
+**MUST**
 
-9.3 Dependency Updates
-Security patches are applied promptly.
+Lockfiles (`package-lock.json`, `yarn.lock`, `poetry.lock`, `Cargo.lock`, `go.sum`) MUST be committed. They MUST NOT be ignored.
 
-Updates are reviewed before merge (not auto-merged blindly).
+### SEC-048 — Dependency Update Discipline
 
-The project runs a vulnerability scanner (npm audit,
-pip-audit, govulncheck, Dependabot).
+**MUST**
 
-9.4 Typosquatting
-Verify the package name character-by-character before installing.
-cross-env and crossenv are different packages.
+Security patches MUST be applied promptly. Updates MUST be reviewed before merge (not auto-merged blindly). A vulnerability scanner (`npm audit`, `pip-audit`, `govulncheck`, Dependabot) MUST be run regularly.
 
-9.5 Postinstall Scripts
-A dependency's postinstall script runs arbitrary code at install
-time. If the project disables them (--ignore-scripts), respect
-that. Do not re-enable without a reason.
+### SEC-049 — Typosquatting Prevention
 
-10. Error Messages and Information Disclosure
-10.1 Neutral Authentication Errors
+**MUST**
+
+The package name MUST be verified character-by-character before installing. `cross-env` and `crossenv` are different packages.
+
+### SEC-050 — Postinstall Script Discipline
+
+**MUST**
+
+If the project disables postinstall scripts (`--ignore-scripts`), they MUST NOT be re-enabled without a documented reason. Postinstall scripts run arbitrary code at install time.
+
+## Error Messages and Information Disclosure
+
+### SEC-051 — Neutral Authentication Errors
+
+**MUST**
+
+Authentication errors MUST be neutral. The same message MUST be used for wrong password and unknown user to prevent account enumeration.
+
+Example (illustrative):
+
 BAD: "No account with that email" (reveals existence).
 GOOD: "Invalid email or password" (neutral).
 
-The same neutral message for wrong password and unknown user.
+### SEC-052 — Information Disclosure Prevention
 
-10.2 No Stack Traces to the Client
-Covered in 02-backend-anti-slop.md section 4. Repeating because it
-is the most common leak.
+**MUST NOT**
 
-10.3 No Internal Identifiers in Errors
-Database IDs, internal service names, file paths, hostnames: none
-in client-visible errors.
+The following MUST NOT be exposed to clients:
 
-10.4 No Debug Endpoints in Production
-/debug, /metrics (unless protected), /actuator (unless
-protected), /__webpack_hmr. All removed or gated behind
-authentication.
+- Stack traces (the most common information leak).
+- Database IDs, internal service names, file paths, hostnames in error messages.
+- Debug endpoints (`/debug`, unprotected `/metrics`, `/actuator`, `/__webpack_hmr`).
+- Public source maps (unless gated behind authentication for error tracking).
+- Server version headers (e.g., `Server: nginx/1.18.0`).
 
-10.5 No Source Maps in Production
-Unless the project explicitly serves them behind authentication for
-error tracking. Public source maps reveal the entire codebase.
+A generic error response with an internal reference ID for log correlation MUST be used instead.
 
-10.6 No Version Numbers in Headers
-Server: nginx/1.18.0 tells the attacker which CVEs to try. Set a
-generic value or omit.
+### SEC-053 — Timing Attack on Authentication Endpoints
 
-11. Logging and Monitoring
-11.1 Log Security Events
-Login success and failure
+**MUST**
 
-Password change
+Authentication and password reset endpoints MUST respond identically and take the same time for known and unknown accounts to prevent enumeration via timing.
 
-Permission change
+## Logging and Monitoring
 
-Access to sensitive resources
+### SEC-054 — Security Event Logging
 
-Admin actions
+**MUST**
 
-Rate limit hits
+Security events MUST be logged: login success/failure, password change, permission change, access to sensitive resources, admin actions, rate limit hits, and CSRF/CORS/CSP violations.
 
-CSRF, CORS, CSP violations
+### SEC-055 — Tamper-Resistant Logs
 
-11.2 Logs Are Tamper-Resistant
-Security logs go to a system that the application cannot modify:
-a separate service, append-only storage, or a SIEM.
+**MUST**
 
-11.3 Alert on Anomalies
-Spike in login failures
+Security logs MUST go to a system the application cannot modify: a separate service, append-only storage, or a SIEM.
 
-Login from a new country
+### SEC-056 — Anomaly Alerting
 
-Access to many resources by one account
+**MUST**
 
-Failed authorization attempts
+Alerts MUST fire on anomalies: spike in login failures, login from a new country, access to many resources by one account, and failed authorization attempts.
 
-11.4 Never Log the Sensitive Payload
-Covered in 6.4. Repeating: the log is often less protected than the
-database.
+## Security Review Discipline
 
-12. Security-Critical Anti-Patterns
-12.1 Trusting the Client
-Covered in 2.5. The single most common vulnerability.
+### SEC-057 — Threat Model Every Endpoint
 
-12.2 The Check That Only the Frontend Does
-The backend has no authorization check. The frontend hides the
-button. Any attacker with a proxy bypasses the UI.
+**MUST**
 
-12.3 Disabling Security "Temporarily"
-BAD: app.use(cors({ origin: "*" })) in a commit that says
-"temporary".
-GOOD: The correct origin allowlist, always.
+For every new endpoint, the following MUST be answered: Who can call it? What does it expose? What does it allow the caller to change? What is the worst-case abuse?
 
-12.4 http:// in Production
-Even for internal services. Credentials, tokens, and PII travel in
-plaintext.
+### SEC-058 — Diff Secret Review
 
-12.5 Storing Secrets in Git
-Even in a private repository, even in a branch that will be deleted.
-The secret must be rotated the moment it enters Git history.
+**MUST**
 
-12.6 Rolling Your Own JWT Validation
-Verifying the signature is not enough. The alg, exp, nbf,
-aud, iss must all be checked. Use the library's full validation,
-not a hand-written jwt.verify(token, secret).
+Before committing, the diff MUST be reviewed for anything that looks like a secret. Prevention is faster than remediation.
 
-12.7 Ignoring SameSite
-A cookie without SameSite is sent with every cross-site request.
-The default in modern browsers is Lax, but relying on the default
-in code that must work everywhere is a mistake.
+### SEC-059 — Security Fix Tests
 
-12.8 CORS Misconfiguration
-BAD: Access-Control-Allow-Origin: * with
-Access-Control-Allow-Credentials: true. This combination is
-rejected by browsers, but a misconfigured proxy may still serve it.
+**MUST NOT**
 
-BAD: Reflecting the Origin header without validating it against
-an allowlist.
+A security fix MUST NOT be merged without a regression test. The test MUST fail before the fix and pass after.
 
-12.9 Mass Assignment
+### SEC-060 — Report, Do Not Silently Fix
+
+**MUST**
+
+If a security issue is found while working on an unrelated task, it MUST be reported to the user with a clear description. It MUST NOT be fixed silently; the fix may require coordination (rotation, notification, audit).
+
+### SEC-061 — Documented Security Assumptions
+
+**MUST**
+
+Security assumptions about deployment, network, and operators MUST be documented. When assumptions change, the security posture changes and MUST be re-evaluated.
+
+## AI-Specific Security Discipline
+
+### SEC-062 — Cryptographic Primitive Verification
+
+**MUST**
+
+Before using a cryptographic function (hashing, encryption, signing), the assistant MUST verify the algorithm is not deprecated, the library is reputable, and the parameters meet current OWASP/NIST recommendations. Invented crypto or weak parameters produce silent vulnerabilities that are catastrophic when exploited.
+
+See MAS-036 in `_universal/00-master-anti-slop.md`.
+
+### SEC-063 — Security Library Verification
+
+**MUST**
+
+Before using a security library (JWT validator, OAuth client, sanitizer), the assistant MUST verify it is the recommended library for the ecosystem and that the method being called handles all required security checks (e.g., JWT `alg` validation, not just signature verification). Partial validation is a common AI-generated vulnerability.
+
+See MAS-036 in `_universal/00-master-anti-slop.md`.
+
+### SEC-064 — Generated Code Secret Prohibition
+
+**MUST NOT**
+
+The assistant MUST NEVER generate code with hardcoded secrets, API keys, passwords, or tokens, even as placeholders or "temporary" values. AI-generated code is frequently committed without review; hardcoded secrets become permanent leaks.
+
+This specializes MAS-009 in `_universal/00-master-anti-slop.md` for the AI code generation context.
+
+## Anti-Patterns
+
+### SEC-065 — Frontend-Only Authorization Check
+
+**MUST NOT**
+
+Authorization checks MUST NOT exist only on the frontend. The backend MUST enforce authorization. An attacker with a proxy bypasses the UI entirely.
+
+### SEC-066 — Temporary Security Disabling
+
+**MUST NOT**
+
+Security controls (CORS, CSP, authentication, TLS verification) MUST NOT be disabled "temporarily" in commits. The correct configuration MUST always be in place.
+
+Example (illustrative):
+
+BAD: `app.use(cors({ origin: "*" }))` in a commit labeled "temporary".
+
+### SEC-067 — Plaintext HTTP in Production
+
+**MUST NOT**
+
+`http://` MUST NOT be used in production, even for internal services. Credentials, tokens, and PII travel in plaintext.
+
+### SEC-068 — Custom JWT Validation
+
+**MUST NOT**
+
+Hand-written JWT validation (e.g., signature check without full claim validation) is prohibited. The library's full validation MUST be used: `alg`, `exp`, `nbf`, `aud`, `iss`.
+
+### SEC-069 — CORS Misconfiguration
+
+**MUST NOT**
+
+`Access-Control-Allow-Origin: *` with `Access-Control-Allow-Credentials: true` MUST NOT be used. Reflecting the `Origin` header without validating against an allowlist is prohibited.
+
+### SEC-070 — Password Reset Token Reuse
+
+**MUST NOT**
+
+A reset token MUST be single-use. After use, it MUST be invalidated. The password change endpoint MUST NOT accept the same token twice.
+
+### SEC-071 — Deeply Nested JSON Parsing
+
+**MUST**
+
+JSON parsers MUST limit nesting depth. A JSON payload with thousands of levels of nesting causes a stack overflow in some parsers.
+
+### SEC-072 — SSRF Prevention
+
+**MUST NOT**
+
+Endpoints that fetch user-provided URLs MUST validate against a host allowlist, resolve DNS and check the IP against a denylist of private ranges (e.g., `169.254.169.254` for cloud metadata), and not follow redirects blindly.
+
+### SEC-073 — XXE Prevention
+
+**MUST**
+
+External entity resolution MUST be disabled in every XML parser to prevent reading local files or making network requests.
+
+### SEC-074 — Open Redirect Prevention
+
+**MUST NOT**
+
+Redirect parameters (e.g., `?next=...`) MUST be validated to be a relative path within the site or an allowlisted host. Open redirects enable phishing.
+
+### SEC-075 — Prototype Pollution Prevention
+
+**MUST NOT**
+
+Object merging MUST block `__proto__`, `constructor`, and `prototype` keys. `Object.create(null)` MUST be used for dictionaries, or a safe merge function that rejects dangerous keys.
+
+Example (illustrative, JavaScript):
+
 BAD:
-
-typescript
-const user = await User.create(req.body);
-The client can set role, isAdmin, balance, or any other field.
-
-GOOD: Extract the allowed fields explicitly, or use a schema that
-whitelists them.
-
-12.10 IDOR (Insecure Direct Object Reference)
-Covered in 4.3. Repeating because it is the most common API
-vulnerability.
-
-12.11 Sequential IDs as the Only Protections
-Using an auto-increment ID does not protect an endpoint. The check
-is authorization, not obscurity. UUIDs reduce enumeration but do
-not replace the check.
-
-12.12 Password Reset Token Reuse
-A reset token is single-use. After use, it is invalidated. The
-password change endpoint does not accept the same token twice.
-
-12.13 Time-Based Comparison
-Covered in 3.3. Repeating: === on tokens leaks timing.
-
-12.14 JSON.parse on Untrusted Deeply Nested Data
-A JSON payload with 10,000 levels of nesting causes a stack
-overflow in some parsers. Limit depth.
-
-12.15 SSRF (Server-Side Request Forgery)
-BAD: An endpoint that fetches a URL provided by the user.
-The attacker requests http://169.254.169.254/... (cloud metadata)
-or an internal service.
-
-GOOD: Validate the URL against an allowlist of hosts. Resolve DNS
-and check the IP against a denylist of private ranges. Do not follow
-redirects blindly.
-
-12.16 XXE (XML External Entity)
-XML parsers that resolve external entities allow reading local
-files or making network requests. Disable external entity
-resolution in every XML parser.
-
-12.17 Open Redirect
-BAD: /login?next=https://evil.com redirects after login.
-GOOD: The next parameter is validated to be a relative path
-within the site, or an allowlisted host.
-
-12.18 Prototype Pollution (JavaScript)
-BAD:
-
-typescript
+```javascript
 function merge(target, source) {
   for (const key in source) target[key] = source[key];
 }
-If source is { "__proto__": { "isAdmin": true } }, every object
-inherits isAdmin.
+// source = { "__proto__": { "isAdmin": true } } pollutes every object
+```
 
-GOOD: Use Object.create(null) for dictionaries, or a merge
-function that blocks __proto__, constructor, and prototype.
+GOOD:
+```javascript
+function merge(target, source) {
+  for (const key of Object.keys(source)) {
+    if (key === "__proto__" || key === "constructor") continue;
+    target[key] = source[key];
+  }
+}
+```
 
-12.19 Object.assign({}, userInput)
-Same issue as 12.18 in a different form.
+### SEC-076 — ReDoS Prevention
 
-12.20 Regex Denial of Service (ReDoS)
-A regex with nested quantifiers on untrusted input can run for
-minutes. Test regexes against adversarial input, or use a
-linear-time engine.
+**MUST**
 
-12.21 Deserialization of Untrusted Data
-Java: ObjectInputStream. Python: pickle. Ruby: Marshal.load.
-PHP: unserialize. All allow code execution. Never on untrusted
-input.
+Regular expressions with nested quantifiers on untrusted input MUST be tested against adversarial input, or a linear-time engine MUST be used to prevent Regex Denial of Service.
 
-12.22 Environment Variable Injection
-If the app reads env vars from a file it does not own, or from
-user-controlled input, an attacker can override configuration.
+### SEC-077 — Environment Variable Injection Prevention
 
-12.23 Timing Attacks on Password Reset
-A reset endpoint that responds differently for known and unknown
-emails leaks account existence. Respond identically and take the
-same time.
+**MUST NOT**
 
-12.24 Cache Poisoning
-A response cache that keys on the URL but ignores the Host,
-Authorization, or Cookie header. An attacker's response is
-served to another user.
+Environment variables MUST NOT be read from files the app does not own or from user-controlled input. An attacker could override configuration.
 
-13. Security Review Discipline
-13.1 Threat Model Every New Endpoint
-For every new endpoint, answer:
+### SEC-078 — Cache Poisoning Prevention
 
-Who can call it?
+**MUST**
 
-What does it expose?
+Response caches MUST key on `Host`, `Authorization`, and `Cookie` headers in addition to the URL. Otherwise an attacker's response is served to another user.
 
-What does it allow the caller to change?
+### SEC-079 — Mass Assignment
 
-What is the worst-case abuse?
+**MUST NOT**
 
-13.2 Review Diffs for Secrets
-Before committing, review the diff for anything that looks like a
-secret. An accidental commit is faster to prevent than to remediate.
+Request bodies MUST NOT be bound directly to models (e.g., `User.create(req.body)`). The client could set `role`, `isAdmin`, `balance`, or any other field. Fields MUST be explicitly allowlisted.
 
-13.3 Never Merge a Security Fix Without Tests
-A security fix without a regression test will regress. Write the
-test that fails before the fix and passes after.
+Example (illustrative, TypeScript):
 
-13.4 Report, Do Not Silently Fix
-If you find a security issue while working on an unrelated task,
-report it to the user with a clear description. Do not fix it
-silently; the fix may need coordination (rotation, notification,
-audit).
+BAD:
+```typescript
+const user = await User.create(req.body);
+```
 
-13.5 Document Assumptions
-Security relies on assumptions about the deployment, the network,
-and the operators. State them. When the assumptions change, the
-security changes.
+GOOD:
+```typescript
+const { name, email } = req.body;
+const user = await User.create({ name, email });
+```
 
-14. Response to Violation
-If a previous response violated a rule here:
+### SEC-080 — Sequential ID Trust
 
-text
-In the previous response, [specific rule] was violated. Correction:
-[corrected code]
-No justification. No apology paragraph. Fix and move on.
+**MUST NOT**
 
-If the violation is in already-deployed code, the correction is
-accompanied by a note: "This issue may require secret rotation,
-session invalidation, or user notification. Coordinate with the
-user before deploying."
+Auto-increment IDs do not protect an endpoint. Authorization checks are required, not obscurity. UUIDs reduce enumeration but do not replace the authorization check.
 
+### SEC-081 — SameSite Ignorance
 
+**MUST NOT**
 
----
+A cookie without an explicit `SameSite` attribute relies on browser defaults that differ across versions. `SameSite` MUST be explicitly set on every session cookie.
+
+### SEC-082 — Deserialization of Untrusted Data
+
+**MUST NOT**
+
+Deserialization of untrusted data via `ObjectInputStream` (Java), `pickle` (Python), `Marshal.load` (Ruby), or `unserialize` (PHP) allows code execution and MUST NOT be used on untrusted input.
+
+### SEC-083 — Unvalidated `window.open` or URL Launch
+
+**MUST NOT**
+
+`window.open(userProvidedUrl)` or equivalent URL-launching APIs MUST NOT be called with unvalidated input. URLs MUST be validated against an allowlist of schemes and domains.
+
+### SEC-084 — Mixed Content in Authenticated Pages
+
+**MUST NOT**
+
+Authenticated pages MUST NOT load `http://` resources. Mixed content is blocked by modern browsers and exposes the user to MITM attacks.
+
+## Response to Violation
+
+When a rule in this file is violated, report:
+
+Violation: SEC-{NNN}
+Reason: {one-line reason}
+Correction: {smallest fix}
+
+If the violation is in already-deployed code, the correction MUST be accompanied by:
+
+> "This issue may require secret rotation, session invalidation, or user notification. Coordinate with the user before deploying."
+
+For multiple violations, report each rule ID separately.
+
+Do not replace a technical correction with a generic explanation.

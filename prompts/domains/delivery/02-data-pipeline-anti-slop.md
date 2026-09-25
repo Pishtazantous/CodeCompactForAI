@@ -2,404 +2,474 @@
 id: 02-data-pipeline-anti-slop
 title: "Data Pipeline Anti-Slop Layer"
 lang: en
-depends_on: [00-master-anti-slop]
+depends_on: ["_universal/00-style-guide.md", "_universal/00-master-anti-slop.md"]
 category: domain
 domain_type: delivery
-version: 1
+version: 2
 ---
 
 # Data Pipeline Anti-Slop Layer
 
-Layered under `_universal/00-master-anti-slop.md`. Universal rules
-(fabrication, fake completion, over-engineering, silent assumptions,
-security anti-patterns, output format) are NOT repeated here.
+This file defines behavioral contracts specific to data pipelines. It sits in the delivery layer, below the universal anti-slop rules and above ML pipeline or database schema patterns. It covers ETL and ELT, idempotency, backfills, schema evolution, late-arriving data, DAG design, data quality, and the discipline of treating data as a production asset. It does not cover database schema design (see `02-database-anti-slop.md`) or ML pipeline rules (see `02-ml-system-anti-slop.md`).
 
-This file covers rules specific to data pipelines: ETL and ELT,
-idempotency, backfills, schema evolution, late-arriving data, DAG
-design, and the discipline of treating data as a production asset.
-Database schema rules live in
-`domains/delivery/02-database-anti-slop.md`. ML pipeline rules live in
-`domains/delivery/02-ml-system-anti-slop.md`.
+Data is a production asset. Every pipeline run is a contract with downstream consumers.
 
-## 1. Stack Assumptions
+## Scope
 
-This layer applies to pipelines built with:
+This file applies to pipelines built with Apache Airflow, Dagster, Prefect, dbt, Apache Spark, Flink, Beam, Kafka Streams, Kafka Connect, AWS Glue, Google Dataflow, Azure Data Factory, and custom orchestrators (cron + a script). The principles are tool-agnostic. The examples use SQL and Bash syntax where illustrative.
 
-- Apache Airflow, Dagster, Prefect
-- dbt
-- Apache Spark, Flink, Beam
-- Kafka Streams, Kafka Connect
-- AWS Glue, Google Dataflow, Azure Data Factory
-- Custom orchestrators (cron + a script)
+## Rule Severity
 
-The principles are tool-agnostic.
+Severity follows `_universal/00-style-guide.md`.
 
-## 2. Idempotency
+## Contracts
 
-### 2.1 Re-running Is Safe
+A data pipeline commits to seven contracts. The table below maps each contract to the rules that enforce it.
 
-A pipeline run that produces the same output when run twice on the
-same input. This is the single most important property of a data
-pipeline.
+| Contract | Description | Enforced By |
+|---|---|---|
+| Idempotency | Re-running a pipeline on the same input produces the same output. | DP-001 to DP-005 |
+| Backfill Safety | Backfills are first-class operations with rate limiting and idempotency. | DP-006 to DP-010 |
+| Schema Stability | Schema changes are additive, versioned, and announced. | DP-011 to DP-015 |
+| Late Data Handling | Watermarks, windows, and event timestamps handle out-of-order data. | DP-016 to DP-019 |
+| DAG Discipline | Tasks are single-purpose, idempotent, and have retries and timeouts. | DP-020 to DP-027 |
+| Data Quality | Data is validated at boundaries, quarantined on failure, and monitored. | DP-028 to DP-032 |
+| Storage and Cost | Columnar formats, partitioning, retention, and cost monitoring are enforced. | DP-033 to DP-037 |
 
-Non-idempotent pipelines double-count rows, send duplicate emails,
-and produce silent corruption.
+## Idempotency
 
-### 2.2 Upsert, Do Not Insert
+### DP-001 — Idempotent Execution
 
-BAD: `INSERT INTO daily_metrics (date, value) VALUES (...)`.
-GOOD: `INSERT ... ON CONFLICT (date) DO UPDATE SET value = EXCLUDED.value`.
+**MUST**
 
-Or delete the partition before writing:
+A pipeline run MUST produce the same output when run twice on the same input. This is the single most important property of a data pipeline. Non-idempotent pipelines double-count rows, send duplicate emails, and produce silent corruption.
 
+See MAS-037 in `_universal/00-master-anti-slop.md`.
+
+### DP-002 — Upsert Over Insert
+
+**MUST**
+
+Idempotent write patterns MUST be used. Plain `INSERT` statements that fail on re-run are prohibited. Use upserts or delete-then-insert on partitions.
+
+Example (illustrative, SQL):
+
+BAD:
 ```sql
-DELETE FROM daily_metrics WHERE date = '2025-01-15';
-INSERT INTO daily_metrics ...
+INSERT INTO daily_metrics (date, value) VALUES (...);
 ```
 
-### 2.3 Partitioned Writes
+GOOD:
+```sql
+INSERT ... ON CONFLICT (date) DO UPDATE SET value = EXCLUDED.value;
+```
 
-Write to a partition that matches the pipeline's logical unit (a day,
-an hour, a batch). Re-running replaces the partition.
+Or delete the partition before writing:
+```sql
+DELETE FROM daily_metrics WHERE date = '2025-01-15';
+INSERT INTO daily_metrics ...;
+```
 
-### 2.4 Deterministic Ordering
+### DP-003 — Partitioned Writes
 
-If the pipeline processes events, sort deterministically. Parallel
-processing that produces different output on different runs is not
-idempotent.
+**MUST**
 
-### 2.5 No External Side Effects Without a Marker
+Writes MUST target a partition that matches the pipeline's logical unit (a day, an hour, a batch). Re-running MUST replace the partition atomically.
 
-An email send, a webhook, or a file upload happens once per logical
-run. Track it in a state table:
+### DP-004 — Deterministic Ordering
 
+**MUST**
+
+If the pipeline processes events, ordering MUST be deterministic. Parallel processing that produces different output on different runs is not idempotent and MUST NOT be used.
+
+### DP-005 — Side Effect Marker
+
+**MUST**
+
+External side effects (email sends, webhooks, file uploads) MUST happen once per logical run. A state table MUST track them to prevent duplicates.
+
+Example (illustrative, SQL):
 ```sql
 INSERT INTO sent_notifications (run_id, user_id)
 VALUES (...) ON CONFLICT DO NOTHING;
 ```
 
-## 3. Backfills
+## Backfills
 
-### 3.1 Backfills Are First-Class
+### DP-006 — Backfill as First-Class Operation
 
-A backfill is not "run the pipeline with a different date". It is a
-separate operation with its own tooling, its own rate limit, and its
-own audit.
+**MUST**
 
-### 3.2 Backfill Script
+A backfill MUST be treated as a separate operation with its own tooling, rate limit, and audit. It MUST NOT be "run the pipeline with a different date".
 
-Every pipeline has a documented way to backfill a range:
+### DP-007 — Documented Backfill Command
 
+**MUST**
+
+Every pipeline MUST have a documented way to backfill a range.
+
+Example (illustrative, Bash):
 ```bash
 pipeline backfill --from 2025-01-01 --to 2025-01-31 --job daily_metrics
 ```
 
-### 3.3 Backfill Load
+### DP-008 — Backfill Rate Limiting
 
-A backfill for a year of data can saturate the source database, the
-target warehouse, and the network. Rate-limit it.
+**MUST**
 
-### 3.4 Backfill Does Not Overwrite Without Reason
+A backfill for a large range (e.g., a year of data) can saturate the source database, the target warehouse, and the network. It MUST be rate-limited.
 
-A backfill re-processes old data. If the source has changed since the
-original run, the backfill produces different results. Document
-whether the backfill is intended to overwrite.
+See MAS-040 in `_universal/00-master-anti-slop.md`.
 
-### 3.5 Backfill Idempotency
+### DP-009 — Backfill Overwrite Documentation
 
-The backfill uses the same idempotent write path as the regular run.
-It does not have a separate, ad-hoc code path that bypasses the
-partition-replace logic.
+**MUST**
 
-## 4. Schema Evolution
+If the source has changed since the original run, the backfill produces different results. Whether the backfill is intended to overwrite MUST be explicitly documented.
 
-### 4.1 Add Columns, Do Not Rename
+### DP-010 — Backfill Idempotency
 
-Renaming or removing a column breaks every consumer. Add the new
-column, migrate consumers, then remove the old one in a later release.
+**MUST**
 
-### 4.2 Nullable by Default for New Columns
+The backfill MUST use the same idempotent write path as the regular run. A separate, ad-hoc code path that bypasses the partition-replace logic is prohibited.
 
-A new column with `NOT NULL` and no default breaks existing writers.
-Add as nullable, backfill, then enforce.
+## Schema Evolution
 
-### 4.3 Versioned Schemas for Streaming
+### DP-011 — Additive Schema Changes
 
-A Kafka topic or a similar stream has a versioned schema (Avro,
-Protobuf, JSON Schema) registered in a schema registry. Consumers
-negotiate the version.
+**MUST**
 
-### 4.4 Document Breaking Changes
+Schema changes MUST be additive. Renaming or removing a column breaks every consumer. Add the new column, migrate consumers, then remove the old one in a later release.
 
-A schema change that breaks consumers is announced in advance, with
-a migration window.
+### DP-012 — Nullable New Columns
 
-### 4.5 No Silent Type Changes
+**MUST**
 
-Changing `int` to `string` breaks every consumer. Even if the
-database accepts it.
+A new column MUST be added as nullable. A new column with `NOT NULL` and no default breaks existing writers. Add as nullable, backfill, then enforce.
 
-## 5. Late and Out-of-Order Data
+### DP-013 — Versioned Stream Schemas
 
-### 5.1 Watermarks
+**MUST**
 
-A streaming pipeline defines a watermark: how late data may arrive.
-Data after the watermark is dropped or routed to a dead-letter queue.
+A Kafka topic or a similar stream MUST have a versioned schema (Avro, Protobuf, JSON Schema) registered in a schema registry. Consumers MUST negotiate the version.
 
-### 5.2 Windowed Aggregations
+### DP-014 — Breaking Change Announcement
 
-A windowed aggregation (hourly, daily) waits until the watermark
-passes before emitting the final result. Late data within the window
-is incorporated; later data is not.
+**MUST**
 
-### 5.3 Idempotent Late Arrival
+A schema change that breaks consumers MUST be announced in advance, with a migration window.
 
-A late event re-processes the affected window. The window's output
-is recomputed, not added to.
+### DP-015 — No Silent Type Changes
 
-### 5.4 Ordering Is Not Guaranteed
+**MUST NOT**
 
-Assume events arrive out of order. Include an event timestamp in every
-message. Do not use arrival time.
+Changing a column type (e.g., `int` to `string`) MUST NOT occur silently. Even if the database accepts it, every consumer breaks.
 
-## 6. DAG Design
+## Late and Out-of-Order Data
 
-### 6.1 One Task, One Job
+### DP-016 — Watermark Definition
 
-A task does one thing. Extract, transform, and load are three tasks.
+**MUST**
 
-### 6.2 Tasks Are Idempotent
+A streaming pipeline MUST define a watermark: how late data may arrive. Data after the watermark MUST be dropped or routed to a dead-letter queue.
 
-Each task is safe to retry. See section 2.
+### DP-017 — Windowed Aggregation Discipline
 
-### 6.3 Tasks Are Independent Where Possible
+**MUST**
 
-Parallel branches run concurrently. Sequential dependencies are
-explicit.
+A windowed aggregation (hourly, daily) MUST wait until the watermark passes before emitting the final result. Late data within the window is incorporated; later data is not.
 
-### 6.4 No Cross-DAG Imports
+### DP-018 — Idempotent Late Arrival
 
-A DAG does not import from another DAG. Shared logic goes in a
-library module.
+**MUST**
 
-### 6.5 Retries With Backoff
+A late event MUST re-process the affected window. The window's output MUST be recomputed, not added to.
 
-A task has a retry policy: `retries=3`, `retry_delay=timedelta(minutes=5)`,
-`exponential_backoff=True`. Not `retries=100` with no delay.
+### DP-019 — Event Timestamp Usage
 
-### 6.6 Failure Alerts
+**MUST**
 
-A task failure alerts the on-call. A DAG that fails silently is worse
-than one that crashes loudly.
+Events MUST be assumed to arrive out of order. An event timestamp MUST be included in every message. Arrival time MUST NOT be used for ordering.
 
-### 6.7 Timeouts
+## DAG Design
 
-Every task has a timeout. A task that hangs forever blocks the DAG.
+### DP-020 — Single Purpose Task
 
-### 6.8 No Backfill in the Scheduler
+**MUST**
 
-Backfills are run manually (or via a separate scheduler). They do not
-compete with the regular schedule for worker slots.
+A task MUST do one thing. Extract, transform, and load MUST be three tasks.
 
-## 7. Data Quality
+### DP-021 — Task Idempotency
 
-### 7.1 Validate at Boundaries
+**MUST**
 
-Data entering the pipeline is validated:
+Each task MUST be safe to retry. See DP-001 for idempotency requirements.
+
+### DP-022 — Task Independence
+
+**SHOULD**
+
+Parallel branches SHOULD run concurrently where possible. Sequential dependencies MUST be explicit.
+
+### DP-023 — No Cross-DAG Imports
+
+**MUST NOT**
+
+A DAG MUST NOT import from another DAG. Shared logic MUST go in a library module.
+
+See MAS-035 in `_universal/00-master-anti-slop.md`.
+
+### DP-024 — Retry with Backoff
+
+**MUST**
+
+A task MUST have a retry policy with backoff (e.g., `retries=3`, `retry_delay=timedelta(minutes=5)`, `exponential_backoff=True`). Retries without delay are prohibited.
+
+### DP-025 — Failure Alerts
+
+**MUST**
+
+A task failure MUST alert the on-call. A DAG that fails silently is worse than one that crashes loudly.
+
+See MAS-037 in `_universal/00-master-anti-slop.md`.
+
+### DP-026 — Task Timeouts
+
+**MUST**
+
+Every task MUST have a timeout. A task that hangs forever blocks the DAG.
+
+See MAS-040 in `_universal/00-master-anti-slop.md`.
+
+### DP-027 — Backfill Scheduler Separation
+
+**MUST NOT**
+
+Backfills MUST NOT run in the regular scheduler. They MUST be run manually or via a separate scheduler and MUST NOT compete with the regular schedule for worker slots.
+
+## Data Quality
+
+### DP-028 — Boundary Validation
+
+**MUST**
+
+Data entering the pipeline MUST be validated:
 
 - Schema (types, nullability, required fields).
 - Range (numbers within bounds).
 - Referential integrity (foreign keys exist).
 - Business rules (status values are in the allowed set).
 
-### 7.2 Quarantine Bad Data
+### DP-029 — Bad Data Quarantine
 
-BAD: A malformed record crashes the pipeline.
-GOOD: The record goes to a dead-letter queue; the pipeline continues.
+**MUST**
 
-### 7.3 Data Quality Metrics
+A malformed record MUST go to a dead-letter queue; the pipeline MUST continue. A malformed record crashing the pipeline is prohibited.
 
-Track:
+### DP-030 — Data Quality Metrics
+
+**MUST**
+
+The following MUST be tracked and alerted when deviating from baseline:
 
 - Row counts per run.
 - Null rates per column.
 - Distinct value counts for categorical columns.
 - Freshness (time since last update).
 
-Alert when any metric deviates from its baseline.
+### DP-031 — No Silent Data Loss
 
-### 7.4 No Silent Data Loss
+**MUST NOT**
 
-A filter that drops 5% of rows is a decision. Log it. Alert on
-changes to the drop rate.
+A filter that drops rows (e.g., 5%) is a decision. It MUST be logged and alerted on changes to the drop rate. Silent data loss is prohibited.
 
-### 7.5 Test in the Pipeline
+### DP-032 — In-Pipeline Tests
 
-A pipeline includes tests:
+**MUST**
+
+A pipeline MUST include tests:
 
 - Uniqueness of primary keys.
 - Foreign key integrity.
 - Expected ranges.
 - No unexpected nulls.
 
-dbt tests, Great Expectations, or a custom framework.
+Use dbt tests, Great Expectations, or a custom framework.
 
-## 8. Storage and Cost
+## Storage and Cost
 
-### 8.1 Columnar Formats
+### DP-033 — Columnar Format Usage
 
-Parquet, ORC, or Avro for analytical data. CSV is a transfer format,
-not a storage format.
+**MUST**
 
-### 8.2 Partitioning
+Analytical data MUST be stored in columnar formats (Parquet, ORC, or Avro). CSV is a transfer format, not a storage format.
 
-Partition by the column most used in filters (usually date).
-Over-partitioning (by hour on a small dataset) produces small files
-and slow queries.
+### DP-034 — Partitioning Strategy
 
-### 8.3 Compaction
+**MUST**
 
-Small files slow down queries. A compaction job periodically merges
-them.
+Data MUST be partitioned by the column most used in filters (usually date). Over-partitioning (e.g., by hour on a small dataset) produces small files and slow queries and MUST NOT be used.
 
-### 8.4 Retention
+### DP-035 — File Compaction
 
-Old data is deleted per policy. A pipeline that writes 10 TB a month
-and never deletes anything is a growing cost.
+**SHOULD**
 
-### 8.5 Cost Monitoring
+Small files slow down queries. A compaction job SHOULD periodically merge them.
 
-Query cost on cloud warehouses (BigQuery, Snowflake, Redshift) is
-driven by bytes scanned. Monitor it. A query that scans 1 TB should
-be a decision, not an accident.
+### DP-036 — Data Retention Policy
 
-## 9. Data Pipeline Anti-Patterns
+**MUST**
 
-### 9.1 Non-Idempotent Pipelines
+Old data MUST be deleted per policy. A pipeline that writes 10 TB a month and never deletes anything is a growing cost.
 
-Covered in 2.1. The most damaging data pipeline mistake.
+### DP-037 — Cost Monitoring
 
-### 9.2 `INSERT` Without Upsert
+**MUST**
 
-Covered in 2.2.
+Query cost on cloud warehouses (BigQuery, Snowflake, Redshift) is driven by bytes scanned. It MUST be monitored. A query that scans 1 TB MUST be a decision, not an accident.
 
-### 9.3 Time-Based Table Names
+## AI-Specific Data Pipeline Discipline
 
-BAD: `events_2025_01_15_14_30`. Every run creates a new table.
-Consumers do not know which to read.
-GOOD: One table partitioned by `event_date`.
+### DP-060 — Schema Verification Before Query
 
-### 9.4 Silent Failures
+**MUST**
 
-BAD: A try/except that logs and continues.
-GOOD: A dead-letter queue with an alert.
+Before writing any pipeline query or transformation, the assistant MUST verify that the referenced tables, columns, and partitions exist in the project's schema definitions or catalog. Invented column names produce runtime failures that are invisible at development time.
 
-### 9.5 Hard-Coded Dates
+See MAS-036 in `_universal/00-master-anti-slop.md`.
 
-BAD: `WHERE date = '2025-01-15'` in a daily DAG.
-GOOD: `WHERE date = '{{ ds }}'` (Airflow) or an equivalent.
+### DP-061 — Existing Pipeline Discovery
 
-### 9.6 No Watermark
+**MUST**
 
-Covered in 5.1.
+Before creating a new pipeline task or DAG, the assistant MUST search the project for an existing equivalent. Inventing parallel pipelines for the same data creates divergent datasets and maintenance burden.
 
-### 9.7 Retries Without Backoff
+See MAS-035 in `_universal/00-master-anti-slop.md`.
 
-A task that fails due to a transient database issue retries in a
-tight loop, overwhelming the database.
+### DP-062 — Pipeline Complexity Restraint
 
-### 9.8 Cross-Environment Data Leakage
+**SHOULD**
 
-BAD: A staging pipeline that reads from production without a filter.
-GOOD: Environment-scoped credentials and explicit data subsets.
+The assistant SHOULD NOT introduce complex orchestration patterns (multi-level DAG dependencies, custom schedulers, exotic frameworks) unless the project already uses them and the scale explicitly requires them.
 
-### 9.9 No Lineage
+See MAS-038 in `_universal/00-master-anti-slop.md`.
 
-Nobody knows which pipeline produced a table or which tables depend
-on it. Column-level lineage (dbt, OpenLineage) answers this.
+## Anti-Patterns
 
-### 9.10 No Documentation
+### DP-040 — Time-Based Table Names
 
-A pipeline with no README, no owner, no SLA. When it fails at 3 AM,
-no one knows what to do.
+**MUST NOT**
 
-### 9.11 DAGs That Import From Other DAGs
+Time-based table names (e.g., `events_2025_01_15_14_30`) are prohibited. Every run creates a new table and consumers do not know which to read. One table partitioned by `event_date` MUST be used.
 
-Covered in 6.4.
+### DP-041 — Silent Failure Anti-Pattern
 
-### 9.12 Parallelism Without Bound
+**MUST NOT**
 
-BAD: A pipeline that launches 10,000 concurrent tasks.
-GOOD: A pool with a concurrency limit.
+A try/except that logs and continues is prohibited. A dead-letter queue with an alert MUST be used.
 
-### 9.13 No Partition Pruning
+See MAS-037 in `_universal/00-master-anti-slop.md`.
 
-BAD: `SELECT * FROM events WHERE YEAR(event_time) = 2025`. This
-prevents partition pruning.
-GOOD: `WHERE event_date >= '2025-01-01' AND event_date < '2026-01-01'`.
+### DP-042 — Hard-Coded Dates
 
-### 9.14 Timezone Confusion
+**MUST NOT**
 
-A pipeline that mixes UTC and local time. Timestamps stored as naive
-datetimes. `WHERE date = ...` produces different results depending on
-the server's timezone.
+Hard-coded dates in a scheduled DAG (e.g., `WHERE date = '2025-01-15'`) are prohibited. Templated dates (e.g., `{{ ds }}` in Airflow) MUST be used.
 
-Always UTC. Always timezone-aware.
+### DP-043 — Retry Without Backoff
 
-### 9.15 Ignoring Late Data
+**MUST NOT**
 
-Covered in 5.
+A task that fails due to a transient issue and retries in a tight loop overwhelms the source. Retries MUST have backoff. See DP-024.
 
-### 9.16 Backfill by Replaying the Scheduler
+### DP-044 — Cross-Environment Data Leakage
 
-Running the scheduler for a past date does not equal a backfill. The
-scheduler has current code, current resources, and current side
-effects. Use the dedicated backfill path.
+**MUST NOT**
 
-### 9.17 No Data Contracts
+A staging pipeline reading from production without a filter is prohibited. Environment-scoped credentials and explicit data subsets MUST be used.
 
-A producer changes its schema without notifying consumers. The
-pipeline breaks at 2 AM. Data contracts (a registry, a version, a
-documented interface) prevent this.
+### DP-045 — Lineage Requirement
 
-### 9.18 Overwriting Without a Snapshot
+**MUST**
 
-A backfill or a re-run overwrites historical data with no way to
-compare. Keep a snapshot of the previous state.
+Column-level lineage (dbt, OpenLineage) MUST be maintained. Nobody MUST be left unaware of which pipeline produced a table or which tables depend on it.
 
-### 9.19 PII Without Control
+### DP-046 — Pipeline Documentation
 
-BAD: A pipeline that copies PII into an analytics warehouse without
-masking.
-GOOD: Tokenization or masking at the boundary; PII stays in the
-source system.
+**MUST**
 
-### 9.20 Testing in Production
+A pipeline MUST have a README, an owner, and an SLA. When it fails at 3 AM, someone MUST know what to do.
 
-BAD: A new transformation tested only against the production dataset.
-GOOD: A sampled dataset in staging, with representative edge cases.
+### DP-047 — Unbounded Parallelism
 
-### 9.21 No Version Control for Transformations
+**MUST NOT**
 
-BAD: SQL edited directly in the warehouse UI.
-GOOD: SQL in Git, deployed via the pipeline.
+A pipeline that launches thousands of concurrent tasks is prohibited. A pool with a concurrency limit MUST be used.
 
-### 9.22 Cron-Only Scheduling
+See MAS-040 in `_universal/00-master-anti-slop.md`.
 
-A cron job with no visibility, no retries, no alerting. If it fails,
-nobody notices until the data is stale. Use an orchestrator.
+### DP-048 — Partition Pruning Prevention
 
-### 9.23 Long-Running Backfills in the Scheduler
+**MUST NOT**
 
-Covered in 6.8.
+Queries that prevent partition pruning (e.g., `WHERE YEAR(event_time) = 2025`) are prohibited. Direct partition column filters MUST be used (e.g., `WHERE event_date >= '2025-01-01' AND event_date < '2026-01-01'`).
 
-## 10. Response to Violation
+### DP-049 — Timezone Confusion
 
-If a previous response violated a rule here:
+**MUST NOT**
 
-```
-In the previous response, [specific rule] was violated. Correction:
-[corrected code]
-```
+Mixing UTC and local time, storing naive datetimes, or using `WHERE date = ...` that produces different results depending on the server's timezone is prohibited. All timestamps MUST be UTC and timezone-aware.
 
-No justification. No apology paragraph. Fix and move on.
+### DP-050 — Scheduler Replay Backfill
+
+**MUST NOT**
+
+Running the scheduler for a past date does not equal a backfill. The scheduler has current code, current resources, and current side effects. The dedicated backfill path MUST be used.
+
+### DP-051 — Data Contracts
+
+**MUST**
+
+A producer MUST NOT change its schema without notifying consumers. Data contracts (a registry, a version, a documented interface) MUST be used to prevent 2 AM breakages.
+
+### DP-052 — Overwrite Without Snapshot
+
+**MUST NOT**
+
+A backfill or a re-run overwriting historical data with no way to compare is prohibited. A snapshot of the previous state MUST be kept.
+
+### DP-053 — PII Control
+
+**MUST NOT**
+
+A pipeline copying PII into an analytics warehouse without masking is prohibited. Tokenization or masking at the boundary MUST be used; PII MUST stay in the source system.
+
+### DP-054 — Production Testing Prohibition
+
+**MUST NOT**
+
+A new transformation tested only against the production dataset is prohibited. A sampled dataset in staging, with representative edge cases, MUST be used.
+
+### DP-055 — Transformation Version Control
+
+**MUST**
+
+SQL MUST be in Git and deployed via the pipeline. SQL edited directly in the warehouse UI is prohibited.
+
+### DP-056 — Cron-Only Scheduling
+
+**MUST NOT**
+
+A cron job with no visibility, no retries, and no alerting is prohibited. If it fails, nobody notices until the data is stale. An orchestrator MUST be used.
+
+## Response to Violation
+
+When a rule in this file is violated, report:
+
+Violation: DP-{NNN}
+Reason: {one-line reason}
+Correction: {smallest fix}
+
+For multiple violations, report each rule ID separately.
+
+Do not replace a technical correction with a generic explanation.

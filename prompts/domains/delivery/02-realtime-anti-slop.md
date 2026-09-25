@@ -2,374 +2,396 @@
 id: 02-realtime-anti-slop
 title: "Realtime Anti-Slop Layer"
 lang: en
-depends_on: [00-master-anti-slop]
+depends_on: ["_universal/00-style-guide.md", "_universal/00-master-anti-slop.md"]
 category: domain
 domain_type: delivery
-version: 1
+version: 2
 ---
 
 # Realtime Anti-Slop Layer
 
-Layered under `_universal/00-master-anti-slop.md`. Universal rules
-(fabrication, fake completion, over-engineering, silent assumptions,
-security anti-patterns, output format) are NOT repeated here.
+This file defines behavioral contracts specific to realtime systems. It sits in the delivery layer, below the universal anti-slop rules and above framework-specific networking patterns. It covers WebSocket, SSE, long-polling, message ordering, delivery guarantees, backpressure, reconnection, and the patterns that produce stuck connections or lost messages. Event-driven architecture (queues, consumers) is covered where it intersects with realtime user-facing systems. It does not cover general backend API rules (see `02-backend-anti-slop.md`) or data pipeline streaming (see `02-data-pipeline-anti-slop.md`).
 
-This file covers rules specific to realtime systems: WebSocket, SSE,
-long-polling, message ordering, delivery guarantees, backpressure,
-reconnection, and the patterns that produce stuck connections or lost
-messages. Event-driven architecture (queues, consumers) is covered in
-this file where it intersects with realtime user-facing systems.
+A realtime system is a continuous contract between client and server. Every connection, message, and reconnect is a guarantee of state synchronization.
 
-## 1. Stack Assumptions
+## Scope
 
-This layer applies to:
+This file applies to WebSocket servers and clients (native, Socket.IO, ws), Server-Sent Events (SSE), long-polling fallbacks, WebRTC data channels (signaling), gRPC streaming, MQTT for IoT, and message queues feeding realtime updates (Kafka, RabbitMQ, Redis Pub/Sub, NATS). The principles are protocol-agnostic. The examples use WebSocket and generic message formats where illustrative.
 
-- WebSocket servers and clients (native, Socket.IO, ws).
-- Server-Sent Events.
-- Long-polling fallbacks.
-- WebRTC data channels (signaling, not media).
-- gRPC streaming.
-- MQTT for IoT.
-- Message queues feeding realtime updates (Kafka, RabbitMQ, Redis
-  Pub/Sub, NATS).
+## Rule Severity
 
-## 2. Connection Lifecycle
+Severity follows `_universal/00-style-guide.md`.
 
-### 2.1 Authenticate Before the First Message
+## Contracts
 
-Authenticate at connection time (token in the handshake, a first
-auth message), not on every subsequent message. The connection is
-then trusted for its lifetime.
+A realtime system commits to six contracts. The table below maps each contract to the rules that enforce it.
 
-BAD: Sending the token with every WebSocket message.
-GOOD: Auth during the handshake; the connection carries identity.
+| Contract | Description | Enforced By |
+|---|---|---|
+| Connection Lifecycle | Connections are authenticated, heartbeat-monitored, and gracefully terminated. | RT-001 to RT-007 |
+| Delivery Guarantees | Delivery semantics are explicit, messages are identifiable, and drops are logged. | RT-008 to RT-012 |
+| Message Ordering | Streams maintain order via sequence numbers and single-writer partitions. | RT-013 to RT-016 |
+| Backpressure & Scaling | Buffers are bounded, slow consumers are handled, and broadcasts are sharded. | RT-017 to RT-020, RT-029 to RT-032 |
+| State Recovery | Clients resume from tokens or snapshots without losing or duplicating state. | RT-021 to RT-024 |
+| Presence Discipline | Presence is eventually consistent, heartbeat-derived, and stored in fast memory. | RT-025 to RT-028 |
 
-### 2.2 Handle Reconnection
+## Connection Lifecycle
 
-Every realtime client reconnects automatically after a network drop.
-Exponential backoff with jitter.
+### RT-001 — Connection-Time Authentication
 
-### 2.3 Resubscribe After Reconnect
+**MUST**
 
-A reconnected client re-subscribes to its channels. The server does
-not remember subscriptions across disconnects.
+Authentication MUST occur at connection time (e.g., token in the handshake or a first auth message). The connection is then trusted for its lifetime. Sending authentication tokens with every subsequent message is prohibited.
 
-### 2.4 State Recovery After Reconnect
+### RT-002 — Automatic Reconnection
 
-If the client missed messages during the disconnect, it fetches a
-snapshot or replays from a cursor. The client does not assume it saw
-everything.
+**MUST**
 
-### 2.5 Heartbeats
+Every realtime client MUST reconnect automatically after a network drop using exponential backoff with jitter.
 
-A heartbeat (ping/pong) detects half-open connections. A connection
-without traffic for N seconds is closed.
+### RT-003 — Post-Reconnect Resubscription
 
-### 2.6 Clean Disconnect
+**MUST**
 
-The client sends a close message with a reason code. The server
-releases resources tied to the connection.
+A reconnected client MUST re-subscribe to its channels. The server MUST NOT assume it remembers subscriptions across disconnects.
 
-### 2.7 Graceful Server Shutdown
+### RT-004 — Post-Disconnect State Recovery
 
-On shutdown, the server:
+**MUST**
 
-1. Stops accepting new connections.
-2. Sends a close frame to existing clients with a "server going away"
-   code.
-3. Waits for clients to disconnect (with a timeout).
-4. Closes remaining connections.
+If the client missed messages during a disconnect, it MUST fetch a snapshot or replay from a cursor. The client MUST NOT assume it saw everything during the outage.
+
+### RT-005 — Heartbeat Enforcement
+
+**MUST**
+
+A heartbeat mechanism (ping/pong) MUST be implemented to detect half-open connections. A connection without traffic for a defined interval MUST be closed.
+
+### RT-006 — Clean Disconnect Protocol
+
+**MUST**
+
+The client MUST send a close message with a reason code. The server MUST release resources tied to the connection immediately upon clean disconnect.
+
+### RT-007 — Graceful Server Shutdown
+
+**MUST**
+
+On shutdown, the server MUST:
+
+1. Stop accepting new connections.
+2. Send a close frame to existing clients with a "server going away" code.
+3. Wait for clients to disconnect (with a timeout).
+4. Close remaining connections.
 
 Clients see a clean signal and reconnect to another instance.
 
-## 3. Delivery Guarantees
+## Delivery Guarantees
 
-### 3.1 At-Most-Once, At-Least-Once, Exactly-Once
+### RT-008 — Explicit Delivery Guarantee
 
-Pick one explicitly:
+**MUST**
+
+The delivery semantic MUST be explicitly chosen and documented:
 
 - **At-most-once**: fire and forget. Messages may be lost.
-- **At-least-once**: messages may be delivered more than once.
-  Requires idempotent handling.
+- **At-least-once**: messages may be delivered more than once. Requires idempotent handling.
 - **Exactly-once**: end-to-end deduplication with sequence numbers.
-  Expensive; rarely needed.
 
-Most realtime systems use at-least-once with client-side
-deduplication.
+Most realtime systems MUST use at-least-once with client-side deduplication.
 
-### 3.2 Message IDs
+### RT-009 — Message ID Requirement
 
-Every message has a unique ID. The client deduplicates by ID.
+**MUST**
 
-### 3.3 Sequence Numbers
+Every message MUST have a unique ID. The client MUST deduplicate by ID.
 
-For ordered streams, each message carries a monotonically increasing
-sequence number. The client detects gaps and requests replay.
+### RT-010 — Sequence Number Ordering
 
-### 3.4 Acknowledgments
+**MUST**
 
-For critical messages, the client sends an ack. The server retries
-unacked messages within a window.
+For ordered streams, each message MUST carry a monotonically increasing sequence number. The client MUST detect gaps and request replay.
 
-### 3.5 No Silent Drops
+### RT-011 — Critical Message Acknowledgment
 
-A dropped message is logged and, where possible, reported to the
-sender.
+**MUST**
 
-## 4. Ordering
+For critical messages, the client MUST send an acknowledgment (ack). The server MUST retry unacked messages within a defined window.
 
-### 4.1 Per-Stream Ordering
+### RT-012 — Drop Logging and Reporting
 
-Messages are ordered within a stream (a chat room, a user's updates).
-Across streams, no order is guaranteed.
+**MUST NOT**
 
-### 4.2 Single Writer Per Stream
+Messages MUST NOT be dropped silently. A dropped message MUST be logged and, where possible, reported to the sender.
 
-To preserve order, only one server process writes to a stream. Use
-a partition key (user ID, room ID) routed to the same worker.
+## Ordering
 
-### 4.3 Client-Side Reordering
+### RT-013 — Per-Stream Ordering Guarantee
 
-If messages can arrive out of order (WebSocket over TCP is ordered
-per connection, but multiple connections are not), the client
-buffers and reorders by sequence number.
+**MUST**
 
-### 4.4 Timestamps Are Not Order
+Messages MUST be ordered within a stream (e.g., a chat room, a user's updates). Across streams, no order is guaranteed.
 
-A message's `created_at` is not a reliable order. Clocks drift, and
-two messages may share a timestamp. Use sequence numbers.
+### RT-014 — Single Writer Per Stream
 
-## 5. Backpressure
+**MUST**
 
-### 5.1 Slow Consumers
+To preserve order, only one server process MUST write to a stream. A partition key (user ID, room ID) MUST be routed to the same worker.
 
-A slow client cannot keep up with the message rate. The server:
+### RT-015 — Client-Side Reordering
 
-- Buffers up to a limit.
-- Drops messages beyond the limit, or
-- Disconnects the client.
+**MUST**
 
-Do not buffer without bound.
+If messages can arrive out of order (e.g., multiple connections), the client MUST buffer and reorder by sequence number.
 
-### 5.2 Buffer Limits
+### RT-016 — Timestamp Ordering Prohibition
 
-Every server-side buffer has a maximum size. A message beyond the
-limit triggers a policy:
+**MUST NOT**
 
-- Drop oldest.
-- Drop newest.
-- Disconnect.
-- Apply flow control.
+A message's `created_at` timestamp MUST NOT be used as a reliable order. Clocks drift, and two messages may share a timestamp. Sequence numbers MUST be used.
 
-### 5.3 Flow Control
+## Backpressure
 
-For protocols that support it (WebSocket does not natively), the
-client signals readiness. Otherwise, the server tracks the send
-buffer size and pauses when it grows.
+### RT-017 — Slow Consumer Policy
 
-### 5.4 No Broadcast to Unbounded Audience
+**MUST**
 
-A room with 100,000 members and a message every second is 100,000
-messages per second. Partition or shard.
+When a client cannot keep up with the message rate, the server MUST apply a policy: buffer up to a limit, drop messages beyond the limit, or disconnect the client. Unbounded buffering is prohibited.
 
-## 6. Reconnection and Resume
+### RT-018 — Bounded Server Buffers
 
-### 6.1 Resume Token
+**MUST**
 
-The client receives a resume token. On reconnect, it sends the token
-and receives messages since its last position.
+Every server-side buffer MUST have a maximum size. A message beyond the limit MUST trigger a defined policy (drop oldest, drop newest, disconnect, or apply flow control).
 
-### 6.2 Replay Window
+### RT-019 — Flow Control Implementation
 
-The server retains messages for a bounded time (5 minutes, 1 hour).
-A client disconnected longer than the window receives a snapshot.
+**SHOULD**
 
-### 6.3 Snapshot Endpoint
+For protocols that support it, the client SHOULD signal readiness. Otherwise, the server MUST track the send buffer size and pause when it grows.
 
-A separate endpoint provides the current state. The client calls it
-after a long disconnect.
+### RT-020 — Unbounded Broadcast Prohibition
 
-### 6.4 Consistent Snapshot
+**MUST NOT**
 
-The snapshot includes a sequence number. Subsequent messages resume
-from that number.
+Broadcasting to an unbounded audience (e.g., a room with 100,000 members receiving a message every second) MUST NOT be handled by a single process. The load MUST be partitioned or sharded.
 
-## 7. Presence
+## Reconnection and Resume
 
-### 7.1 Presence Is Eventually Consistent
+### RT-021 — Resume Token Usage
 
-Presence (who is online) is not a hard guarantee. A user may appear
-online for a few seconds after disconnect.
+**MUST**
 
-### 7.2 Heartbeat-Based
+The client MUST receive a resume token. On reconnect, it MUST send the token and receive messages since its last position.
 
-Presence is derived from heartbeats. A user without a heartbeat for
-N seconds is offline.
+### RT-022 — Bounded Replay Window
 
-### 7.3 Broadcast Presence Changes Sparingly
+**MUST**
 
-Presence updates every keystroke are noise. Debounce or batch.
+The server MUST retain messages for a bounded time (e.g., 5 minutes, 1 hour). A client disconnected longer than the window MUST receive a snapshot instead of a replay.
 
-### 7.4 Presence Storage
+### RT-023 — State Snapshot Endpoint
 
-Presence state is in fast storage (Redis, in-memory), not a relational
-database. It changes constantly and is short-lived.
+**MUST**
 
-## 8. Scaling
+A separate endpoint MUST provide the current state. The client MUST call it after a long disconnect.
 
-### 8.1 Sticky Sessions or a Pub/Sub Layer
+### RT-024 — Snapshot Sequence Consistency
 
-When multiple server instances handle WebSocket connections:
+**MUST**
 
-- Load balancer with sticky sessions, OR
-- A pub/sub layer (Redis, NATS) that broadcasts messages between
-  instances.
+The snapshot MUST include a sequence number. Subsequent messages MUST resume from that number.
 
-Pub/sub is preferred; sticky sessions complicate deploys.
+## Presence
 
-### 8.2 Connection Limits Per Instance
+### RT-025 — Eventual Consistency of Presence
 
-Each server instance has a maximum connection count. Beyond it, the
-load balancer routes new connections elsewhere.
+**MUST**
 
-### 8.3 Graceful Deploy
+Presence (who is online) MUST be treated as eventually consistent. A user may appear online for a few seconds after disconnect. Hard guarantees MUST NOT be promised.
 
-Rolling deploys drain connections from the old instance before
-shutting it down.
+### RT-026 — Heartbeat-Derived Presence
 
-### 8.4 Client Reconnect to Another Instance
+**MUST**
 
-Clients reconnect to any instance. State is not tied to the
-connection.
+Presence MUST be derived from heartbeats. A user without a heartbeat for a defined interval MUST be marked offline.
 
-## 9. Realtime-Specific Anti-Patterns
+### RT-027 — Presence Update Debouncing
 
-### 9.1 No Heartbeat
+**MUST NOT**
 
-A half-open connection is not detected. The client thinks it is
-connected; the server thinks it is connected. Messages are silently
-lost.
+Presence updates on every keystroke or minor action MUST NOT be broadcast. Updates MUST be debounced or batched.
 
-### 9.2 No Reconnect Logic
+### RT-028 — Fast Storage for Presence
 
-The client does not reconnect after a network drop. The user must
-refresh.
+**MUST**
 
-### 9.3 Unbounded Send Buffer
+Presence state MUST be stored in fast storage (Redis, in-memory). It MUST NOT be stored in a relational database, as it changes constantly and is short-lived.
 
-Covered in 5.2.
+## Scaling
 
-### 9.4 No Message IDs
+### RT-029 — Multi-Instance Message Routing
 
-The client cannot deduplicate. On reconnect, it processes the same
-message twice.
+**MUST**
 
-### 9.5 Timestamps as Order
+When multiple server instances handle connections, a pub/sub layer (Redis, NATS) MUST broadcast messages between instances. Sticky sessions MAY be used but complicate deploys and SHOULD be avoided.
 
-Covered in 4.4.
+### RT-030 — Instance Connection Limits
 
-### 9.6 Auth Only at Login
+**MUST**
 
-The connection is established before login, and the server trusts any
-message on it. Auth must be at connection time.
+Each server instance MUST have a maximum connection count. Beyond it, the load balancer MUST route new connections elsewhere.
 
-### 9.7 Broadcasting to All Clients
+### RT-031 — Connection Draining on Deploy
 
-BAD: A global broadcast for a message meant for one user.
-GOOD: Targeted delivery by user ID or channel.
+**MUST**
 
-### 9.8 No Rate Limit on Connections
+Rolling deploys MUST drain connections from the old instance before shutting it down.
 
-A client that opens 10,000 connections from one IP. Rate-limit and
-cap per-IP connection count.
+### RT-032 — Stateless Connection Routing
 
-### 9.9 No Backpressure
+**MUST**
 
-Covered in 5.1.
+Clients MUST be able to reconnect to any instance. State MUST NOT be tied to a specific connection or instance memory.
 
-### 9.10 Subscriptions Without Cleanup
+## AI-Specific Realtime Discipline
 
-A server-side subscription (a database listener, a Redis channel)
-that is not removed on disconnect. The subscription list grows
-forever.
+### RT-060 — Protocol API Verification
 
-### 9.11 Blocking the Event Loop
+**MUST**
 
-A synchronous operation in the message handler blocks all other
-connections on the same thread.
+Before using a realtime library API (e.g., Socket.IO events, WebSocket close codes, gRPC streaming methods), the assistant MUST verify the method exists in the installed version. Invented events or close codes produce silent connection failures.
 
-### 9.12 Message Size Unbounded
+See MAS-036 in `_universal/00-master-anti-slop.md`.
 
-A client sends a 100 MB message. The server buffers it. Cap message
-size.
+### RT-061 — Existing Realtime Pattern Discovery
 
-### 9.13 No Auth on Reconnect
+**MUST**
 
-The client reconnects with the same connection token without
-re-authenticating. If the token expired, the connection should be
-rejected.
+Before creating a new pub/sub channel, WebSocket handler, or message broker consumer, the assistant MUST search the project for an existing equivalent. Inventing parallel realtime channels creates split-brain state and message loss.
 
-### 9.14 State in Memory Only
+See MAS-035 in `_universal/00-master-anti-slop.md`.
 
-Presence and subscriptions only in one instance's memory. On restart,
-all state is lost.
+### RT-062 — Concurrency and State Restraint
 
-### 9.15 No Logging
+**SHOULD**
 
-A connection issue with no logs. Debugging is impossible.
+The assistant SHOULD NOT introduce complex distributed state machines or custom consensus protocols for presence and ordering unless the project already uses them and the scale explicitly requires them.
 
-### 9.16 Message Ordering Across Partitions
+See MAS-038 in `_universal/00-master-anti-slop.md`.
 
-Two partitions of the same stream deliver out of order. The consumer
-must handle it, or the producer must partition by the ordering key.
+## Anti-Patterns
 
-### 9.17 Retries Without Dedup
+### RT-033 — Targeted Delivery Requirement
 
-At-least-once delivery without message IDs produces duplicates. The
-consumer must deduplicate.
+**MUST NOT**
 
-### 9.18 Fan-Out Without Fan-In
+A global broadcast for a message meant for one user or a specific channel is prohibited. Delivery MUST be targeted by user ID or channel.
 
-A producer sends to 1,000 subscribers directly. The producer's load
-scales with subscribers. Use a broker.
+### RT-034 — Connection Rate Limiting
 
-### 9.19 No Connection Metrics
+**MUST**
 
-No visibility into active connections, message rate, or error rate.
-Scaling is guesswork.
+Connection attempts MUST be rate-limited and capped per IP. A client opening thousands of connections from one IP MUST be blocked.
 
-### 9.20 Polling Instead of Pushing
+### RT-035 — Subscription Cleanup
 
-A client that polls every second. The server load scales with clients.
-Use a push protocol.
+**MUST**
 
-### 9.21 Long-Polling for Everything
+Server-side subscriptions (database listeners, Redis channels) MUST be removed on disconnect. The subscription list MUST NOT grow forever.
 
-Long-polling is a fallback. If WebSocket or SSE is available, use it.
+### RT-036 — Event Loop Non-Blocking
 
-### 9.22 Sending the Full State
+**MUST NOT**
 
-BAD: Sending the entire document on every change.
-GOOD: Sending deltas or operations. The client applies them.
+Synchronous operations in the message handler MUST NOT block the event loop. Blocking the loop drops all other connections on the same thread.
 
-### 9.23 No Versioning of the Realtime Protocol
+### RT-037 — Message Size Capping
 
-The message format changes. Old clients break. Version the protocol.
+**MUST**
 
-### 9.24 Cross-Origin Without Auth
+Message size MUST be capped. A client sending a massive message MUST NOT be allowed to exhaust the server's buffer.
 
-A WebSocket connection accepts any origin. Without an origin check,
-a malicious site can open a connection on the user's behalf.
+### RT-038 — Reconnect Token Validation
 
-Check the `Origin` header against an allowlist during handshake.
+**MUST**
 
-## 10. Response to Violation
+The client MUST re-authenticate or validate the connection token on reconnect. If the token expired, the connection MUST be rejected.
 
-If a previous response violated a rule here:
+### RT-039 — Ephemeral State Persistence
 
-```
-In the previous response, [specific rule] was violated. Correction:
-[corrected code]
-```
+**MUST NOT**
 
-No justification. No apology paragraph. Fix and move on.
+Presence and subscriptions MUST NOT be stored only in one instance's memory if high availability is required. On restart, all state is lost. Fast, shared storage MUST be used.
+
+### RT-040 — Connection Telemetry Logging
+
+**MUST**
+
+Connection events, drops, and errors MUST be logged. A connection issue with no logs makes debugging impossible.
+
+### RT-041 — Partition Ordering Key
+
+**MUST**
+
+If a stream is partitioned, the producer MUST partition by the ordering key. Two partitions of the same stream delivering out of order MUST be handled by the consumer or prevented by the producer.
+
+### RT-042 — Retry Deduplication
+
+**MUST**
+
+At-least-once delivery without message IDs produces duplicates. The consumer MUST deduplicate retries.
+
+### RT-043 — Broker-Mediated Fan-Out
+
+**MUST NOT**
+
+A producer sending directly to thousands of subscribers (fan-out without fan-in) is prohibited. The producer's load scales with subscribers. A broker MUST be used.
+
+### RT-044 — Connection Metrics Visibility
+
+**MUST**
+
+Active connections, message rate, and error rate MUST be visible as metrics. Scaling without metrics is guesswork.
+
+### RT-045 — Push Protocol Preference
+
+**SHOULD**
+
+Push protocols (WebSocket, SSE) SHOULD be preferred over polling. A client polling every second causes server load to scale linearly with clients.
+
+### RT-046 — Long-Polling Fallback Discipline
+
+**SHOULD**
+
+Long-polling SHOULD only be used as a fallback. If WebSocket or SSE is available, it MUST be used.
+
+### RT-047 — Delta State Transmission
+
+**MUST NOT**
+
+Sending the entire document or state on every change is prohibited. Deltas or operations MUST be sent, and the client MUST apply them.
+
+### RT-048 — Protocol Versioning
+
+**MUST**
+
+The realtime message format MUST be versioned. Changing the format without versioning breaks old clients.
+
+### RT-049 — Origin Header Validation
+
+**MUST**
+
+A WebSocket connection MUST NOT accept any origin. The `Origin` header MUST be checked against an allowlist during handshake to prevent cross-site WebSocket hijacking.
+
+## Response to Violation
+
+When a rule in this file is violated, report:
+
+Violation: RT-{NNN}
+Reason: {one-line reason}
+Correction: {smallest fix}
+
+For multiple violations, report each rule ID separately.
+
+Do not replace a technical correction with a generic explanation.

@@ -2,232 +2,197 @@
 id: 02-database-anti-slop
 title: "Database Anti-Slop Layer"
 lang: en
-depends_on: [00-master-anti-slop]
+depends_on: ["_universal/00-style-guide.md", "_universal/00-master-anti-slop.md"]
 category: domain
 domain_type: delivery
-version: 2
+version: 3
 ---
 
 # Database Anti-Slop Layer
 
-Layered under `_universal/00-master-anti-slop.md`. Universal rules
-(fabrication, fake completion, over-engineering, silent assumptions,
-generic security, dependency addition, output format) are NOT
-repeated here.
+This file defines behavioral contracts specific to database work. It sits in the delivery layer, below the universal anti-slop rules and above framework-specific ORM patterns. It covers schema design, migrations, queries, indexes, transactions, data types, access control, and backup. It is engine-agnostic: PostgreSQL, MySQL, SQLite, MongoDB, and their managed equivalents share these rules. It does not cover ORM-specific patterns (see framework files), application-level caching (see `02-backend-anti-slop.md`), or data pipeline design (see `02-data-pipeline-anti-slop.md`).
 
-This file covers rules specific to database work: schema design,
-migrations, queries, indexes, transactions, data types, access
-control, and backup. It is engine-agnostic: PostgreSQL, MySQL,
-SQLite, MongoDB, and their managed equivalents share these rules.
-It does NOT cover ORM-specific patterns (see the framework files),
-application-level caching (see `02-backend-anti-slop.md`), or
-data pipeline design (see `02-data-pipeline-anti-slop.md`).
+A database is the last line of defense for data integrity. The application can be rewritten; the data cannot be recreated.
 
-A database is the last line of defense for data integrity. The
-application can be rewritten; the data cannot be recreated. The
-rules below reflect that reality.
+## Scope
 
-## 1. Stack Assumptions
+This file applies to relational databases (PostgreSQL, MySQL, MariaDB, SQL Server, SQLite, Oracle), document databases (MongoDB, CouchDB, Firestore), key-value stores used as primary storage (DynamoDB, Cassandra), and managed services (RDS, Aurora, Cloud SQL, Atlas). The examples use SQL and PostgreSQL-specific syntax where illustrative. Engine-specific details are noted where they differ.
 
-This file applies to:
+## Rule Severity
 
-- Relational databases: PostgreSQL, MySQL, MariaDB, SQL Server,
-  SQLite, Oracle.
-- Document databases: MongoDB, CouchDB, Firestore.
-- Key-value stores used as primary storage: DynamoDB, Cassandra.
-- Managed services: RDS, Aurora, Cloud SQL, Atlas.
+Severity follows `_universal/00-style-guide.md`.
 
-The examples use SQL and PostgreSQL-specific syntax. The principles
-are portable. Engine-specific details (isolation level names, index
-types) are noted where they differ.
+## Contracts
 
-## 2. Delivery Contracts
+A database commits to eight contracts. The table below maps each contract to the rules that enforce it.
 
-A database commits to eight contracts. Every section below enforces
-one or more of these.
+| Contract | Description | Enforced By |
+|---|---|---|
+| Data Integrity | Every row satisfies the constraints the schema declares. Constraints are enforced by the database, not only by the application. | DB-002, DB-004, DB-007, DB-086 |
+| Query Predictability | A query's performance is predictable from its plan. No query scans a table without an index unless the table is small. | DB-020, DB-026, DB-027, DB-075 |
+| Transactional Safety | A multi-step write either completes fully or leaves no trace. Partial writes are not visible to readers. | DB-034 to DB-040 |
+| Schema Evolution | Every schema change is reversible, tested, and applied through a migration. No manual edits to production. | DB-009 to DB-015 |
+| Access Control | Every user and service has the minimum permissions it needs. Application users cannot alter the schema. | DB-049 to DB-054 |
+| Data Durability | Every write that is acknowledged is durable across a crash. The database's durability settings match the business requirement. | DB-043, DB-055 to DB-060 |
+| Observability | Slow queries, lock waits, replication lag, and connection count are visible. The database is not a black box. | DB-061 to DB-067 |
+| Resource Discipline | Connections, transactions, and queries are bounded and cleaned up. | DB-018, DB-035, DB-078, DB-079 |
 
-### 2.1 Data Integrity
+## Schema Design
 
-Every row satisfies the constraints the schema declares. Constraints
-are enforced by the database, not only by the application.
+### DB-001 — Existing Table Discovery
 
-### 2.2 Query Predictability
+**MUST**
 
-A query's performance is predictable from its plan. No query scans
-a table without an index unless the table is small.
+Before creating a new table, the assistant MUST search the schema for an existing table that covers the same concept. Duplicate tables cause divergent data.
 
-### 2.3 Transactional Safety
+See MAS-035 in `_universal/00-master-anti-slop.md`.
 
-A multi-step write either completes fully or leaves no trace.
-Partial writes are not visible to readers.
+### DB-002 — Single Concept Table
 
-### 2.4 Schema Evolution
+**MUST**
 
-Every schema change is reversible, tested, and applied through a
-migration. No manual edits to production.
+A table MUST represent a single concept. If a table has columns that apply only to some rows, the model is wrong.
 
-### 2.5 Access Control
+Example (illustrative, SQL):
 
-Every user and service has the minimum permissions it needs.
-Application users cannot alter the schema; migration users do not
-serve traffic.
+BAD: A `contacts` table with `company_name` and `personal_note`, where `company_name` is only set for business contacts.
 
-### 2.6 Data Durability
+GOOD: A `contacts` table with a `type` column and a separate `companies` table.
 
-Every write that is acknowledged is durable across a crash. The
-database's durability settings match the business requirement.
+### DB-003 — Normalization Baseline
 
-### 2.7 Backup and Recovery
+**SHOULD**
 
-Every database has a backup. Every backup has a tested restore
-procedure. The recovery point objective (RPO) and recovery time
-objective (RTO) are documented.
+Schemas SHOULD start in third normal form. Denormalization MUST only occur with a measured performance reason, documented in the migration.
 
-### 2.8 Observability
+### DB-004 — NOT NULL Default
 
-Slow queries, lock waits, replication lag, and connection count are
-visible. The database is not a black box.
+**MUST**
 
-## 3. Schema Design
+Columns MUST default to `NOT NULL`. A nullable column MUST have a documented reason.
 
-### 3.1 Reference Existing Tables First
+Example (illustrative, SQL):
 
-Before creating a new table, search the schema for an existing
-table that covers the same concept. Duplicate tables cause divergent
-data.
+BAD: `email VARCHAR(255)` allowing nulls because the schema author did not think about it.
 
-### 3.2 One Table, One Concept
+GOOD: `email VARCHAR(255) NOT NULL` when every user must have an email.
 
-A table represents a single concept. If a table has columns that
-apply only to some rows, the model is wrong.
+### DB-005 — Nullable Semantics
 
-BAD: A `contacts` table with `company_name` and `personal_note`,
-where `company_name` is only set for business contacts.
+**MUST**
 
-GOOD: A `contacts` table with a `type` column and a separate
-`companies` table.
+A nullable column means "this value may legitimately be absent". It MUST NOT mean "we did not know at insert time". A separate status column MUST be used for the latter.
 
-### 3.3 Normalize Until It Hurts, Denormalize Until It Works
+### DB-006 — Schema Naming Convention
 
-Start in third normal form. Denormalize only with a measured
-performance reason, documented in the migration.
+**MUST**
 
-### 3.4 `NOT NULL` by Default
-
-Default to `NOT NULL`. A nullable column must have a documented
-reason.
-
-BAD: `email VARCHAR(255)` allowing nulls because the schema author
-did not think about it.
-
-GOOD: `email VARCHAR(255) NOT NULL` when every user must have an
-email.
-
-### 3.5 Nullable Means Optional, Not Unknown
-
-A nullable column means "this value may legitimately be absent".
-It does not mean "we did not know at insert time". Use a separate
-status column for the latter.
-
-### 3.6 Naming Conventions
-
-Match the project's existing convention:
+The project's existing naming convention MUST be matched:
 
 - Tables: `snake_case`, usually plural (`users`, `order_items`).
 - Columns: `snake_case` (`created_at`, `user_id`).
 - Foreign keys: `<referenced_table_singular>_id` (`user_id`).
 - Indexes: `<table>_<column>_idx` or the project's pattern.
 
-Do not mix plural and singular table names.
+Plural and singular table names MUST NOT be mixed.
 
-### 3.7 Primary Keys
+### DB-007 — Primary Key Requirement
 
-Every table has a primary key. Prefer:
+**MUST**
 
-- A surrogate key (UUID, bigint) for the internal identifier.
-- A natural key (unique constraint) for business identity.
+Every table MUST have a primary key. A surrogate key (UUID, bigint) is preferred for the internal identifier. A natural key (unique constraint) is used for business identity. A table without a primary key accumulates duplicate rows.
 
-A table without a primary key is a table that will accumulate
-duplicate rows.
+### DB-008 — Public Identifier Separation
 
-### 3.8 Public Identifier vs Internal Key
+**MUST**
 
-If the project exposes resources to clients (URLs, APIs), the
-public identifier is a UUID or a random slug, not the auto-increment
-primary key.
+If the project exposes resources to clients (URLs, APIs), the public identifier MUST be a UUID or a random slug, not the auto-increment primary key.
+
+Example (illustrative):
 
 BAD: `/users/42` (sequential, enumerable).
 
 GOOD: `/users/9f3a...` (UUID, non-enumerable).
 
-## 4. Migrations
+## Migrations
 
-### 4.1 Every Change Through a Migration
+### DB-009 — Migration-Only Changes
 
-No manual `ALTER TABLE` in production. No ORM auto-sync in
-production.
+**MUST**
 
-### 4.2 Migrations Are Immutable
+Every schema change MUST go through a migration. Manual `ALTER TABLE` in production and ORM auto-sync in production MUST NOT be used.
 
-Once applied in a shared environment, a migration is frozen.
-Fixing a bug requires a new migration.
+See MAS-035 in `_universal/00-master-anti-slop.md`.
 
-### 4.3 Reversible or Documented
+### DB-010 — Immutable Migrations
 
-Every migration is either:
+**MUST**
 
-- Reversible (with a working `down`), or
-- Explicitly irreversible, with a comment explaining why.
+Once applied in a shared environment, a migration MUST be frozen. Fixing a bug MUST require a new migration.
 
-### 4.4 Backwards-Compatible by Default
+### DB-011 — Migration Reversibility
 
-The safe sequence for a breaking change:
+**MUST**
+
+Every migration MUST be either reversible (with a working `down`) or explicitly irreversible, with a comment explaining why.
+
+### DB-012 — Backwards-Compatible Migrations
+
+**MUST**
+
+Breaking changes MUST follow the safe sequence:
 
 1. Add the new column (nullable or with a default).
 2. Deploy code that writes to it.
 3. Backfill data (separate step).
 4. Add the `NOT NULL` constraint (separate migration).
-5. Remove the old column (later migration after the code stops
-   using it).
+5. Remove the old column (later migration after the code stops using it).
 
-Never combine steps on a large table.
+Steps MUST NOT be combined on a large table.
 
-### 4.5 Lock Awareness
+### DB-013 — Lock-Aware Migrations
 
-Know which operations lock the table:
+**MUST**
+
+Operations that lock the table MUST be identified and mitigated:
 
 - Adding a column with a default: locks on older engines.
 - Adding an index: locks writes unless `CONCURRENTLY` (PostgreSQL).
 - Changing a column type: often rewrites the table.
 - Adding a foreign key: locks unless validated separately.
 
-For any table over 1M rows, use the project's online-schema-change
-strategy.
+For any table over 1M rows, the project's online-schema-change strategy MUST be used.
 
-### 4.6 No Destructive Operations Without Confirmation
+### DB-014 — Destructive Operation Confirmation
 
-`DROP TABLE`, `DROP COLUMN`, `TRUNCATE`. Never without explicit
-confirmation, even when the task seems to require it.
+**MUST NOT**
 
-### 4.7 Migrations Run in CI
+`DROP TABLE`, `DROP COLUMN`, `TRUNCATE` MUST NOT be executed without explicit confirmation, even when the task seems to require it.
 
-The migration is tested against a copy of the production schema
-before deployment.
+### DB-015 — CI Migration Testing
 
-## 5. Queries
+**MUST**
 
-### 5.1 No `SELECT *`
+The migration MUST be tested against a copy of the production schema in CI before deployment.
 
-List columns explicitly. `SELECT *` breaks when a column is added or
-removed, and transfers data the caller does not need.
+## Queries
 
-### 5.2 No N+1
+### DB-016 — Explicit Column Selection
 
-A loop containing a query is an N+1 pattern.
+**MUST NOT**
+
+`SELECT *` MUST NOT be used. Columns MUST be listed explicitly. `SELECT *` breaks when a column is added or removed and transfers data the caller does not need.
+
+### DB-017 — N+1 Query Prevention
+
+**MUST NOT**
+
+A loop containing a query is an N+1 pattern and MUST NOT be used.
+
+Example (illustrative, application + SQL):
 
 BAD:
-```sql
--- In the application:
+```javascript
 for (const user of users) {
   const orders = await db.query("SELECT * FROM orders WHERE user_id = $1", [user.id]);
 }
@@ -241,18 +206,26 @@ LEFT JOIN orders o ON o.user_id = u.id
 WHERE u.id = ANY($1);
 ```
 
-### 5.3 Pagination Is Mandatory
+See MAS-040 in `_universal/00-master-anti-slop.md`.
 
-Every list query has a `LIMIT`. No unbounded `SELECT`.
+### DB-018 — Mandatory Pagination
 
-### 5.4 Cursor Pagination for Deep Pages
+**MUST**
+
+Every list query MUST have a `LIMIT`. Unbounded `SELECT` queries MUST NOT be executed.
+
+### DB-019 — Cursor Pagination
+
+**MUST**
+
+Cursor pagination MUST be used for deep pages. `OFFSET` on large tables scans and discards rows, causing severe performance degradation.
+
+Example (illustrative, SQL):
 
 BAD:
 ```sql
 SELECT * FROM events ORDER BY created_at DESC LIMIT 20 OFFSET 100000;
 ```
-
-The database scans 100,020 rows to return 20.
 
 GOOD:
 ```sql
@@ -262,42 +235,50 @@ ORDER BY created_at DESC
 LIMIT 20;
 ```
 
-### 5.5 No Functions in `WHERE` on Indexed Columns
+### DB-020 — Sargable Queries
+
+**MUST NOT**
+
+Functions MUST NOT be used in `WHERE` clauses on indexed columns, as they prevent index usage.
+
+Example (illustrative, SQL):
 
 BAD:
 ```sql
 SELECT * FROM users WHERE LOWER(email) = 'x@y.com';
 ```
 
-The index on `email` is not used.
+GOOD: An expression index on `LOWER(email)`, a `CITEXT` column (PostgreSQL), or storing the value normalized.
 
-GOOD: An expression index on `LOWER(email)`, or a `CITEXT` column
-(PostgreSQL), or store the value normalized.
+### DB-021 — Explicit Join Aliases
 
-### 5.6 Explicit Column Aliases in Joins
+**MUST**
 
-Qualify every column with its table alias.
+Every column in a join MUST be qualified with its table alias. Ambiguous column names MUST NOT be used.
+
+Example (illustrative, SQL):
 
 BAD:
 ```sql
 SELECT id, name FROM users JOIN orders ON ...;
 ```
 
-`id` and `name` are ambiguous.
-
 GOOD:
 ```sql
 SELECT u.id, u.name FROM users u JOIN orders o ON o.user_id = u.id;
 ```
 
-### 5.7 `EXISTS` Over `COUNT(*) > 0`
+### DB-022 — Existence Check Optimization
 
-For existence checks:
+**MUST**
+
+For existence checks, `EXISTS` MUST be used instead of `COUNT(*) > 0`. `EXISTS` stops at the first match.
+
+Example (illustrative, SQL):
 
 BAD:
 ```sql
 SELECT COUNT(*) FROM users WHERE email = $1;
--- then check if count > 0
 ```
 
 GOOD:
@@ -305,12 +286,13 @@ GOOD:
 SELECT EXISTS(SELECT 1 FROM users WHERE email = $1);
 ```
 
-The `EXISTS` stops at the first match.
+### DB-023 — Transactional Read-Modify-Write
 
-### 5.8 Read-Modify-Write in a Transaction
+**MUST**
 
-A pattern that reads a value, computes a new value, and writes it
-back must be inside a transaction with appropriate isolation.
+A pattern that reads a value, computes a new value, and writes it back MUST be inside a transaction with appropriate isolation to prevent race conditions.
+
+Example (illustrative, SQL):
 
 BAD:
 ```sql
@@ -318,90 +300,101 @@ SELECT balance FROM accounts WHERE id = 1;  -- returns 100
 UPDATE accounts SET balance = 120 WHERE id = 1;  -- races with another request
 ```
 
-### 5.9 No Long-Running Queries in the Request Path
+### DB-024 — Request Path Query Limit
 
-A query that may take seconds blocks a request thread. Move heavy
-work to a background job.
+**MUST NOT**
 
-### 5.10 Avoid `LIKE '%...'`
+Queries that may take seconds MUST NOT run in the request path. Heavy work MUST be moved to a background job.
 
-A leading wildcard cannot use a normal index. Use full-text search
-or a trigram index.
+### DB-025 — Leading Wildcard Prohibition
 
-## 6. Indexes
+**MUST NOT**
 
-### 6.1 Every Foreign Key Has an Index
+`LIKE '%...'` MUST NOT be used on large tables, as a leading wildcard cannot use a normal index. Full-text search or a trigram index MUST be used instead.
 
-Without an index, joins and cascading deletes scan the child table.
+## Indexes
 
-Rationale: most databases do not create an index on a foreign key
-automatically. MySQL with InnoDB is an exception.
+### DB-026 — Foreign Key Indexing
 
-### 6.2 Index the Columns You Filter and Sort By
+**MUST**
 
-For every query pattern in the codebase, identify the filter and
-sort columns and ensure an index exists.
+Every foreign key MUST have an index. Without an index, joins and cascading deletes scan the child table. (Note: MySQL with InnoDB is an exception and creates it automatically).
 
-### 6.3 Composite Index Order Matters
+### DB-027 — Filter and Sort Indexing
 
-`(a, b)` supports queries on `a` and on `(a, b)`. It does not
-support queries on `b` alone.
+**MUST**
 
-Order columns by selectivity and by usage pattern.
+For every query pattern in the codebase, the filter and sort columns MUST be identified and an index MUST exist.
 
-### 6.4 Do Not Over-Index
+### DB-028 — Composite Index Ordering
 
-Every index costs writes. A table with 15 indexes has slow inserts.
+**MUST**
 
-Rationale: indexes are not free. Each additional index adds write
-overhead and storage.
+Composite index columns MUST be ordered by selectivity and usage pattern. `(a, b)` supports queries on `a` and on `(a, b)`, but does not support queries on `b` alone.
 
-### 6.5 Partial Indexes for Subset Queries
+### DB-029 — Index Overhead Awareness
+
+**MUST NOT**
+
+Tables MUST NOT be over-indexed. Every index costs writes and storage. A table with 15 indexes has slow inserts.
+
+### DB-030 — Partial Index Usage
+
+**SHOULD**
+
+Partial indexes SHOULD be used for subset queries to reduce index size and improve speed.
+
+Example (illustrative, PostgreSQL):
 
 BAD:
 ```sql
 CREATE INDEX idx_orders_user ON orders(user_id);
 ```
 
-If the query is always `WHERE user_id = $1 AND status = 'pending'`:
-
-GOOD:
+GOOD (if query is always `WHERE status = 'pending'`):
 ```sql
 CREATE INDEX idx_orders_pending ON orders(user_id)
 WHERE status = 'pending';
 ```
 
-The partial index is smaller and faster.
+### DB-031 — Expression Index Usage
 
-### 6.6 Expression Indexes for Computed Filters
+**SHOULD**
 
-A query filtering on `LOWER(email)` uses an expression index:
+Expression indexes SHOULD be used for computed filters.
 
+Example (illustrative, PostgreSQL):
 ```sql
 CREATE INDEX idx_users_lower_email ON users(LOWER(email));
 ```
 
-### 6.7 Index Name Is Meaningful
+### DB-032 — Meaningful Index Names
 
-`idx_users_email` is better than `users_email_index_1`. The name
-communicates the table, column, and purpose.
+**MUST**
 
-### 6.8 Unused Indexes Are Removed
+Index names MUST be meaningful and communicate the table, column, and purpose (e.g., `idx_users_email` instead of `users_email_index_1`).
 
-An index that no query uses wastes storage and slows writes. Monitor
-index usage and remove unused ones.
+### DB-033 — Unused Index Removal
 
-## 7. Transactions
+**MUST**
 
-### 7.1 Define the Unit of Work
+Unused indexes MUST be removed. An index that no query uses wastes storage and slows writes. Index usage MUST be monitored.
 
-Every write operation defines its transaction boundary. What must
-succeed or fail together?
+## Transactions
 
-### 7.2 Short Transactions
+### DB-034 — Explicit Transaction Boundaries
 
-Transactions hold locks. A transaction that includes a network
-call, user input, or long computation blocks other requests.
+**MUST**
+
+Every write operation MUST define its transaction boundary. What must succeed or fail together MUST be explicit.
+
+### DB-035 — Short Transaction Duration
+
+**MUST NOT**
+
+Transactions hold locks. A transaction MUST NOT include a network call, user input, or long computation. External calls MUST be done outside the transaction.
+
+Example (illustrative, SQL):
 
 BAD:
 ```sql
@@ -412,420 +405,384 @@ UPDATE ...;
 COMMIT;
 ```
 
-GOOD: Do the external call outside the transaction.
+See MAS-040 in `_universal/00-master-anti-slop.md`.
 
-### 7.3 Choose the Right Isolation Level
+### DB-036 — Isolation Level Selection
 
-Default to the database's default (`READ COMMITTED` in PostgreSQL).
-Escalate to `REPEATABLE READ` or `SERIALIZABLE` only with a reason
-and a plan for handling serialization failures.
+**MUST**
 
-### 7.4 Handle Deadlocks
+The database's default isolation level (e.g., `READ COMMITTED` in PostgreSQL) MUST be used by default. Escalation to `REPEATABLE READ` or `SERIALIZABLE` MUST only occur with a reason and a plan for handling serialization failures.
 
-When two transactions acquire locks in different orders, the
-database detects a deadlock and aborts one. The application must
-catch the deadlock error and retry with backoff.
+### DB-037 — Deadlock Handling
 
-### 7.5 No Nested Transactions Without Savepoints
+**MUST**
 
-If the database or ORM does not support savepoints, do not nest
-transactions. Refactor into a single transaction.
+The application MUST catch deadlock errors and retry with backoff.
 
-### 7.6 Idempotent Retries
+### DB-038 — Nested Transaction Prohibition
 
-A transaction that must be retried (after a serialization failure
-or a deadlock) is idempotent. Use an idempotency key or a natural
-key.
+**MUST NOT**
 
-### 7.7 Never Hold a Transaction Across an HTTP Response
+If the database or ORM does not support savepoints, transactions MUST NOT be nested. They MUST be refactored into a single transaction.
 
-A transaction that commits after the response is sent is
-unpredictable. Commit before responding.
+### DB-039 — Idempotent Transaction Retries
 
-## 8. Data Types
+**MUST**
 
-### 8.1 Use the Right Type
+A transaction that must be retried (after a serialization failure or a deadlock) MUST be idempotent. An idempotency key or a natural key MUST be used.
 
-- **Money**: integer (minor units) or the database's native decimal.
-  Never `float`.
-- **Timestamps**: the timestamp-with-timezone type (`TIMESTAMPTZ` in
-  PostgreSQL). Never a string.
+### DB-040 — HTTP Response Transaction Boundary
+
+**MUST NOT**
+
+A transaction MUST NOT be held across an HTTP response. A transaction that commits after the response is sent is unpredictable. Commits MUST happen before responding.
+
+## Data Types
+
+### DB-041 — Appropriate Data Types
+
+**MUST**
+
+The correct native type MUST be used:
+
+- **Money**: integer (minor units) or native decimal.
+- **Timestamps**: timestamp-with-timezone type.
 - **Identifiers**: the project's convention (UUID, bigint).
-- **Booleans**: the database's boolean type. Not `0`/`1` as `int`.
-- **Enums**: a lookup table, a `CHECK` constraint, or the native
-  enum type.
+- **Booleans**: the database's boolean type.
+- **Enums**: a lookup table, a `CHECK` constraint, or the native enum type.
 
-### 8.2 Money Never as Float
+### DB-042 — Money Type Prohibition
 
-BAD: `price FLOAT`.
+**MUST NOT**
 
-Floating point cannot represent most decimal values exactly.
-`0.1 + 0.2 != 0.3`.
+Money MUST NOT be stored as `FLOAT`. Floating point cannot represent most decimal values exactly (`0.1 + 0.2 != 0.3`). `BIGINT` (cents) or `NUMERIC` MUST be used.
 
-GOOD: `price_cents BIGINT` or `price NUMERIC(12, 2)`.
+### DB-043 — Timezone-Aware Timestamps
 
-### 8.3 Timestamps With Timezone
+**MUST**
 
-BAD: `created_at TIMESTAMP`.
+Timestamps MUST use the timezone-aware type (`TIMESTAMPTZ` in PostgreSQL) or `DATETIME` with an explicit UTC convention (MySQL). Plain `TIMESTAMP` MUST NOT be used.
 
-GOOD: `created_at TIMESTAMPTZ` (PostgreSQL) or `DATETIME` with an
-explicit UTC convention (MySQL).
+### DB-044 — String Length Bounds
 
-### 8.4 String Length Limits
+**MUST**
 
-Every string column has a maximum length that reflects the domain.
-`VARCHAR(255)` for everything is a smell.
+Every string column MUST have a maximum length that reflects the domain. `VARCHAR(255)` for everything is a smell.
+
+Example (illustrative, SQL):
 
 BAD: `name VARCHAR(255)` for a name that can be at most 100 chars.
 
 GOOD: `name VARCHAR(100) NOT NULL`.
 
-### 8.5 `VARCHAR` vs `TEXT`
+### DB-045 — VARCHAR vs TEXT Semantics
 
-In PostgreSQL, `VARCHAR(n)` and `TEXT` have identical performance.
-Use `VARCHAR(n)` only when the length limit is a business rule.
+**MUST**
 
-### 8.6 JSONB for Genuinely Schemaless Data
+In PostgreSQL, `VARCHAR(n)` and `TEXT` have identical performance. `VARCHAR(n)` MUST only be used when the length limit is a business rule.
 
-Use a `JSONB` column for data that is genuinely variable (settings,
-metadata). Do not use it to avoid schema design.
+### DB-046 — JSONB Usage Discipline
 
-BAD: A `data JSONB` column holding the entire domain model.
+**MUST NOT**
 
-GOOD: Normal columns for queryable fields, `JSONB` for extension
-attributes.
+`JSONB` MUST only be used for genuinely schemaless data (settings, metadata). It MUST NOT be used to avoid schema design. Normal columns MUST be used for queryable fields.
 
-### 8.7 No `ENUM` Without a Strategy
+### DB-047 — ENUM Strategy
 
-PostgreSQL enums are difficult to alter (adding a value requires a
-migration; removing one is impossible without recreating the type).
-Prefer a lookup table or a `CHECK` constraint unless the values are
-truly stable.
+**MUST**
 
-### 8.8 UUID Version
+Native `ENUM` types MUST NOT be used without a strategy. PostgreSQL enums are difficult to alter. A lookup table or a `CHECK` constraint MUST be preferred unless the values are truly stable.
 
-Use UUIDv4 (random) or UUIDv7 (time-ordered). UUIDv7 is preferred
-for primary keys because it preserves insert locality.
+### DB-048 — UUID Version Selection
 
-## 9. Access Control
+**MUST**
 
-### 9.1 Least Privilege
+UUIDv4 (random) or UUIDv7 (time-ordered) MUST be used. UUIDv7 is preferred for primary keys because it preserves insert locality.
 
-Application users have only the permissions they need:
+## Access Control
 
-- `SELECT`, `INSERT`, `UPDATE`, `DELETE` on the tables they use.
-- Not `SUPERUSER`.
-- Not `CREATEDB`, `CREATEROLE`.
+### DB-049 — Least Privilege Principle
 
-### 9.2 Separate Migration User
+**MUST**
 
-Migrations run with a user that has DDL privileges. Application
-queries run with a user that does not.
+Application users MUST have only the permissions they need (`SELECT`, `INSERT`, `UPDATE`, `DELETE` on specific tables). `SUPERUSER`, `CREATEDB`, and `CREATEROLE` MUST NOT be granted.
 
-Rationale: a compromised application cannot alter the schema or
-drop tables.
+### DB-050 — Migration User Separation
 
-### 9.3 No Credentials in Code
+**MUST**
 
-Database credentials come from the environment or a secret manager.
-Never hard-coded, never committed, never logged.
+Migrations MUST run with a user that has DDL privileges. Application queries MUST run with a user that does not. A compromised application MUST NOT be able to alter the schema.
 
-### 9.4 Row-Level Security When Multi-Tenant
+### DB-051 — Credential Secrecy
 
-For multi-tenant applications, consider row-level security (RLS) in
-PostgreSQL. The policy is enforced at the database, not only in
-application code.
+**MUST NOT**
 
-### 9.5 Read-Only Replicas for Analytics
+Database credentials MUST come from the environment or a secret manager. They MUST NEVER be hard-coded, committed, or logged.
 
-A reporting or analytics query runs against a read replica, not the
-primary. The primary serves transactions.
+### DB-052 — Row-Level Security
 
-### 9.6 Connection Encryption
+**SHOULD**
 
-The connection to the database uses TLS. Even for local development,
-use TLS if the project supports it.
+For multi-tenant applications, row-level security (RLS) in PostgreSQL SHOULD be considered. The policy is enforced at the database, not only in application code.
 
-## 10. Backup and Recovery
+### DB-053 — Analytics Replica Usage
 
-### 10.1 No Destructive Operation Without a Backup
+**MUST**
 
-Before any migration that drops, truncates, or rewrites large
-amounts of data, ensure a backup exists.
+Reporting or analytics queries MUST run against a read replica, not the primary. The primary MUST serve transactions.
 
-### 10.2 Test the Restore Path
+### DB-054 — Connection Encryption
 
-A backup that has never been restored is not a backup. Restore into
-a test environment at least quarterly.
+**MUST**
 
-### 10.3 Point-in-Time Recovery
+The connection to the database MUST use TLS. Even for local development, TLS MUST be used if the project supports it.
 
-If the database supports PITR, ensure WAL (PostgreSQL) or binlog
-(MySQL) archiving is enabled. Without it, recovery is limited to the
-last full backup.
+## Backup and Recovery
 
-### 10.4 Backups Are Encrypted
+### DB-055 — Pre-Destructive Backup
 
-A backup of an unencrypted database is an unencrypted database in a
-different folder. Encrypt backups with a key that is not stored in
-the same location.
+**MUST**
 
-### 10.5 RPO and RTO Are Documented
+Before any migration that drops, truncates, or rewrites large amounts of data, a backup MUST exist.
 
-The recovery point objective (how much data can be lost) and
-recovery time objective (how long recovery takes) are written down.
-The backup strategy matches them.
+### DB-056 — Restore Path Testing
 
-### 10.6 Document the Recovery Procedure
+**MUST**
 
-A runbook for restoring the database. Who to call, what to do, how
-to verify. Recovery during an incident is not the time to figure it
-out.
+A backup that has never been restored is not a backup. Restores MUST be tested into a test environment at least quarterly.
 
-## 11. Observability
+### DB-057 — Point-in-Time Recovery
 
-### 11.1 Slow Query Log
+**MUST**
 
-Every database supports a slow query log. Enable it. Review it.
+If the database supports PITR, WAL (PostgreSQL) or binlog (MySQL) archiving MUST be enabled. Without it, recovery is limited to the last full backup.
 
-### 11.2 `pg_stat_statements` (PostgreSQL)
+### DB-058 — Backup Encryption
 
-Enable `pg_stat_statements` for query statistics. It shows the top
-queries by time, calls, and rows.
+**MUST**
 
-### 11.3 Monitor Connection Count
+Backups MUST be encrypted with a key that is not stored in the same location as the backup.
 
-A connection pool that exhausts the database's `max_connections`
-causes failures. Monitor and alert.
+### DB-059 — RPO and RTO Documentation
 
-### 11.4 Monitor Replication Lag
+**MUST**
 
-A read replica that lags behind the primary serves stale data.
-Monitor the lag and alert when it exceeds the threshold.
+The recovery point objective (RPO) and recovery time objective (RTO) MUST be documented. The backup strategy MUST match them.
 
-### 11.5 Monitor Lock Waits
+### DB-060 — Recovery Runbook
 
-Long lock waits block other transactions. Monitor and investigate.
+**MUST**
 
-### 11.6 Monitor Disk Usage
+A runbook for restoring the database MUST be documented (who to call, what to do, how to verify).
 
-A database that fills its disk stops accepting writes. Monitor
-growth and forecast.
+## Observability
 
-### 11.7 Alert on Failure, Not Just Metric
+### DB-061 — Slow Query Logging
 
-An alert fires when the database is unavailable, not only when a
-metric crosses a threshold. A high-latency alert is less urgent than
-a "database is down" alert.
+**MUST**
 
-## 12. Anti-Patterns
+The slow query log MUST be enabled and reviewed.
 
-### 12.1 `SELECT *`
+### DB-062 — Query Statistics Extension
 
-Covered in 5.1.
+**MUST**
 
-### 12.2 N+1 Queries
+Query statistics extensions (e.g., `pg_stat_statements` for PostgreSQL) MUST be enabled to show top queries by time, calls, and rows.
 
-Covered in 5.2.
+### DB-063 — Connection Count Monitoring
 
-### 12.3 Soft Deletes Without a Plan
+**MUST**
 
-BAD: `deleted_at TIMESTAMP` and every query filters
-`WHERE deleted_at IS NULL` manually.
+Connection count MUST be monitored. A connection pool that exhausts the database's `max_connections` causes failures.
 
-GOOD: A view that filters, an ORM default scope, or a documented
-convention that all callers follow.
+### DB-064 — Replication Lag Monitoring
 
-### 12.4 Timestamps Without Timezone
+**MUST**
 
-Covered in 8.3.
+Replication lag MUST be monitored. A read replica that lags behind the primary serves stale data. Alerts MUST fire when it exceeds the threshold.
 
-### 12.5 Enum Columns Without a Constraint
+### DB-065 — Lock Wait Monitoring
 
-A `status` column that stores whatever the application passes.
+**MUST**
 
-GOOD: A `CHECK` constraint, a lookup table, or a native enum.
+Lock waits MUST be monitored and investigated. Long lock waits block other transactions.
 
-### 12.6 Cascading Deletes as a Default
+### DB-066 — Disk Usage Monitoring
 
-BAD: `ON DELETE CASCADE` on every foreign key.
+**MUST**
 
-Cascade only where the child row is meaningless without the parent.
-Otherwise, `RESTRICT` and handle deletion in the application.
+Disk usage MUST be monitored and forecasted. A database that fills its disk stops accepting writes.
 
-### 12.7 Ignoring Query Plans
+### DB-067 — Failure Alerting
 
-Adding a query to the codebase without checking its plan on
-production-sized data.
+**MUST**
 
-### 12.8 Migrating Without a Rollback Plan
+Alerts MUST fire when the database is unavailable, not only when a metric crosses a threshold.
 
-A migration that drops a column with no plan for reverting if
-something breaks.
+## AI-Specific Database Discipline
 
-### 12.9 Cross-Service Transactions
+### DB-068 — Schema Verification Before Query
 
-A transaction that spans two databases or two services. Distributed
-transactions are not available in most modern databases. Use a saga
-or an outbox pattern.
+**MUST**
 
-### 12.10 Serial as the Public Identifier
+Before writing any database query, the assistant MUST verify that the referenced tables, columns, and indexes exist in the project's migration files or schema definitions. Invented column names produce runtime failures that are invisible at compile time.
 
-Covered in 3.8.
+See MAS-036 in `_universal/00-master-anti-slop.md`.
 
-### 12.11 JSON as a Schema
+### DB-069 — Migration Pattern Verification
 
-Covered in 8.6.
+**MUST**
 
-### 12.12 Migrations Applied Manually in Production
+Before creating a migration, the assistant MUST fetch and follow the project's existing migration pattern. Migration frameworks differ (Knex, Alembic, Django, Flyway, Entity Framework). Invented migration syntax breaks the migration chain.
 
-A migration that says "run this on the server when you deploy".
+See MAS-035 in `_universal/00-master-anti-slop.md`.
 
-### 12.13 `synchronize: true` in Production
+### DB-070 — Index Verification
 
-ORM auto-sync in production drops and recreates columns based on
-the entity definitions. It destroys data.
+**MUST**
 
-### 12.14 No Index on Foreign Keys
+Before adding an index, the assistant MUST verify the table size and existing indexes. Adding an index to a massive table without `CONCURRENTLY` (or equivalent) locks the table and causes an outage.
 
-Covered in 6.1.
+### DB-071 — Complexity Restraint in Schema
 
-### 12.15 Unbounded `VARCHAR`
+**SHOULD**
 
-Covered in 8.4.
+The assistant SHOULD NOT introduce complex schema patterns (partitioning, materialized views, complex triggers) unless the project already uses them and the task explicitly requires them.
 
-### 12.16 Money as Float
+See MAS-038 in `_universal/00-master-anti-slop.md`.
 
-Covered in 8.2.
+## Anti-Patterns
 
-### 12.17 `LIKE '%...'`
+### DB-072 — Soft Delete Strategy
 
-Covered in 5.10.
+**MUST NOT**
 
-### 12.18 `OFFSET` for Deep Pagination
+Soft deletes (`deleted_at TIMESTAMP`) MUST NOT be used without a plan. Every query MUST NOT manually filter `WHERE deleted_at IS NULL`. A view, an ORM default scope, or a documented convention MUST be used.
 
-Covered in 5.4.
+### DB-073 — Untyped Enum Prohibition
 
-### 12.19 No Backup
+**MUST NOT**
 
-A production database without a backup. This is not an anti-pattern;
-it is negligence.
+A `status` column that stores whatever the application passes MUST NOT be used. A `CHECK` constraint, a lookup table, or a native enum MUST be used.
 
-### 12.20 Backup Never Tested
+### DB-074 — Cascading Delete Restraint
 
-Covered in 10.2.
+**MUST NOT**
 
-### 12.21 Schema Changes Outside Migrations
+`ON DELETE CASCADE` MUST NOT be the default on every foreign key. Cascade MUST only be used where the child row is meaningless without the parent. Otherwise, `RESTRICT` MUST be used and deletion handled in the application.
 
-A developer who runs `ALTER TABLE` directly on production.
+### DB-075 — Query Plan Verification
 
-### 12.22 No Connection Pooling
+**MUST NOT**
 
-Every request opens a new database connection. The database's
-`max_connections` is exhausted.
+A new query MUST NOT be added to the codebase without checking its plan (`EXPLAIN`) on production-sized data.
 
-### 12.23 Connection Pool Without Limits
+### DB-076 — Cross-Service Transaction Prohibition
 
-A pool with no maximum. Under load, it opens thousands of
-connections and crashes the database.
+**MUST NOT**
 
-### 12.24 Long-Running Transactions
+Transactions that span two databases or two services MUST NOT be used. Distributed transactions are not available in most modern databases. A saga or an outbox pattern MUST be used.
 
-A transaction open for minutes blocks vacuum (PostgreSQL) or grows
-the undo log (MySQL).
+### DB-077 — ORM Auto-Sync Prohibition
 
-### 12.25 `TRUNCATE` Without Backup
+**MUST NOT**
 
-A `TRUNCATE` on a production table without a recent backup.
+ORM auto-sync (`synchronize: true`) in production MUST NOT be used. It drops and recreates columns based on entity definitions and destroys data.
 
-### 12.26 Implicit Type Casting
+### DB-078 — Connection Pooling Requirement
 
-`WHERE id = '123'` where `id` is an integer. Some databases cast
-implicitly and skip the index.
+**MUST**
 
-### 12.27 `!=` on Nullable Columns
+A connection pool MUST be used. Every request MUST NOT open a new database connection, as the database's `max_connections` will be exhausted.
 
-`WHERE status != 'active'` excludes rows where `status IS NULL`.
-Use `WHERE status IS DISTINCT FROM 'active'` (PostgreSQL) or handle
-nulls explicitly.
+See MAS-040 in `_universal/00-master-anti-slop.md`.
 
-### 12.28 Missing `WHERE` on Update or Delete
+### DB-079 — Connection Pool Limits
 
-```sql
-UPDATE users SET active = false;
-```
+**MUST**
 
-Without a `WHERE`, every row is updated. A production incident
-waiting to happen.
+A connection pool MUST have a maximum limit. Under load, an unbounded pool opens thousands of connections and crashes the database.
 
-### 12.29 Denormalization Without a Reason
+### DB-080 — Implicit Type Casting Prohibition
 
-Adding a `total_count` column without a measured performance
-problem. The column drifts from the source.
+**MUST NOT**
 
-### 12.30 Storing Computed Values Without Recomputing
+Implicit type casting (e.g., `WHERE id = '123'` where `id` is an integer) MUST NOT be used. Some databases cast implicitly and skip the index.
 
-A `full_name` column that is not updated when `first_name` or
-`last_name` changes. Use a generated column or recompute on write.
+### DB-081 — Nullable Column Comparison
 
-### 12.31 String Column for Dates
+**MUST**
 
-`created_at VARCHAR(20)`. Sorting is lexicographic, comparison is
-string-based, and timezone handling is manual.
+When comparing nullable columns (e.g., `WHERE status != 'active'`), rows where `status IS NULL` are excluded. `IS DISTINCT FROM` (PostgreSQL) or explicit null handling MUST be used.
 
-### 12.32 Composite Primary Key Without Need
+### DB-082 — Unsafe Update/Delete Prohibition
 
-A composite primary key on `(user_id, created_at)`. Use a surrogate
-key and a unique constraint.
+**MUST NOT**
 
-### 12.33 Missing Unique Constraint
+`UPDATE` or `DELETE` statements without a `WHERE` clause MUST NOT be executed.
 
-A `email` column without a unique constraint. Duplicates accumulate
-until someone notices.
+### DB-083 — Justified Denormalization
 
-### 12.34 Application-Generated IDs Without Coordination
+**MUST NOT**
 
-Two application instances generate the same ID (a timestamp with
-second precision, a random with insufficient entropy). Use UUIDs or
-a coordinated sequence.
+Denormalization (e.g., adding a `total_count` column) MUST NOT occur without a measured performance problem. The column will drift from the source.
 
-### 12.35 Hard Delete of User Data Without Audit
+### DB-084 — Computed Value Synchronization
 
-Deleting a user row without preserving a record (for compliance or
-dispute). Prefer soft delete or an audit log for regulated data.
+**MUST NOT**
 
-### 12.36 One Big Table
+Computed values (e.g., `full_name`) MUST NOT be stored without a mechanism to recompute them on write. A generated column or application-level sync MUST be used.
 
-A `users` table with 80 columns covering identity, preferences,
-billing, and audit. Split by concept.
+### DB-085 — Surrogate Key Preference
 
-### 12.37 No Pagination Metadata
+**SHOULD**
 
-A paginated response without a cursor or total count. Clients
-cannot request the next page.
+Composite primary keys (e.g., `(user_id, created_at)`) SHOULD be avoided. A surrogate key and a unique constraint SHOULD be used instead.
 
-### 12.38 Read-Only Queries on the Primary
+### DB-086 — Business Key Uniqueness
 
-Every analytics query hits the primary and slows transactions. Use
-a read replica.
+**MUST**
 
-### 12.39 No `EXPLAIN` Before Deploy
+Business keys (e.g., `email`) MUST have a unique constraint. Duplicates accumulate until someone notices.
 
-A new query is deployed without checking its plan. The plan is a
-sequential scan on a 10M row table.
+### DB-087 — Coordinated ID Generation
 
-### 12.40 Vacuum Neglect (PostgreSQL)
+**MUST**
 
-Autovacuum is disabled or misconfigured. Table bloat grows and
-performance degrades.
+Application-generated IDs MUST be coordinated. Two application instances MUST NOT generate the same ID (e.g., timestamps with second precision). UUIDs or a coordinated sequence MUST be used.
 
-## 13. Response to Violation
+### DB-088 — Regulated Data Audit Trail
 
-If a previous response violated a rule here:
+**MUST NOT**
 
-```
-In the previous response, [specific rule] was violated. Correction:
-[corrected code]
-```
+Hard deletion of user data MUST NOT occur without an audit trail for regulated data. Soft delete or an audit log MUST be preferred.
 
-No justification. No apology paragraph. Fix and move on.
+### DB-089 — Table Concept Separation
+
+**MUST NOT**
+
+"One Big Table" (e.g., a `users` table with 80 columns covering identity, preferences, billing, and audit) MUST NOT be used. Tables MUST be split by concept.
+
+### DB-090 — Pagination Metadata
+
+**MUST**
+
+A paginated response MUST include a cursor or total count. Clients cannot request the next page without metadata.
+
+### DB-091 — Vacuum Configuration
+
+**MUST NOT**
+
+Autovacuum (PostgreSQL) MUST NOT be disabled or misconfigured. Table bloat grows and performance degrades.
+
+## Response to Violation
+
+When a rule in this file is violated, report:
+
+Violation: DB-{NNN}
+Reason: {one-line reason}
+Correction: {smallest fix}
+
+For multiple violations, report each rule ID separately.
+
+Do not replace a technical correction with a generic explanation.
